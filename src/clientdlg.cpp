@@ -292,14 +292,6 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     TimerCheckAudioDeviceOk.setSingleShot ( true ); // only check once after connection
     TimerDetectFeedback.setSingleShot ( true );
 
-    // Connect on startup ------------------------------------------------------
-    if ( !strConnOnStartupAddress.isEmpty() )
-    {
-        // initiate connection (always show the address in the mixer board
-        // (no alias))
-        Connect ( strConnOnStartupAddress, strConnOnStartupAddress );
-    }
-
     // File menu  --------------------------------------------------------------
     QMenu* pFileMenu = new QMenu ( tr ( "&File" ), this );
 
@@ -591,6 +583,13 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     QObject::connect ( &ConnectDlg, &CConnectDlg::accepted, this, &CClientDlg::OnConnectDlgAccepted );
 
     // Initializations which have to be done after the signals are connected ---
+    // Connect on startup after the client/dialog signals are installed so that
+    // initial server state cannot be missed during dialog construction.
+    if ( !strConnOnStartupAddress.isEmpty() )
+    {
+        QTimer::singleShot ( 0, this, [this, strConnOnStartupAddress]() { Connect ( strConnOnStartupAddress, strConnOnStartupAddress ); } );
+    }
+
     // start timer for status bar
     TimerStatus.start ( LED_BAR_UPDATE_TIME_MS );
 
