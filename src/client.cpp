@@ -304,10 +304,23 @@ void CClient::OnJittBufSizeChanged ( int iNewJitBufSize )
     }
 }
 
+void CClient::SetRemoteInfo()
+{
+    StartupTrace::Record ( "CLIENT_SET_REMOTE_INFO", IsRunning() );
+    Channel.SetRemoteInfo ( ChannelInfo );
+}
+
+void CClient::OnReqChanInfo()
+{
+    StartupTrace::Record ( "CLIENT_REQ_CHAN_INFO", IsRunning() );
+    Channel.SetRemoteInfo ( ChannelInfo );
+}
+
 void CClient::OnNewConnection()
 {
     // a new connection was successfully initiated, send infos and request
     // connected clients list
+    StartupTrace::Record ( "CLIENT_NEW_CONNECTION", IsRunning() );
     Channel.SetRemoteInfo ( ChannelInfo );
 
     // We have to send a connected clients list request since it can happen
@@ -348,6 +361,7 @@ void CClient::OnCLChannelLevelListReceived ( CHostAddress InetAddr, CVector<uint
 
 void CClient::OnConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo )
 {
+    StartupTrace::Record ( "CLIENT_LIST_RX", vecChanInfo.Size(), IsRunning(), iActiveChannels );
     // translate from server channel IDs to client channel IDs
     // ALSO here is where we allocate and free client channels as required
 
@@ -409,6 +423,7 @@ void CClient::OnConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo )
 
     // pass the received list onwards, now containing client channel IDs
 
+    StartupTrace::Record ( "CLIENT_LIST_EMIT", vecChanInfo.Size(), IsRunning(), iActiveChannels );
     emit ConClientListMesReceived ( vecChanInfo );
 }
 
@@ -850,6 +865,7 @@ void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
 {
     QString strError = "";
+    StartupTrace::Record ( "SOUND_REINIT_ENTER", iSndCrdResetType, IsRunning() );
 
     // audio device notifications can come at any time and they are in a
     // different thread, therefore we need a mutex here
@@ -892,6 +908,7 @@ void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
 
     // inform GUI about the sound card device change
     emit SoundDeviceChanged ( strError );
+    StartupTrace::Record ( "SOUND_REINIT_EXIT", strError.isEmpty(), IsRunning() );
 }
 
 void CClient::OnHandledSignal ( int sigNum )
@@ -983,12 +1000,14 @@ void CClient::OnControllerInMuteMyself ( bool bMute )
 
 void CClient::OnClientIDReceived ( int iServerChanID )
 {
+    StartupTrace::Record ( "CLIENT_ID_RX", iServerChanID, iActiveChannels );
     // if we have just connected to a running server, iActiveChannels will be 0
     // if iActiveChannels is not 0, the server must have been restarted on the fly
     // in that case, channels might have changed, so clear our list to get it afresh.
     if ( iActiveChannels != 0 )
     {
         qInfo() << "> Server restarted?";
+        StartupTrace::Record ( "CLIENT_CHANNELS_CLEAR_ON_ID", iActiveChannels );
         ClearClientChannels();
     }
 
@@ -1004,6 +1023,7 @@ void CClient::OnClientIDReceived ( int iServerChanID )
     }
 
     emit ClientIDReceived ( iChanID );
+    StartupTrace::Record ( "CLIENT_ID_EMIT", iChanID, iActiveChannels );
 }
 
 void CClient::OnRawAudioSupported()
@@ -1029,6 +1049,7 @@ void CClient::OnRawAudioSupported()
 
 void CClient::Start()
 {
+    StartupTrace::Record ( "CLIENT_START_ENTER", IsRunning() );
     // init object
     Init();
 
@@ -1039,7 +1060,10 @@ void CClient::Start()
     Channel.SetEnable ( true );
 
     // start audio interface
+    StartupTrace::Record ( "SOUND_START_BEFORE", IsRunning() );
     Sound.Start();
+    StartupTrace::Record ( "SOUND_START_AFTER", IsRunning() );
+    StartupTrace::Record ( "CLIENT_START_EXIT", IsRunning() );
 
 #if defined( Q_OS_WINDOWS )
     // Disable hibernation or display dimming if the app is running on Windows
@@ -1049,6 +1073,7 @@ void CClient::Start()
 
 void CClient::Stop()
 {
+    StartupTrace::Record ( "CLIENT_STOP_ENTER", IsRunning() );
     // stop audio interface
     Sound.Stop();
 
@@ -1083,6 +1108,7 @@ void CClient::Stop()
     // reset current signal level and LEDs
     bJitterBufferOK = true;
     SignalLevelMeter.Reset();
+    StartupTrace::Record ( "CLIENT_STOP_EXIT", IsRunning() );
 
 #if defined( Q_OS_WINDOWS )
     // Allow hibernation or display dimming if the app is running again (Windows)
@@ -1668,6 +1694,7 @@ int CClient::EstimatedOverallDelay ( const int iPingTimeMs )
 void CClient::ClearClientChannels()
 {
     QMutexLocker locker ( &MutexChannels );
+    StartupTrace::Record ( "CLIENT_CHANNELS_CLEAR", iActiveChannels );
 
     iActiveChannels = 0;
     iJoinSequence   = 0;
@@ -1681,6 +1708,7 @@ void CClient::ClearClientChannels()
     }
 
     // qInfo() << "> Client channel list cleared";
+    StartupTrace::Record ( "CLIENT_CHANNELS_CLEAR_DONE", iActiveChannels );
 }
 
 void CClient::FreeClientChannel ( const int iServerChannelID )

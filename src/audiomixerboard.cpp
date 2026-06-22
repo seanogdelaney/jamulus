@@ -1141,6 +1141,7 @@ void CAudioMixerBoard::SetPanIsSupported()
 
 void CAudioMixerBoard::HideAll()
 {
+    StartupTrace::Record ( "MIXER_HIDE_ALL_BEGIN", CountVisibleFaders(), bNoFaderVisible, iMyChannelID );
     // before hiding the faders, store their settings
     StoreAllFaderSettings();
 
@@ -1168,6 +1169,7 @@ void CAudioMixerBoard::HideAll()
 
     // emit status of connected clients
     emit NumClientsChanged ( 0 ); // -> no clients connected
+    StartupTrace::Record ( "MIXER_HIDE_ALL_END", CountVisibleFaders(), bNoFaderVisible, iMyChannelID );
 }
 
 void CAudioMixerBoard::SetNumMixerPanelRows ( const int iNNumMixerPanelRows )
@@ -1323,6 +1325,7 @@ void CAudioMixerBoard::ApplyNewConClientList ( CVector<CChannelInfo>& vecChanInf
 {
     // get number of connected clients
     const size_t iNumConnectedClients = vecChanInfo.size();
+    StartupTrace::Record ( "MIXER_APPLY_BEGIN", iNumConnectedClients, bNoFaderVisible, iMyChannelID );
 
     Mutex.lock();
     {
@@ -1441,6 +1444,7 @@ void CAudioMixerBoard::ApplyNewConClientList ( CVector<CChannelInfo>& vecChanInf
         bNoFaderVisible = ( iNumConnectedClients == 0 );
     }
     Mutex.unlock(); // release mutex
+    StartupTrace::Record ( "MIXER_APPLY_END", iNumConnectedClients, bNoFaderVisible, CountVisibleFaders() );
 
     // Ensure MIDI state is applied to faders during the connection process
     SetMIDICtrlUsed ( pSettings->bUseMIDIController );
@@ -1450,6 +1454,19 @@ void CAudioMixerBoard::ApplyNewConClientList ( CVector<CChannelInfo>& vecChanInf
 
     // emit status of connected clients
     emit NumClientsChanged ( static_cast<int> ( iNumConnectedClients ) );
+}
+
+int CAudioMixerBoard::CountVisibleFaders()
+{
+    int iVisibleFaders = 0;
+    for ( size_t i = 0; i < MAX_NUM_CHANNELS; i++ )
+    {
+        if ( vecpChanFader[i]->IsVisible() )
+        {
+            iVisibleFaders++;
+        }
+    }
+    return iVisibleFaders;
 }
 
 void CAudioMixerBoard::SetFaderLevel ( const int iChannelIdx, const int iValue )

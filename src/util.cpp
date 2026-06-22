@@ -46,6 +46,117 @@
 
 #include "util.h"
 
+#ifdef JAMULUS_STARTUP_TRACE
+#    include <atomic>
+#    include <chrono>
+#    include <QFile>
+#    include <QProcess>
+#    include <QSysInfo>
+#    include <QTextStream>
+#    include <QThread>
+#endif
+
+#ifdef JAMULUS_STARTUP_TRACE
+namespace StartupTrace
+{
+namespace
+{
+constexpr unsigned TRACE_CAPACITY = 1024;
+
+struct RecordData
+{
+    quint64      usec;
+    unsigned     seq;
+    quintptr     thread;
+    const char*  tag;
+    qint64       a;
+    qint64       b;
+    qint64       c;
+};
+
+RecordData                                            records[TRACE_CAPACITY];
+std::atomic<unsigned>                                 nextSeq { 0 };
+std::atomic<unsigned>                                 overflow { 0 };
+std::chrono::steady_clock::time_point                 startTime;
+QString                                               commandLine;
+QString                                               tracePath;
+
+QString DefaultTracePath()
+{
+    const QString envPath = QString::fromLocal8Bit ( qgetenv ( "JAMULUS_STARTUP_TRACE_FILE" ) );
+    if ( !envPath.isEmpty() )
+    {
+        return envPath;
+    }
+    return QString ( "/tmp/jamulus-codex-logs/jamulus-startup-trace-%1.txt" ).arg ( QCoreApplication::applicationPid() );
+}
+}
+
+void Init ( int argc, char** argv )
+{
+    startTime   = std::chrono::steady_clock::now();
+    tracePath   = DefaultTracePath();
+    commandLine = "";
+    for ( int i = 0; i < argc; i++ )
+    {
+        if ( i != 0 )
+        {
+            commandLine += " ";
+        }
+        commandLine += QString::fromLocal8Bit ( argv[i] );
+    }
+    QDir().mkpath ( QFileInfo ( tracePath ).absolutePath() );
+    Record ( "TRACE_INIT" );
+}
+
+void Record ( const char* tag, qint64 a, qint64 b, qint64 c )
+{
+    const unsigned seq = nextSeq.fetch_add ( 1, std::memory_order_relaxed );
+    if ( seq >= TRACE_CAPACITY )
+    {
+        overflow.fetch_add ( 1, std::memory_order_relaxed );
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    records[seq]  = { static_cast<quint64> ( std::chrono::duration_cast<std::chrono::microseconds> ( now - startTime ).count() ),
+                     seq,
+                     reinterpret_cast<quintptr> ( QThread::currentThreadId() ),
+                     tag,
+                     a,
+                     b,
+                     c };
+}
+
+void Dump ( bool cleanShutdown )
+{
+    QFile file ( tracePath );
+    if ( !file.open ( QIODevice::WriteOnly | QIODevice::Text ) )
+    {
+        return;
+    }
+
+    QTextStream out ( &file );
+    const unsigned count = std::min ( nextSeq.load ( std::memory_order_relaxed ), TRACE_CAPACITY );
+    out << "JAMULUS_STARTUP_TRACE version=1\n";
+    out << "version=" << VERSION << "\n";
+    out << "build=" << __DATE__ << " " << __TIME__ << "\n";
+    out << "command=" << commandLine << "\n";
+    out << "kernel=" << QSysInfo::kernelType() << " " << QSysInfo::kernelVersion() << "\n";
+    out << "os=" << QSysInfo::prettyProductName() << "\n";
+    out << "clean_shutdown=" << ( cleanShutdown ? 1 : 0 ) << "\n";
+    out << "records=" << count << "\n";
+    out << "overflow=" << overflow.load ( std::memory_order_relaxed ) << "\n";
+    out << "columns=seq usec thread tag a b c\n";
+    for ( unsigned i = 0; i < count; i++ )
+    {
+        const RecordData& rec = records[i];
+        out << rec.seq << " " << rec.usec << " " << rec.thread << " " << rec.tag << " " << rec.a << " " << rec.b << " " << rec.c << "\n";
+    }
+}
+}
+#endif
+
 /* Implementation *************************************************************/
 // Input level meter implementation --------------------------------------------
 void CStereoSignalLevelMeter::Update ( const CVector<short>& vecsAudio, const int iMonoBlockSizeSam, const bool bIsStereoIn )

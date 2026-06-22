@@ -62,11 +62,13 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     bDetectFeedback ( false ),
     eLastRecorderState ( RS_UNDEFINED ), // for SetMixerBoardDeco
     eLastDesign ( GD_DEFAULT ),          //          "
+    iJamboxStatusTraceCount ( 0 ),
     ClientSettingsDlg ( pNCliP, pNSetP, parent ),
     ChatDlg ( parent ),
     ConnectDlg ( pNCliP, pNSetP, bNewShowComplRegConnList, parent ),
     AnalyzerConsole ( pNCliP, parent )
 {
+    StartupTrace::Record ( "DLG_CTOR_ENTER", !strConnOnStartupAddress.isEmpty(), pClient->IsRunning() );
     setupUi ( this );
 
     // Add help text to controls -----------------------------------------------
@@ -242,6 +244,7 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     MainMixerBoard->SetMIDICtrlUsed ( pSettings->bUseMIDIController );
 
     // reset mixer board
+    StartupTrace::Record ( "DLG_INITIAL_MIXER_HIDE_ALL" );
     MainMixerBoard->HideAll();
 
     // init status label
@@ -497,13 +500,19 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     QObject::connect ( rbtReverbSelR, &QRadioButton::clicked, this, &CClientDlg::OnReverbSelRClicked );
 
     // other
+    StartupTrace::Record ( "DLG_LIST_SIGNAL_CONNECT_BEGIN" );
     QObject::connect ( pClient, &CClient::ConClientListMesReceived, this, &CClientDlg::OnConClientListMesReceived );
+    StartupTrace::Record ( "DLG_LIST_SIGNAL_CONNECTED" );
 
+    StartupTrace::Record ( "DLG_DISCONNECT_SIGNAL_CONNECT_BEGIN" );
     QObject::connect ( pClient, &CClient::Disconnected, this, &CClientDlg::OnDisconnected );
+    StartupTrace::Record ( "DLG_DISCONNECT_SIGNAL_CONNECTED" );
 
     QObject::connect ( pClient, &CClient::ChatTextReceived, this, &CClientDlg::OnChatTextReceived );
 
+    StartupTrace::Record ( "DLG_CLIENT_ID_SIGNAL_CONNECT_BEGIN" );
     QObject::connect ( pClient, &CClient::ClientIDReceived, this, &CClientDlg::OnClientIDReceived );
+    StartupTrace::Record ( "DLG_CLIENT_ID_SIGNAL_CONNECTED" );
 
     QObject::connect ( pClient, &CClient::MuteStateHasChangedReceived, this, &CClientDlg::OnMuteStateHasChangedReceived );
 
@@ -548,10 +557,12 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     QObject::connect ( &ClientSettingsDlg, &CClientSettingsDlg::MeterStyleChanged, this, &CClientDlg::OnMeterStyleChanged );
 
     QObject::connect ( &ClientSettingsDlg, &CClientSettingsDlg::AudioChannelsChanged, this, &CClientDlg::OnAudioChannelsChanged );
+    StartupTrace::Record ( "DLG_SETTINGS_AUDIO_CHANNELS_SIGNAL_CONNECTED" );
 
     QObject::connect ( &ClientSettingsDlg, &CClientSettingsDlg::CustomDirectoriesChanged, &ConnectDlg, &CConnectDlg::OnCustomDirectoriesChanged );
 
     QObject::connect ( &ClientSettingsDlg, &CClientSettingsDlg::NumMixerPanelRowsChanged, this, &CClientDlg::OnNumMixerPanelRowsChanged );
+    StartupTrace::Record ( "DLG_SETTINGS_MIXER_ROWS_SIGNAL_CONNECTED" );
 
     QObject::connect ( &ClientSettingsDlg, &CClientSettingsDlg::MIDIControllerUsageChanged, this, &CClientDlg::OnMIDIControllerUsageChanged );
 
@@ -562,6 +573,7 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     QObject::connect ( MainMixerBoard, &CAudioMixerBoard::ChangeChanPan, this, &CClientDlg::OnChangeChanPan );
 
     QObject::connect ( MainMixerBoard, &CAudioMixerBoard::NumClientsChanged, this, &CClientDlg::OnNumClientsChanged );
+    StartupTrace::Record ( "DLG_MIXER_COUNT_SIGNAL_CONNECTED" );
 
     QObject::connect ( &ChatDlg, &CChatDlg::NewLocalInputText, this, &CClientDlg::OnNewLocalInputText );
 
@@ -587,7 +599,11 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     // initial server state cannot be missed during dialog construction.
     if ( !strConnOnStartupAddress.isEmpty() )
     {
-        QTimer::singleShot ( 0, this, [this, strConnOnStartupAddress]() { Connect ( strConnOnStartupAddress, strConnOnStartupAddress ); } );
+        StartupTrace::Record ( "STARTUP_CONNECT_SCHEDULE", pClient->IsRunning() );
+        QTimer::singleShot ( 0, this, [this, strConnOnStartupAddress]() {
+            StartupTrace::Record ( "STARTUP_CONNECT_TIMER_FIRED", pClient->IsRunning() );
+            Connect ( strConnOnStartupAddress, strConnOnStartupAddress );
+        } );
     }
 
     // start timer for status bar
@@ -596,6 +612,7 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     // restore connect dialog
     if ( pSettings->bWindowWasShownConnect )
     {
+        StartupTrace::Record ( "DLG_RESTORE_CONNECT_WINDOW" );
         ShowConnectionSetupDialog();
     }
 
@@ -625,6 +642,7 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     {
         pClient->CreateCLServerListReqVerAndOSMes ( UpdateServerHostAddress );
     }
+    StartupTrace::Record ( "DLG_CTOR_EXIT", pClient->IsRunning(), ClientSettingsDlg.isVisible(), MainMixerBoard->CountVisibleFaders() );
 }
 
 void CClientDlg::closeEvent ( QCloseEvent* Event )
@@ -916,8 +934,10 @@ void CClientDlg::OnLicenceRequired ( ELicenceType eLicenceType )
 
 void CClientDlg::OnConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo )
 {
+    StartupTrace::Record ( "DLG_LIST_SLOT_ENTER", vecChanInfo.Size(), pClient->IsRunning(), MainMixerBoard->CountVisibleFaders() );
     // update mixer board with the additional client infos
     MainMixerBoard->ApplyNewConClientList ( vecChanInfo );
+    StartupTrace::Record ( "DLG_LIST_SLOT_EXIT", vecChanInfo.Size(), pClient->IsRunning(), MainMixerBoard->CountVisibleFaders() );
 }
 
 void CClientDlg::OnNumClientsChanged ( int iNewNumClients )
@@ -1015,6 +1035,7 @@ void CClientDlg::ShowConnectionSetupDialog()
 
 void CClientDlg::ShowGeneralSettings ( int iTab )
 {
+    StartupTrace::Record ( "SETTINGS_OPEN", iTab, pClient->IsRunning(), MainMixerBoard->CountVisibleFaders() );
     // open general settings dialog
     emit SendTabChange ( iTab );
     ClientSettingsDlg.show();
@@ -1023,6 +1044,16 @@ void CClientDlg::ShowGeneralSettings ( int iTab )
     // make sure dialog is upfront and has focus
     ClientSettingsDlg.raise();
     ClientSettingsDlg.activateWindow();
+}
+
+void CClientDlg::OnTimerStatus()
+{
+    UpdateDisplay();
+    if ( iJamboxStatusTraceCount < 15 )
+    {
+        StartupTrace::Record ( "STATUS_SNAPSHOT", iJamboxStatusTraceCount, pClient->IsRunning(), MainMixerBoard->CountVisibleFaders() );
+        iJamboxStatusTraceCount++;
+    }
 }
 
 void CClientDlg::ShowChatWindow ( const bool bForceRaise )
@@ -1053,6 +1084,7 @@ void CClientDlg::ShowAnalyzerConsole()
 
 void CClientDlg::OnSettingsStateChanged ( int value )
 {
+    StartupTrace::Record ( "SETTINGS_STATE_CHANGED", value, pClient->IsRunning(), MainMixerBoard->CountVisibleFaders() );
     if ( value == Qt::Checked )
     {
         ShowGeneralSettings ( SETTING_TAB_AUDIONET );
@@ -1237,8 +1269,11 @@ void CClientDlg::OnCLPingTimeWithNumClientsReceived ( CHostAddress InetAddr, int
 
 void CClientDlg::Connect ( const QString& strSelectedAddress, const QString& strMixerBoardLabel )
 {
+    StartupTrace::Record ( "STARTUP_CONNECT_ENTER", pClient->IsRunning() );
     // set address and check if address is valid
-    if ( pClient->SetServerAddr ( strSelectedAddress ) )
+    const bool bSetServerAddrResult = pClient->SetServerAddr ( strSelectedAddress );
+    StartupTrace::Record ( "STARTUP_CONNECT_SET_SERVER_ADDR", bSetServerAddrResult, pClient->IsRunning() );
+    if ( bSetServerAddrResult )
     {
         // try to start client, if error occurred, do not go in
         // running state but show error message
@@ -1246,7 +1281,9 @@ void CClientDlg::Connect ( const QString& strSelectedAddress, const QString& str
         {
             if ( !pClient->IsRunning() )
             {
+                StartupTrace::Record ( "STARTUP_CONNECT_CLIENT_START_BEFORE" );
                 pClient->Start();
+                StartupTrace::Record ( "STARTUP_CONNECT_CLIENT_START_AFTER", pClient->IsRunning() );
             }
         }
 
@@ -1273,6 +1310,7 @@ void CClientDlg::Connect ( const QString& strSelectedAddress, const QString& str
         TimerBuffersLED.start ( BUFFER_LED_UPDATE_TIME_MS );
         TimerPing.start ( PING_UPDATE_TIME_MS );
         TimerCheckAudioDeviceOk.start ( CHECK_AUDIO_DEV_OK_TIME_MS ); // is single shot timer
+        StartupTrace::Record ( "STARTUP_CONNECT_UI_TIMERS_READY", pClient->IsRunning() );
 
         // audio feedback detection
         if ( pSettings->bEnableFeedbackDetection )
@@ -1281,6 +1319,7 @@ void CClientDlg::Connect ( const QString& strSelectedAddress, const QString& str
             bDetectFeedback = true;
         }
     }
+    StartupTrace::Record ( "STARTUP_CONNECT_EXIT", bSetServerAddrResult, pClient->IsRunning(), MainMixerBoard->CountVisibleFaders() );
 }
 
 void CClientDlg::Disconnect()
@@ -1334,6 +1373,7 @@ void CClientDlg::Disconnect()
     lblDelayUnit->setText ( "" );
 
     // clear mixer board (remove all faders)
+    StartupTrace::Record ( "DLG_DISCONNECT_MIXER_HIDE_ALL", MainMixerBoard->CountVisibleFaders() );
     MainMixerBoard->HideAll();
 }
 

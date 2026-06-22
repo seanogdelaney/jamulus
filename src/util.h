@@ -75,10 +75,24 @@
 #include <QElapsedTimer>
 #include <QTextBoundaryFinder>
 #include <QTimer>
+#include <QtGlobal>
 
 #ifndef DISABLE_SRV_DNS
 #    include <QDnsLookup>
 #endif
+
+namespace StartupTrace
+{
+#ifdef JAMULUS_STARTUP_TRACE
+void Init ( int argc, char** argv );
+void Record ( const char* tag, qint64 a = 0, qint64 b = 0, qint64 c = 0 );
+void Dump ( bool cleanShutdown );
+#else
+inline void Init ( int, char** ) {}
+inline void Record ( const char*, qint64 = 0, qint64 = 0, qint64 = 0 ) {}
+inline void Dump ( bool ) {}
+#endif
+}
 #ifndef _WIN32
 #    include <QThread>
 #endif

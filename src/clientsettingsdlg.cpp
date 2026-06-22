@@ -960,6 +960,7 @@ CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSet
 
 void CClientSettingsDlg::showEvent ( QShowEvent* event )
 {
+    StartupTrace::Record ( "SETTINGS_SHOW_EVENT_ENTER", pClient->IsRunning(), pSettings->bUseMIDIController, pClient->IsMIDIEnabled() );
     UpdateDisplay();
     UpdateDirectoryComboBox();
 
@@ -1029,9 +1030,11 @@ void CClientSettingsDlg::showEvent ( QShowEvent* event )
     SetMIDIControlsEnabled ( grbMidiControls->isChecked() );
 
     // Signal to propagate MIDI state at startup
+    StartupTrace::Record ( "SETTINGS_EMIT_MIDI_USAGE_CHANGED", grbMidiControls->isChecked() );
     emit MIDIControllerUsageChanged ( grbMidiControls->isChecked() );
 
     QDialog::showEvent ( event );
+    StartupTrace::Record ( "SETTINGS_SHOW_EVENT_EXIT" );
 }
 
 bool CClientSettingsDlg::eventFilter ( QObject* obj, QEvent* event )
@@ -1391,6 +1394,7 @@ void CClientSettingsDlg::OnInputBoostChanged()
 
 void CClientSettingsDlg::OnAliasTextChanged ( const QString& strNewName )
 {
+    StartupTrace::Record ( "SETTINGS_ALIAS_CHANGED", strNewName.length(), pClient->IsRunning() );
     // check length
     if ( strNewName.length() <= MAX_LEN_FADER_TAG )
     {
@@ -1398,6 +1402,7 @@ void CClientSettingsDlg::OnAliasTextChanged ( const QString& strNewName )
         pClient->ChannelInfo.strName = strNewName;
 
         // update channel info at the server
+        StartupTrace::Record ( "SETTINGS_ALIAS_SET_REMOTE_INFO", pClient->IsRunning() );
         pClient->SetRemoteInfo();
     }
     else
@@ -1409,24 +1414,29 @@ void CClientSettingsDlg::OnAliasTextChanged ( const QString& strNewName )
 
 void CClientSettingsDlg::OnInstrumentActivated ( int iCntryListItem )
 {
+    StartupTrace::Record ( "SETTINGS_INSTRUMENT_ACTIVATED", iCntryListItem, pClient->IsRunning() );
     // set the new value in the data base
     pClient->ChannelInfo.iInstrument = pcbxInstrument->itemData ( iCntryListItem ).toInt();
 
     // update channel info at the server
+    StartupTrace::Record ( "SETTINGS_INSTRUMENT_SET_REMOTE_INFO", pClient->IsRunning() );
     pClient->SetRemoteInfo();
 }
 
 void CClientSettingsDlg::OnCountryActivated ( int iCntryListItem )
 {
+    StartupTrace::Record ( "SETTINGS_COUNTRY_ACTIVATED", iCntryListItem, pClient->IsRunning() );
     // set the new value in the data base
     pClient->ChannelInfo.eCountry = static_cast<QLocale::Country> ( pcbxCountry->itemData ( iCntryListItem ).toInt() );
 
     // update channel info at the server
+    StartupTrace::Record ( "SETTINGS_COUNTRY_SET_REMOTE_INFO", pClient->IsRunning() );
     pClient->SetRemoteInfo();
 }
 
 void CClientSettingsDlg::OnCityTextChanged ( const QString& strNewCity )
 {
+    StartupTrace::Record ( "SETTINGS_CITY_CHANGED", strNewCity.length(), pClient->IsRunning() );
     // check length
     if ( strNewCity.length() <= MAX_LEN_SERVER_CITY )
     {
@@ -1434,6 +1444,7 @@ void CClientSettingsDlg::OnCityTextChanged ( const QString& strNewCity )
         pClient->ChannelInfo.strCity = strNewCity;
 
         // update channel info at the server
+        StartupTrace::Record ( "SETTINGS_CITY_SET_REMOTE_INFO", pClient->IsRunning() );
         pClient->SetRemoteInfo();
     }
     else
@@ -1445,10 +1456,12 @@ void CClientSettingsDlg::OnCityTextChanged ( const QString& strNewCity )
 
 void CClientSettingsDlg::OnSkillActivated ( int iCntryListItem )
 {
+    StartupTrace::Record ( "SETTINGS_SKILL_ACTIVATED", iCntryListItem, pClient->IsRunning() );
     // set the new value in the data base
     pClient->ChannelInfo.eSkillLevel = static_cast<ESkillLevel> ( pcbxSkill->itemData ( iCntryListItem ).toInt() );
 
     // update channel info at the server
+    StartupTrace::Record ( "SETTINGS_SKILL_SET_REMOTE_INFO", pClient->IsRunning() );
     pClient->SetRemoteInfo();
 }
 

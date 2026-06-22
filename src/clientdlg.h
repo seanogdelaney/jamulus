@@ -130,6 +130,7 @@ protected:
     bool           bDetectFeedback;
     ERecorderState eLastRecorderState;
     EGUIDesign     eLastDesign;
+    int            iJamboxStatusTraceCount;
     QTimer         TimerSigMet;
     QTimer         TimerBuffersLED;
     QTimer         TimerStatus;
@@ -154,7 +155,7 @@ public slots:
     void OnTimerCheckAudioDeviceOk();
     void OnTimerDetectFeedback();
 
-    void OnTimerStatus() { UpdateDisplay(); }
+    void OnTimerStatus();
 
     void OnTimerPing();
     void OnPingTimeResult ( int iPingTime );

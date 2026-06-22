@@ -82,7 +82,8 @@ HEADERS_JACK = src/sound/jack/sound.h
 SOURCES_JACK = src/sound/jack/sound.cpp
 
 DEFINES += APP_VERSION=\\\"$$VERSION\\\" \
-    CUSTOM_MODES \
+           JAMULUS_STARTUP_TRACE \
+           CUSTOM_MODES \
     _REENTRANT
 
 # some deprecated functions need to be kept for older versions to build

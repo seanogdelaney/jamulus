@@ -68,6 +68,7 @@
 #    include "mac/activity.h"
 extern void qt_set_sequence_auto_mnemonic ( bool bEnable );
 #endif
+
 #include <memory>
 #ifndef NO_JSON_RPC
 #    include "rpcserver.h"
@@ -857,6 +858,7 @@ int main ( int argc, char** argv )
     QCoreApplication* pApp = bUseGUI ? new QApplication ( argc, argv ) : new QCoreApplication ( argc, argv );
 #    endif
 #endif
+    StartupTrace::Init ( argc, argv );
 
 #ifdef ANDROID
     // special Android coded needed for record audio permission handling
@@ -976,13 +978,18 @@ int main ( int argc, char** argv )
                 }
 
                 // GUI object
+                StartupTrace::Record ( "GUI_CLIENT_DLG_CTOR_ENTER", !strConnOnStartupAddress.isEmpty(), Client.IsRunning() );
                 CClientDlg
                     ClientDlg ( &Client, &Settings, strConnOnStartupAddress, bShowComplRegConnList, bShowAnalyzerConsole, bMuteStream, nullptr );
+                StartupTrace::Record ( "GUI_CLIENT_DLG_CTOR_EXIT", Client.IsRunning() );
 
                 // show dialog
                 ClientDlg.show();
 
+                StartupTrace::Record ( "GUI_EXEC_ENTER", Client.IsRunning() );
                 pApp->exec();
+                StartupTrace::Record ( "GUI_EXEC_EXIT", Client.IsRunning() );
+                StartupTrace::Dump ( true );
             }
             else
 #    endif

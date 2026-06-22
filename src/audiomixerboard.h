@@ -235,6 +235,7 @@ public:
 
     void SetNumMixerPanelRows ( const int iNNumMixerPanelRows );
     int  GetNumMixerPanelRows() { return iNumMixerPanelRows; }
+    int  CountVisibleFaders();
 
     void        SetFaderSorting ( const EChSortType eNChSortType );
     EChSortType GetFaderSorting() { return eChSortType; }

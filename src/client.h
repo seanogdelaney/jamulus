@@ -289,7 +289,7 @@ public:
 
     void SetInputBoost ( const int iNewBoost ) { iInputBoost = iNewBoost; }
 
-    void SetRemoteInfo() { Channel.SetRemoteInfo ( ChannelInfo ); }
+    void SetRemoteInfo();
 
     void CreateChatTextMes ( const QString& strChatText ) { Channel.CreateChatTextMes ( strChatText ); }
 
@@ -457,7 +457,7 @@ protected slots:
 
     void OnReqJittBufSize() { CreateServerJitterBufferMessage(); }
     void OnJittBufSizeChanged ( int iNewJitBufSize );
-    void OnReqChanInfo() { Channel.SetRemoteInfo ( ChannelInfo ); }
+    void OnReqChanInfo();
     void OnNewConnection();
     void OnCLDisconnection ( CHostAddress InetAddr )
     {
