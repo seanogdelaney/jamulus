@@ -407,6 +407,7 @@ HEADERS += src/plugins/audioreverb.h \
 
 !contains(CONFIG, "serveronly") {
     HEADERS += src/client.h \
+        src/clientaudiochannel.h \
         src/sound/soundbase.h \
         src/testbench.h
 }
@@ -514,6 +515,7 @@ SOURCES += src/plugins/audioreverb.cpp \
 
 !contains(CONFIG, "serveronly") {
     SOURCES += src/client.cpp \
+        src/clientaudiochannel.cpp \
         src/sound/soundbase.cpp \
 }
 

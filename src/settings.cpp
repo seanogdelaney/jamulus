@@ -620,10 +620,54 @@ void CClientSettings::ReadSettingsFromXML ( const QDomDocument& IniXMLDocument, 
         }
     }
 
-    // audio channels
-    if ( GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 2 /* CC_STEREO */, iValue ) )
+    // audio channels and Advanced routing table
+    if ( GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 3 /* CC_ADVANCED */, iValue ) )
     {
-        pClient->SetAudioChannels ( static_cast<EAudChanConf> ( iValue ) );
+        if ( iValue == CC_ADVANCED )
+        {
+            int iAdvancedChannelCount = 0;
+            QVector<CAdvancedAudioChannelConfig> vecAdvancedChannels;
+            if ( GetNumericIniSet ( IniXMLDocument, "client", "advancedchannelcount", 1, MAX_NUM_CHANNELS, iAdvancedChannelCount ) )
+            {
+                for ( int iChannel = 0; iChannel < iAdvancedChannelCount; ++iChannel )
+                {
+                    int iCh1 = 0;
+                    int iCh2 = INVALID_INDEX;
+                    if ( !GetNumericIniSet ( IniXMLDocument,
+                                             "client",
+                                             QString ( "advancedchannelch1%1" ).arg ( iChannel ),
+                                             0,
+                                             MAX_NUM_IN_OUT_CHANNELS - 1,
+                                             iCh1 ) )
+                    {
+                        continue;
+                    }
+                    GetNumericIniSet ( IniXMLDocument,
+                                       "client",
+                                       QString ( "advancedchannelch2%1" ).arg ( iChannel ),
+                                       INVALID_INDEX,
+                                       MAX_NUM_IN_OUT_CHANNELS - 1,
+                                       iCh2 );
+                    const QString strTag = FromBase64ToString ( GetIniSetting ( IniXMLDocument,
+                                                                                  "client",
+                                                                                  QString ( "advancedchanneltag%1" ).arg ( iChannel ) ) );
+                    vecAdvancedChannels.append ( CAdvancedAudioChannelConfig ( strTag, iCh1, iCh2 ) );
+                }
+            }
+
+            if ( !vecAdvancedChannels.isEmpty() )
+            {
+                pClient->SetAdvancedAudioChannels ( vecAdvancedChannels );
+            }
+            else
+            {
+                pClient->SetAudioChannels ( CC_ADVANCED );
+            }
+        }
+        else
+        {
+            pClient->SetAudioChannels ( static_cast<EAudChanConf> ( iValue ) );
+        }
     }
 
     // audio quality
@@ -987,8 +1031,19 @@ void CClientSettings::WriteSettingsToXML ( QDomDocument& IniXMLDocument, bool is
     // MeterStyle
     SetNumericIniSet ( IniXMLDocument, "client", "meterstyle", static_cast<int> ( pClient->GetMeterStyle() ) );
 
-    // audio channels
+    // audio channels and Advanced routing table
     SetNumericIniSet ( IniXMLDocument, "client", "audiochannels", static_cast<int> ( pClient->GetAudioChannels() ) );
+    const QVector<CAdvancedAudioChannelConfig>& vecAdvancedChannels = pClient->GetAdvancedAudioChannels();
+    SetNumericIniSet ( IniXMLDocument, "client", "advancedchannelcount", vecAdvancedChannels.size() );
+    for ( int iChannel = 0; iChannel < vecAdvancedChannels.size(); ++iChannel )
+    {
+        SetNumericIniSet ( IniXMLDocument, "client", QString ( "advancedchannelch1%1" ).arg ( iChannel ),
+                           vecAdvancedChannels[iChannel].iInputChannel1 );
+        SetNumericIniSet ( IniXMLDocument, "client", QString ( "advancedchannelch2%1" ).arg ( iChannel ),
+                           vecAdvancedChannels[iChannel].iInputChannel2 );
+        PutIniSetting ( IniXMLDocument, "client", QString ( "advancedchanneltag%1" ).arg ( iChannel ),
+                        ToBase64 ( vecAdvancedChannels[iChannel].strFaderTag ) );
+    }
 
     // audio quality
     SetNumericIniSet ( IniXMLDocument, "client", "audioquality", static_cast<int> ( pClient->GetAudioQuality() ) );

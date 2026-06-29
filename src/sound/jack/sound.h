@@ -88,6 +88,7 @@ public:
              const QString& strJackClientName ) :
         CSoundBase ( "Jack", fpNewProcessCallback, arg ),
         iJACKBufferSizeMono ( 0 ),
+        iNumInputChannels ( 2 ),
         bJackWasShutDown ( false ),
         fInOutLatencyMs ( 0.0f )
     {
@@ -108,6 +109,8 @@ public:
     virtual void Stop();
 
     virtual float       GetInOutLatencyMs() { return fInOutLatencyMs; }
+    virtual int         GetNumInputChannels() override { return iNumInputChannels; }
+    virtual QString     GetInputChannelName ( const int iChannel ) override { return QString ( "Input %1" ).arg ( iChannel + 1 ); }
     virtual void        EnableMIDI ( bool bEnable ) override;
     virtual bool        IsMIDIEnabled() const override;
     virtual QStringList GetMIDIDevNames() override;
@@ -115,12 +118,13 @@ public:
     // these variables should be protected but cannot since we want
     // to access them from the callback function
     CVector<short> vecsTmpAudioSndCrdStereo;
+    CVector<short> vecInputAudio;
     int            iJACKBufferSizeMono;
     int            iJACKBufferSizeStereo;
+    int            iNumInputChannels;
     bool           bJackWasShutDown;
 
-    jack_port_t* input_port_left;
-    jack_port_t* input_port_right;
+    QVector<jack_port_t*> input_ports;
     jack_port_t* output_port_left;
     jack_port_t* output_port_right;
     jack_port_t* input_port_midi;

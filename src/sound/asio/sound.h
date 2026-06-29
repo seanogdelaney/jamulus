@@ -129,6 +129,7 @@ protected:
     CVector<int> vSelectedOutputChannels;
 
     CVector<int16_t> vecsMultChanAudioSndCrd;
+    CVector<int16_t> vecInputAudioSndCrd;
 
     QMutex ASIOMutex;
 

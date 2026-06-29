@@ -46,6 +46,137 @@
 
 #include "clientsettingsdlg.h"
 
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QSignalBlocker>
+#include <QTableWidget>
+#include <QVBoxLayout>
+
+namespace
+{
+class CAdvancedAudioChannelsDlg : public QDialog
+{
+public:
+    CAdvancedAudioChannelsDlg ( CClient* pNClient, QWidget* pParent ) :
+        QDialog ( pParent ),
+        pClient ( pNClient ),
+        pTable ( new QTableWidget ( this ) )
+    {
+        setWindowTitle ( tr ( "Advanced Audio Routing" ) );
+        setModal ( true );
+        resize ( 620, 320 );
+
+        QVBoxLayout* pLayout = new QVBoxLayout ( this );
+        pTable->setColumnCount ( 3 );
+        pTable->setHorizontalHeaderLabels ( QStringList() << tr ( "Fader-Tag" ) << tr ( "Ch1" ) << tr ( "Ch2" ) );
+        pTable->horizontalHeader()->setSectionResizeMode ( 0, QHeaderView::Stretch );
+        pTable->horizontalHeader()->setSectionResizeMode ( 1, QHeaderView::ResizeToContents );
+        pTable->horizontalHeader()->setSectionResizeMode ( 2, QHeaderView::ResizeToContents );
+        pTable->setSelectionBehavior ( QAbstractItemView::SelectRows );
+        pLayout->addWidget ( pTable );
+
+        QHBoxLayout* pButtons = new QHBoxLayout;
+        QPushButton* pAdd = new QPushButton ( tr ( "Add" ), this );
+        QPushButton* pRemove = new QPushButton ( tr ( "Remove" ), this );
+        pButtons->addWidget ( pAdd );
+        pButtons->addWidget ( pRemove );
+        pButtons->addStretch();
+        pLayout->addLayout ( pButtons );
+
+        QDialogButtonBox* pDialogButtons = new QDialogButtonBox ( QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this );
+        pLayout->addWidget ( pDialogButtons );
+
+        connect ( pAdd, &QPushButton::clicked, this, [this] { AddRow(); } );
+        connect ( pRemove, &QPushButton::clicked, this, [this] {
+            const int iRow = pTable->currentRow();
+            if ( iRow >= 0 )
+            {
+                pTable->removeRow ( iRow );
+            }
+        } );
+        connect ( pDialogButtons, &QDialogButtonBox::accepted, this, [this] {
+            if ( pTable->rowCount() == 0 )
+            {
+                QMessageBox::warning ( this, tr ( "Advanced Audio Routing" ), tr ( "Add at least one source." ) );
+                return;
+            }
+            accept();
+        } );
+        connect ( pDialogButtons, &QDialogButtonBox::rejected, this, &QDialog::reject );
+
+        const QVector<CAdvancedAudioChannelConfig>& vecChannels = pClient->GetAdvancedAudioChannels();
+        if ( vecChannels.isEmpty() )
+        {
+            AddRow();
+        }
+        else
+        {
+            for ( const CAdvancedAudioChannelConfig& Source : vecChannels )
+            {
+                AddRow ( Source );
+            }
+        }
+    }
+
+    QVector<CAdvancedAudioChannelConfig> GetChannels() const
+    {
+        QVector<CAdvancedAudioChannelConfig> vecChannels;
+        for ( int iRow = 0; iRow < pTable->rowCount(); ++iRow )
+        {
+            const QTableWidgetItem* pTag = pTable->item ( iRow, 0 );
+            const QComboBox* pCh1 = qobject_cast<QComboBox*> ( pTable->cellWidget ( iRow, 1 ) );
+            const QComboBox* pCh2 = qobject_cast<QComboBox*> ( pTable->cellWidget ( iRow, 2 ) );
+            if ( ( pCh1 == nullptr ) || ( pCh2 == nullptr ) )
+            {
+                continue;
+            }
+            vecChannels.append ( CAdvancedAudioChannelConfig ( pTag == nullptr ? QString() : pTag->text(),
+                                                                pCh1->currentData().toInt(),
+                                                                pCh2->currentData().toInt() ) );
+        }
+        return vecChannels;
+    }
+
+private:
+    QComboBox* CreateChannelCombo ( const bool bAllowMono, const int iSelectedChannel ) const
+    {
+        QComboBox* pCombo = new QComboBox;
+        if ( bAllowMono )
+        {
+            pCombo->addItem ( tr ( "" ), INVALID_INDEX );
+        }
+        for ( int iChannel = 0; iChannel < pClient->GetSndCrdNumInputChannels(); ++iChannel )
+        {
+            pCombo->addItem ( pClient->GetSndCrdInputChannelName ( iChannel ), iChannel );
+        }
+        const int iSelectedIndex = pCombo->findData ( iSelectedChannel );
+        pCombo->setCurrentIndex ( iSelectedIndex >= 0 ? iSelectedIndex : 0 );
+        return pCombo;
+    }
+
+    void AddRow ( const CAdvancedAudioChannelConfig& Source = CAdvancedAudioChannelConfig() )
+    {
+        if ( pTable->rowCount() >= MAX_NUM_CHANNELS )
+        {
+            return;
+        }
+        const int iRow = pTable->rowCount();
+        pTable->insertRow ( iRow );
+        const QString strDefaultTag = iRow == 0 ? pClient->ChannelInfo.strName :
+                                                  tr ( "%1 %2" ).arg ( pClient->ChannelInfo.strName ).arg ( iRow + 1 );
+        pTable->setItem ( iRow, 0, new QTableWidgetItem ( Source.strFaderTag.isEmpty() ? strDefaultTag : Source.strFaderTag ) );
+        pTable->setCellWidget ( iRow, 1, CreateChannelCombo ( false, Source.iInputChannel1 ) );
+        pTable->setCellWidget ( iRow, 2, CreateChannelCombo ( true, Source.iInputChannel2 ) );
+    }
+
+    CClient* pClient;
+    QTableWidget* pTable;
+};
+}
+
 /* Implementation *************************************************************/
 CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSetP, QWidget* parent ) :
     CBaseDlg ( parent, Qt::Window ), // use Qt::Window to get min/max window buttons
@@ -308,7 +439,7 @@ CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSet
     // audio channels
     QString strAudioChannels = "<b>" + tr ( "Audio Channels" ) + ":</b> " +
                                tr ( "Selects the number of audio channels to be used for communication between "
-                                    "client and server. There are three modes available:" ) +
+                                    "client and server. There are four modes available:" ) +
                                "<ul>"
                                "<li>"
                                "<b>" +
@@ -506,10 +637,11 @@ CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSet
 
     // Audio Channels combo box
     cbxAudioChannels->clear();
-    cbxAudioChannels->addItem ( tr ( "Mono" ) );               // CC_MONO
-    cbxAudioChannels->addItem ( tr ( "Mono-in/Stereo-out" ) ); // CC_MONO_IN_STEREO_OUT
-    cbxAudioChannels->addItem ( tr ( "Stereo" ) );             // CC_STEREO
-    cbxAudioChannels->setCurrentIndex ( static_cast<int> ( pClient->GetAudioChannels() ) );
+    cbxAudioChannels->addItem ( tr ( "Mono" ), CC_MONO );
+    cbxAudioChannels->addItem ( tr ( "Mono-in/Stereo-out" ), CC_MONO_IN_STEREO_OUT );
+    cbxAudioChannels->addItem ( tr ( "Stereo" ), CC_STEREO );
+    cbxAudioChannels->addItem ( tr ( "Advanced" ), CC_ADVANCED );
+    cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
 
     // Audio Quality combo box
     cbxAudioQuality->clear();
@@ -1248,7 +1380,26 @@ void CClientSettingsDlg::OnROutChanActivated ( int iChanIdx )
 
 void CClientSettingsDlg::OnAudioChannelsActivated ( int iChanIdx )
 {
-    pClient->SetAudioChannels ( static_cast<EAudChanConf> ( iChanIdx ) );
+    const EAudChanConf eNewConfiguration = static_cast<EAudChanConf> ( cbxAudioChannels->itemData ( iChanIdx ).toInt() );
+    if ( eNewConfiguration == CC_ADVANCED )
+    {
+        CAdvancedAudioChannelsDlg Dialog ( pClient, this );
+        if ( Dialog.exec() == QDialog::Accepted )
+        {
+            pClient->SetAdvancedAudioChannels ( Dialog.GetChannels() );
+        }
+        else
+        {
+            QSignalBlocker Blocker ( cbxAudioChannels );
+            cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
+            return;
+        }
+    }
+    else
+    {
+        pClient->SetAudioChannels ( eNewConfiguration );
+    }
+
     emit AudioChannelsChanged();
     UpdateDisplay(); // upload rate will be changed
 }

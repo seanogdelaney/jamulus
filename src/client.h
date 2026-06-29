@@ -51,6 +51,7 @@
 #include <QString>
 #include <QDateTime>
 #include <QMutex>
+#include <QVector>
 #ifdef USE_OPUS_SHARED_LIB
 #    include "opus/opus_custom.h"
 #else
@@ -59,6 +60,7 @@
 #include "global.h"
 #include "socket.h"
 #include "channel.h"
+#include "clientaudiochannel.h"
 #include "util.h"
 #include "plugins/audioreverb.h"
 #include "buffer.h"
@@ -143,6 +145,22 @@ public:
 
 class CClientSettings;
 
+/** One independently advertised input source in Advanced audio mode. */
+class CAdvancedAudioChannelConfig
+{
+public:
+    CAdvancedAudioChannelConfig ( const QString& strNTag = QString(), const int iNInputChannel1 = 0, const int iNInputChannel2 = INVALID_INDEX ) :
+        strFaderTag ( strNTag ),
+        iInputChannel1 ( iNInputChannel1 ),
+        iInputChannel2 ( iNInputChannel2 )
+    {
+    }
+
+    QString strFaderTag;
+    int     iInputChannel1;
+    int     iInputChannel2; // INVALID_INDEX means mono
+};
+
 class CClient : public QObject
 {
     Q_OBJECT
@@ -164,7 +182,7 @@ public:
     bool SetServerAddr ( QString strNAddr );
 
     // IPv6 Available
-    bool IsIPv6Available() { return bIPv6Available; }
+    bool IsIPv6Available() { return PrimaryAudioChannel.IsIPv6Available(); }
 
     double GetLevelForMeterdBLeft() { return SignalLevelMeter.GetLevelForMeterdBLeftOrMono(); }
     double GetLevelForMeterdBRight() { return SignalLevelMeter.GetLevelForMeterdBRight(); }
@@ -185,6 +203,9 @@ public:
     EAudChanConf GetAudioChannels() const { return eAudioChannelConf; }
     void         SetAudioChannels ( const EAudChanConf eNAudChanConf );
 
+    const QVector<CAdvancedAudioChannelConfig>& GetAdvancedAudioChannels() const { return vecAdvancedAudioChannels; }
+    void SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels );
+
     int  GetAudioInFader() const { return iAudioInFader; }
     void SetAudioInFader ( const int iNV ) { iAudioInFader = iNV; }
 
@@ -201,22 +222,13 @@ public:
     void SetDoAutoSockBufSize ( const bool bValue );
     bool GetDoAutoSockBufSize() const { return Channel.GetDoAutoSockBufSize(); }
 
-    void SetSockBufNumFrames ( const int iNumBlocks, const bool bPreserve = false ) { Channel.SetSockBufNumFrames ( iNumBlocks, bPreserve ); }
+    void SetSockBufNumFrames ( const int iNumBlocks, const bool bPreserve = false );
     int  GetSockBufNumFrames() { return Channel.GetSockBufNumFrames(); }
 
-    void SetServerSockBufNumFrames ( const int iNumBlocks )
-    {
-        iServerSockBufNumFrames = iNumBlocks;
-
-        // if auto setting is disabled, inform the server about the new size
-        if ( !GetDoAutoSockBufSize() )
-        {
-            Channel.CreateJitBufMes ( iServerSockBufNumFrames );
-        }
-    }
+    void SetServerSockBufNumFrames ( const int iNumBlocks );
     int GetServerSockBufNumFrames() { return iServerSockBufNumFrames; }
 
-    int GetUploadRateKbps() { return Channel.GetUploadRateKbps(); }
+    int GetUploadRateKbps();
 
     // sound card device selection
     QStringList GetSndCrdDevNames() { return Sound.GetDevNames(); }
@@ -289,7 +301,7 @@ public:
 
     void SetInputBoost ( const int iNewBoost ) { iInputBoost = iNewBoost; }
 
-    void SetRemoteInfo() { Channel.SetRemoteInfo ( ChannelInfo ); }
+    void SetRemoteInfo();
 
     void CreateChatTextMes ( const QString& strChatText ) { Channel.CreateChatTextMes ( strChatText ); }
 
@@ -343,7 +355,17 @@ protected:
 
     void Init();
     void ProcessSndCrdAudioData ( CVector<short>& vecsStereoSndCrd );
-    void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd );
+    void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd,
+                                  const CVector<int16_t>& vecInputAudio,
+                                  int iInputChannels );
+    void ConfigureAudioChannels();
+    void RebuildAdditionalAudioChannels();
+    void StopAndDeleteAdditionalAudioChannels();
+    void UpdateAdvancedChannelInfos();
+    CChannelCoreInfo GetChannelInfoForAdvancedSource ( int iSourceIndex ) const;
+    void FillAudioSourceBuffer ( CClientAudioChannel& AudioChannel, const CAdvancedAudioChannelConfig& Source,
+                                 const CVector<int16_t>& vecInputAudio, int iInputChannels );
+    int GetCodedBytesForAudioChannels ( int iNumChannels, bool& bUseRawAudio ) const;
 
     int  PreparePingMessage();
     int  EvaluatePingMessage ( const int iMs );
@@ -354,9 +376,14 @@ protected:
     int  FindClientChannel ( const int iServerChannelID, const bool bCreateIfNew ); // returns a client channel ID or INVALID_INDEX
     bool ReorderLevelList ( CVector<uint16_t>& vecLevelList );                      // modifies vecLevelList, passed by reference
 
-    // only one channel is needed for client application
-    CChannel  Channel;
-    CProtocol ConnLessProtocol;
+    // The primary stream receives the personal mix. Additional streams are
+    // transmit-only participants, built with the same channel implementation.
+    CClientAudioChannel PrimaryAudioChannel;
+    CChannel&           Channel;
+    CProtocol&          ConnLessProtocol;
+    CHighPrioSocket&    Socket;
+    QVector<CClientAudioChannel*> vecAdditionalAudioChannels;
+    QVector<CAdvancedAudioChannelConfig> vecAdvancedAudioChannels;
 
     // client channels, indexed by client channel ID,
     // containing server channel ID (INVALID_INDEX if free)
@@ -370,18 +397,14 @@ protected:
     int    iJoinSequence;   // order of joining of session participants
     QMutex MutexChannels;
 
-    // audio encoder/decoder
+    // The primary stream owns its encoder through CClientAudioChannel. CClient
+    // owns only decoders because it alone renders the return mix.
     OpusCustomMode*        Opus64Mode;
-    OpusCustomEncoder*     Opus64EncoderMono;
     OpusCustomDecoder*     Opus64DecoderMono;
-    OpusCustomEncoder*     Opus64EncoderStereo;
     OpusCustomDecoder*     Opus64DecoderStereo;
     OpusCustomMode*        OpusMode;
-    OpusCustomEncoder*     OpusEncoderMono;
     OpusCustomDecoder*     OpusDecoderMono;
-    OpusCustomEncoder*     OpusEncoderStereo;
     OpusCustomDecoder*     OpusDecoderStereo;
-    OpusCustomEncoder*     CurOpusEncoder;
     OpusCustomDecoder*     CurOpusDecoder;
     EAudComprType          eAudioCompressionType;
     int                    iCeltNumCodedBytes;
@@ -392,11 +415,6 @@ protected:
     bool                   bIsInitializationPhase;
     bool                   bMuteOutStream;
     float                  fMuteOutStreamGain;
-    CVector<unsigned char> vecCeltData;
-
-    bool            bIPv6Available; // must be before Socket - passed by reference to Socket
-    CHighPrioSocket Socket;
-
     CSound                  Sound;
     CStereoSignalLevelMeter SignalLevelMeter;
 
@@ -416,8 +434,12 @@ protected:
     CBuffer<int16_t> SndCrdConversionBufferIn;
     CBuffer<int16_t> SndCrdConversionBufferOut;
     CVector<int16_t> vecDataConvBuf;
+    CVector<int16_t> vecInputDataConvBuf;
+    CVector<int16_t> vecCapturedInputFallback;
     CVector<int16_t> vecsStereoSndCrdMuteStream;
     CVector<int16_t> vecZeros;
+    CVector<int16_t> vecPrimaryInputAudio;
+    int              iCaptureInputChannels;
 
     bool bFraSiFactPrefSupported;
     bool bFraSiFactDefSupported;
@@ -433,6 +455,8 @@ protected:
 
     bool   bJitterBufferOK;
     bool   bMuteMeInPersonalMix;
+    quint16 iSocketQosNumber;
+    bool    bDisableIPv6;
     QMutex MutexDriverReinit;
 
     // server settings
@@ -451,14 +475,11 @@ protected:
 
 protected slots:
     void OnHandledSignal ( int sigNum );
-    void OnSendProtMessage ( CVector<uint8_t> vecMessage );
     void OnInvalidPacketReceived ( CHostAddress RecHostAddr );
-
-    void OnDetectedCLMessage ( CVector<uint8_t> vecbyMesBodyData, int iRecID, CHostAddress RecHostAddr );
 
     void OnReqJittBufSize() { CreateServerJitterBufferMessage(); }
     void OnJittBufSizeChanged ( int iNewJitBufSize );
-    void OnReqChanInfo() { Channel.SetRemoteInfo ( ChannelInfo ); }
+    void OnReqChanInfo() { SetRemoteInfo(); }
     void OnNewConnection();
     void OnCLDisconnection ( CHostAddress InetAddr )
     {
@@ -468,8 +489,6 @@ protected slots:
         }
     }
     void OnCLPingReceived ( CHostAddress InetAddr, int iMs );
-
-    void OnSendCLProtMessage ( CHostAddress InetAddr, CVector<uint8_t> vecMessage );
 
     void OnCLPingWithNumClientsReceived ( CHostAddress InetAddr, int iMs, int iNumClients );
 

@@ -693,7 +693,7 @@ void CClientDlg::ManageDragNDrop ( QDropEvent* Event, const bool bCheckAccept )
 
 void CClientDlg::UpdateRevSelection()
 {
-    if ( pClient->GetAudioChannels() == CC_STEREO )
+    if ( ( pClient->GetAudioChannels() == CC_STEREO ) || ( pClient->GetAudioChannels() == CC_ADVANCED ) )
     {
         // for stereo make channel selection invisible since
         // reverberation effect is always applied to both channels

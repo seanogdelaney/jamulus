@@ -134,6 +134,15 @@ public:
     bool IsRunning() const { return bRun; }
     bool IsCallbackEntered() const { return bCallbackEntered; }
 
+    /**
+     * Complete input capture for the current callback.  The legacy callback
+     * buffer remains stereo because it is also the output buffer; advanced
+     * routing reads this capture before that buffer is overwritten by the
+     * return mix.
+     */
+    const CVector<int16_t>& GetCapturedInputAudio() const { return vecCapturedInputAudio; }
+    int GetCapturedInputChannels() const { return iCapturedInputChannels; }
+
     // TODO this should be protected but since it is used
     // in a callback function it has to be public -> better solution
     void EmitReinitRequestSignal ( const ESndCrdResetType eSndCrdResetType ) { emit ReinitRequest ( eSndCrdResetType ); }
@@ -186,12 +195,38 @@ protected:
     void ( *fpProcessCallback ) ( CVector<int16_t>& psData, void* arg );
     void* pProcessCallbackArg;
 
+    /** Set the full capture before calling ProcessCallback. */
+    void SetCapturedInputAudio ( const CVector<int16_t>& vecInput, const int iNumChannels )
+    {
+        if ( ( iNumChannels > 0 ) && ( vecInput.Size() >= iNumChannels ) )
+        {
+            if ( vecCapturedInputAudio.Size() != vecInput.Size() )
+            {
+                vecCapturedInputAudio.Init ( vecInput.Size() );
+            }
+            vecCapturedInputAudio = vecInput;
+            iCapturedInputChannels = iNumChannels;
+            bCaptureProvidedForCallback = true;
+        }
+    }
+
     // callback function call for derived classes
     void ProcessCallback ( CVector<int16_t>& psData )
     {
+        // Drivers that have not yet supplied a multichannel capture retain the
+        // long-standing stereo callback behaviour.
+        if ( !bCaptureProvidedForCallback )
+        {
+            SetCapturedInputAudio ( psData, 2 );
+        }
+        bCaptureProvidedForCallback = false;
         bCallbackEntered = true;
         ( *fpProcessCallback ) ( psData, pProcessCallbackArg );
     }
+
+    CVector<int16_t> vecCapturedInputAudio;
+    int              iCapturedInputChannels;
+    bool             bCaptureProvidedForCallback;
 
     bool   bRun;
     bool   bCallbackEntered;
