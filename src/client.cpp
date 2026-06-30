@@ -48,6 +48,8 @@
 #include "settings.h"
 #include "util.h"
 
+#include <cstring>
+
 /* Implementation *************************************************************/
 CClient::CClient ( const quint16  iPortNumber,
                    const quint16  iQosNumber,
