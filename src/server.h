@@ -61,6 +61,7 @@
 #include "signalhandler.h"
 #include "socket.h"
 #include "channel.h"
+#include "multisource.h"
 #include "util.h"
 #include "serverlogging.h"
 #include "serverlist.h"
@@ -101,6 +102,123 @@ protected:
 template<>
 class CServerSlots<0>
 {};
+
+
+// `CChannel` is deliberately the transport/session object.  The separate
+// source object below is the normal visible mixer/recording primitive and
+// never owns a socket, protocol instance or return encoder.
+class CServerSource
+{
+public:
+    CServerSource() : SignalLevelMeter ( false, 0.5 ) {}
+    enum EState
+    {
+        SS_FREE,
+        SS_RESERVED,
+        SS_ACTIVE
+    };
+
+    void Reset()
+    {
+        eState = SS_FREE;
+        iParentSessionID = INVALID_INDEX;
+        bLegacy = false;
+        Config = CMultiSourceSourceConfig();
+        iFadeInCnt = 0;
+        iFadeInCntMax = 1;
+        SignalLevelMeter.Reset();
+    }
+
+    void Reserve ( const int parentSessionID, const CMultiSourceSourceConfig& config, const bool legacy, const int fadeInCntMax )
+    {
+        eState = SS_RESERVED;
+        iParentSessionID = parentSessionID;
+        bLegacy = legacy;
+        Config = config;
+        iFadeInCnt = 0;
+        iFadeInCntMax = std::max ( 1, fadeInCntMax );
+    }
+
+    void Activate() { eState = SS_ACTIVE; iFadeInCnt = 0; }
+    bool IsAllocated() const { return eState != SS_FREE; }
+    bool IsActive() const { return eState == SS_ACTIVE; }
+    bool IsReserved() const { return eState == SS_RESERVED; }
+    bool IsLegacy() const { return bLegacy; }
+    int ParentSessionID() const { return iParentSessionID; }
+    const CMultiSourceSourceConfig& GetConfig() const { return Config; }
+    CMultiSourceSourceConfig& GetConfig() { return Config; }
+
+    float FadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    void AdvanceFade() { if ( iFadeInCnt < iFadeInCntMax ) ++iFadeInCnt; }
+    double UpdateAndGetLevelForMeterdB ( const CVector<int16_t>& data, const int samples, const bool stereo )
+    {
+        SignalLevelMeter.Update ( data, samples, stereo );
+        return SignalLevelMeter.GetLevelForMeterdBLeftOrMono();
+    }
+
+    CChannelCoreInfo MakeVisibleInfo ( const CChannelCoreInfo& owner ) const
+    {
+        CChannelCoreInfo result = owner;
+        if ( !bLegacy )
+        {
+            result.strName = owner.strName + QStringLiteral ( " — " ) + Config.strTag;
+            result.iInstrument = Config.iInstrument;
+        }
+        return result;
+    }
+
+private:
+    EState eState = SS_FREE;
+    int iParentSessionID = INVALID_INDEX;
+    bool bLegacy = false;
+    CMultiSourceSourceConfig Config;
+    int iFadeInCnt = 0;
+    int iFadeInCntMax = 1;
+    CStereoSignalLevelMeter SignalLevelMeter;
+};
+
+class CServerSessionState
+{
+public:
+    enum EState
+    {
+        ST_LEGACY,
+        ST_PREPARED,
+        ST_ACTIVE
+    };
+
+    CServerSessionState() : vecSourceIDs ( MAX_NUM_CHANNELS ) {}
+
+    void Reset()
+    {
+        eState = ST_LEGACY;
+        iLegacySourceID = INVALID_INDEX;
+        iNumSources = 0;
+        iGeneration = 0;
+        bHaveNextSequence = false;
+        iNextSequence = 0;
+        iFirstSequence = 0;
+        bIngressPrimed = false;
+        iIngressTargetFrames = DEF_NET_BUF_SIZE_NUM_BL;
+        bIngressAuto = false;
+        bAdvancedHalfFramePending = false;
+        Ingress.Reset();
+    }
+
+    EState eState = ST_LEGACY;
+    int iLegacySourceID = INVALID_INDEX;
+    CVector<int> vecSourceIDs; // reserved while prepared; active after first frame
+    int iNumSources = 0;
+    uint16_t iGeneration = 0;
+    bool bHaveNextSequence = false;
+    uint32_t iNextSequence = 0;
+    uint32_t iFirstSequence = 0;
+    bool bIngressPrimed = false;
+    int iIngressTargetFrames = DEF_NET_BUF_SIZE_NUM_BL;
+    bool bIngressAuto = false;
+    bool bAdvancedHalfFramePending = false;
+    MultiSource::SessionIngress Ingress;
+};
 
 class CServer : public QObject, public CServerSlots<MAX_NUM_CHANNELS>
 {
@@ -150,7 +268,8 @@ public:
     bool IsIPv6Available() { return bIPv6Available; }
 
     // GUI settings ------------------------------------------------------------
-    int GetClientNumAudioChannels ( const int iChanNum ) { return vecChannels[iChanNum].GetNumAudioChannels(); }
+    int GetClientNumAudioChannels ( const int iChanNum ) { return MathUtils::InRange<int> ( iChanNum, 0, MAX_NUM_CHANNELS - 1 ) && vecSources[iChanNum].IsActive() ? vecSources[iChanNum].GetConfig().iNumChannels : 0; }
+    int GetNumberOfConnectedSessions();
 
     void           SetDirectoryType ( const EDirectoryType eNCSAT ) { ServerListManager.SetDirectoryType ( eNCSAT ); }
     EDirectoryType GetDirectoryType() { return ServerListManager.GetDirectoryType(); }
@@ -195,12 +314,22 @@ public:
     bool SendChatTextToConChannel ( const int iCurChanID, const QString& strChatText );
 
 protected:
-    // access functions for actual channels
-    bool IsConnected ( const int iChanNum ) { return vecChannels[iChanNum].IsConnected(); }
+    // A session is a CChannel endpoint; a source is an ordinary visible fader.
+    bool IsConnected ( const int iSessionID ) { return vecSessions[iSessionID].IsConnected(); }
 
-    int                   FindChannel ( const CHostAddress& CheckAddr, const bool bAllowNew = false );
-    void                  InitChannel ( const int iNewChanID, const CHostAddress& InetAddr );
-    void                  FreeChannel ( const int iCurChanID );
+    int  FindChannel ( const CHostAddress& checkAddr, const bool bAllowNew = false );
+    void InitChannel ( const int iNewSessionID, const CHostAddress& inetAddr );
+    void FreeChannel ( const int iCurSessionID );
+    int  AllocateSource ( const int parentSessionID, const CMultiSourceSourceConfig& config, const bool legacy, const bool active );
+    void FreeSource ( const int sourceID );
+    void FreeAllSourcesForSession ( const int sessionID );
+    CChannelCoreInfo GetSourceInfo ( const int sourceID ) const;
+    int  GetLegacySourceID ( const int sessionID ) const;
+    bool PrepareAdvancedSources ( const int sessionID, const CVector<CMultiSourceSourceConfig>& config, uint8_t& rejectReason );
+    bool PutAdvancedAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );
+    bool ActivatePreparedSources ( const int sessionID, const uint16_t generation, const uint32_t firstSequence );
+    void OnReqMultiSourceCaps ( const int sessionID );
+    void OnMultiSourceConfig ( const int sessionID, CVector<CMultiSourceSourceConfig> config );
     void                  DumpChannels ( const QString& title );
     CVector<CChannelInfo> CreateChannelList();
 
@@ -218,13 +347,15 @@ protected:
     template<unsigned int slotId>
     inline void connectChannelSignalsToServerSlots();
 
-    static void DecodeReceiveDataBlocks ( CServer* pServer, const int iStartChanCnt, const int iStopChanCnt, const int iNumClients );
+    static void DecodeReceiveDataBlocks ( CServer* pServer, const int startSource, const int stopSource, const int numSources );
 
-    static void MixEncodeTransmitDataBlocks ( CServer* pServer, const int iStartChanCnt, const int iStopChanCnt, const int iNumClients );
+    static void MixEncodeTransmitDataBlocks ( CServer* pServer, const int startSession, const int stopSession, const int numSources );
 
-    void DecodeReceiveData ( const int iChanCnt, const int iNumClients );
+    void DecodeReceiveData ( const int sourceIndex, const int numSources );
 
-    void MixEncodeTransmitData ( const int iChanCnt, const int iNumClients );
+    void MixEncodeTransmitData ( const int sessionIndex, const int numSources );
+    bool ReadAdvancedFrame ( const int sessionID, const int blockIndex );
+    void OnSessionJitterPolicyChanged ( int sessionID, int numFrames, bool bAuto );
 
     virtual void customEvent ( QEvent* pEvent );
 
@@ -244,13 +375,15 @@ protected:
                                          const CVector<CVector<int16_t>> vecvecsData,
                                          CVector<uint16_t>&              vecLevelsOut );
 
-    // do not use the vector class since CChannel does not have appropriate
-    // copy constructor/operator
-    CChannel vecChannels[MAX_NUM_CHANNELS];
-    int      iMaxNumChannels;
+    // Session slots retain the established CChannel protocol/socket lifetime.
+    CChannel            vecSessions[MAX_NUM_CHANNELS];
+    CServerSessionState vecSessionState[MAX_NUM_CHANNELS];
+    CServerSource       vecSources[MAX_NUM_CHANNELS];
+    int                 iMaxNumChannels; // visible-source cap from server configuration
 
-    int    iCurNumChannels;
-    int    vecChannelOrder[MAX_NUM_CHANNELS];
+    int iCurNumSessions;
+    int vecSessionOrder[MAX_NUM_CHANNELS]; // address-sorted active session slots
+    int iCurNumSources; // active plus reserved, never exceeds iMaxNumChannels
     QMutex MutexChanOrder;
 
     CProtocol ConnLessProtocol;
@@ -276,7 +409,8 @@ protected:
     bool bDisableRaw;
 
     CVector<QString> vstrChatColors;
-    CVector<int>     vecChanIDsCurConChan;
+    CVector<int>     vecChanIDsCurConChan; // visible source IDs for current frame
+    CVector<int>     vecSessionIDsCurConSession; // physical target sessions for current frame
 
     CVector<CVector<float>>   vecvecfGains;
     CVector<CVector<float>>   vecvecfPannings;
@@ -289,6 +423,10 @@ protected:
     CVector<CVector<int16_t>> vecvecsSendData;
     CVector<CVector<float>>   vecvecfIntermediateProcBuf;
     CVector<CVector<uint8_t>> vecvecbyCodedData;
+    // Advanced ingress is stored by actual visible source ID so a session frame
+    // can be decoded once and consumed by several faders without a second jitter buffer.
+    CVector<CVector<uint8_t>> vecSourceIngressPayload;
+    CVector<uint8_t>          vecSourceIngressPresent; // [source id * 2 + codec-frame block]
 
     // Channel levels
     CVector<uint16_t> vecChannelLevels;

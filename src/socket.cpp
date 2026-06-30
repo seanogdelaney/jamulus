@@ -364,6 +364,11 @@ static ssize_t sendto_ipv4_with_tos ( int fd, const void* buf, size_t len, int f
 
 void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr )
 {
+    SendPacket ( vecbySendBuf.Size() > 0 ? &vecbySendBuf[0] : nullptr, vecbySendBuf.Size(), HostAddr );
+}
+
+void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, const CHostAddress& HostAddr )
+{
     int status = 0;
 
     uSockAddr UdpSocketAddr;
@@ -372,14 +377,9 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
 
     QMutexLocker locker ( &Mutex );
 
-    const int iVecSizeOut = vecbySendBuf.Size();
-
     if ( iVecSizeOut > 0 )
     {
-        // send packet through network (we have to convert the constant unsigned
-        // char vector in "const char*", for this we first convert the const
-        // uint8_t vector in a read/write uint8_t vector and then do the cast to
-        // const char *)
+        // send packet through network
 
         for ( int tries = 0; tries < 2; tries++ ) // retry loop in case send fails on iOS
         {
@@ -404,7 +404,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
 #if defined( Q_OS_BSD4 )
                     // In macOS and FreeBSD we need to set TOS explicitly when sending IPv4 over IPv6 socket
                     status = sendto_ipv4_with_tos ( UdpSocket,
-                                                    (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                                    (const char*) pbySendBuf,
                                                     iVecSizeOut,
                                                     0,
                                                     &UdpSocketAddr.sa,
@@ -412,7 +412,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                                                     (int) iQosNumber );
 #else
                     status = sendto ( UdpSocket,
-                                      (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                      (const char*) pbySendBuf,
                                       iVecSizeOut,
                                       0,
                                       &UdpSocketAddr.sa,
@@ -426,7 +426,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                     UdpSocketAddr.sa4.sin_addr.s_addr = htonl ( HostAddr.InetAddr.toIPv4Address() );
 
                     status = sendto ( UdpSocket,
-                                      (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                      (const char*) pbySendBuf,
                                       iVecSizeOut,
                                       0,
                                       &UdpSocketAddr.sa,
@@ -440,7 +440,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                 inet_pton ( AF_INET6, HostAddr.InetAddr.toString().toLocal8Bit().constData(), &UdpSocketAddr.sa6.sin6_addr );
 
                 status = sendto ( UdpSocket,
-                                  (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                  (const char*) pbySendBuf,
                                   iVecSizeOut,
                                   0,
                                   &UdpSocketAddr.sa,
