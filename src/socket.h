@@ -92,6 +92,7 @@ public:
     virtual ~CSocket();
 
     void SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr );
+    void SendPacket ( const uint8_t* pbySendBuf, int iNumBytes, const CHostAddress& HostAddr );
 
     bool GetAndResetbJitterBufferOKFlag();
     void Close();
@@ -183,6 +184,7 @@ public:
     }
 
     void SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr ) { Socket.SendPacket ( vecbySendBuf, HostAddr ); }
+    void SendPacket ( const uint8_t* pbySendBuf, const int iNumBytes, const CHostAddress& HostAddr ) { Socket.SendPacket ( pbySendBuf, iNumBytes, HostAddr ); }
 
     bool GetAndResetbJitterBufferOKFlag() { return Socket.GetAndResetbJitterBufferOKFlag(); }
 

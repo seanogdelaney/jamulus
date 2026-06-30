@@ -220,3 +220,73 @@ The packet size will vary based on:
 These values are wrapped up into the `NETW_TRANSPORT_PROPS` messages, which the client sends to the server to tell it which values to use.
 
 Both client and server use a jitter buffer for received audio data to prevent audio drop-out. This is configurable.
+
+---
+
+## Advanced multi-source session extension (version 1)
+
+This optional extension is used only after a client has started an ordinary
+legacy session and has received a semantic capability reply. It does **not**
+change legacy audio packets or reinterpret generic protocol acknowledgements.
+A generic ACK for an unknown message is insufficient evidence of support.
+
+### Capability and promotion
+
+The new reliable message identifiers are:
+
+| Message | Direction | Body |
+|---|---|---|
+| `REQ_MULTISOURCE_CAPS` | Advanced client → server | empty |
+| `MULTISOURCE_CAPS` | server → Advanced client | extension version, maximum supported source rows |
+| `MULTISOURCE_CONFIG` | client → server | versioned, split-message-capable source descriptors |
+| `MULTISOURCE_ACCEPT` | server → client | configuration generation and local-key → ordinary fader-ID map |
+| `MULTISOURCE_REJECT` | server → client | version and rejection reason |
+
+`MULTISOURCE_CONFIG` is sent only after the existing split-message capability
+has been negotiated. Each descriptor contains a session-local key, 1/2 input
+channels, codec (`CT_OPUS` or `CT_OPUS64`), session Raw flag, exact fixed
+payload size, instrument icon, and UTF-8 tag. Sources in a configuration share
+codec family and Raw policy.
+
+The client keeps transmitting ordinary legacy upload packets until it receives
+`MULTISOURCE_ACCEPT`. At the next codec-frame boundary it transmits advanced
+fragments with the accepted generation. The server reserves source faders
+without exposing them, then promotes atomically on the first valid advanced
+fragment. Old servers do not send `MULTISOURCE_CAPS`, so a timeout leaves the
+legacy session unchanged.
+
+### UDP uplink fragment
+
+Advanced uplink audio is a non-protocol UDP datagram; its non-zero magic means
+it cannot be mistaken for a protocol frame (whose tag is two zero bytes). All
+multi-byte fields are big-endian/network byte order.
+
+```
+0   u16  magic       0x4d53 ("MS")
+2   u8   version     1
+3   u8   flags       bit 0 = Raw; all other bits zero
+4   u16  generation  accepted configuration generation
+6   u32  sequence    one monotonically increasing codec-frame sequence
+10  u8   fragment    zero-based fragment index
+11  u8   fragments   total fragments, 1..32
+12  u8   records     records carried by this fragment
+13  u8   reserved    zero
+14  repeated record:
+      u8   local source key
+      u16  payload bytes
+      u8[] encoded or Raw payload
+```
+
+The maximum application UDP payload is 1200 bytes. A record is never split
+across fragments. The largest first-version record is Raw stereo Opus-128:
+`1 + 2 + (2 * 128 * 2) = 515` bytes. Therefore two largest records fit in one
+fragment (`14 + 2 * 515 = 1044`), and 64 configured rows require at most 32
+fragments. The server rejects malformed header fields, stale generations,
+unknown keys, duplicated records/fragments, wrong payload sizes, and packets
+outside its bounded sequence window.
+
+A session reassembly ring is keyed by the shared sequence. A fragment loss
+only removes its records: other source records in the same sequence are still
+decoded. Missing source payloads invoke the existing source codec PLC (or Raw
+silence). The existing single return stream remains the legacy transport profile
+negotiated when the session began.

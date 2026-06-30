@@ -69,6 +69,8 @@ public:
     virtual void Stop() override;
 
     // channel selection
+    virtual bool    SupportsAdvancedCapture() const override { return true; }
+
     virtual int     GetNumInputChannels() override { return iNumInChanPlusAddChan; }
     virtual QString GetInputChannelName ( const int iDiD ) override { return sChannelNamesInput[iDiD]; }
     virtual void    SetLeftInputChannel ( const int iNewChan ) override;
@@ -91,6 +93,7 @@ public:
     // these variables/functions should be protected but cannot since we want
     // to access them from the callback function
     CVector<short> vecsTmpAudioSndCrdStereo;
+    CVector<short> vecInputAudioSndCrd;
     int            iCoreAudioBufferSizeMono;
     int            iCoreAudioBufferSizeStereo;
     AudioDeviceID  CurrentAudioInputDeviceID;

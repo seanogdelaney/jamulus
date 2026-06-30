@@ -85,6 +85,8 @@ CChannel::CChannel ( const bool bNIsServer ) :
     // if we later do not fire vectors in the emits, we can remove this again
     qRegisterMetaType<CVector<uint8_t>> ( "CVector<uint8_t>" );
     qRegisterMetaType<CHostAddress> ( "CHostAddress" );
+    qRegisterMetaType<CVector<CMultiSourceSourceConfig>> ( "CVector<CMultiSourceSourceConfig>" );
+    qRegisterMetaType<CMultiSourceAcceptMap> ( "CMultiSourceAcceptMap" );
     //### TODO: END ###//
 
     QObject::connect ( &Protocol, &CProtocol::MessReadyForSending, this, &CChannel::OnSendProtMessage );
@@ -107,6 +109,16 @@ CChannel::CChannel ( const bool bNIsServer ) :
 
     QObject::connect ( &Protocol, &CProtocol::RawAudioSupported, this, &CChannel::RawAudioSupported );
 
+    QObject::connect ( &Protocol, &CProtocol::ReqMultiSourceCaps, this, &CChannel::ReqMultiSourceCaps );
+
+    QObject::connect ( &Protocol, &CProtocol::MultiSourceCapsReceived, this, &CChannel::MultiSourceCapsReceived );
+
+    QObject::connect ( &Protocol, &CProtocol::MultiSourceConfigReceived, this, &CChannel::MultiSourceConfigReceived );
+
+    QObject::connect ( &Protocol, &CProtocol::MultiSourceAcceptReceived, this, &CChannel::MultiSourceAcceptReceived );
+
+    QObject::connect ( &Protocol, &CProtocol::MultiSourceRejected, this, &CChannel::MultiSourceRejected );
+
     QObject::connect ( &Protocol, &CProtocol::MuteStateHasChangedReceived, this, &CChannel::MuteStateHasChangedReceived );
 
     QObject::connect ( &Protocol, &CProtocol::ChangeChanInfo, this, &CChannel::OnChangeChanInfo );
@@ -120,6 +132,7 @@ CChannel::CChannel ( const bool bNIsServer ) :
     QObject::connect ( &Protocol, &CProtocol::ReqSplitMessSupport, this, &CChannel::OnReqSplitMessSupport );
 
     QObject::connect ( &Protocol, &CProtocol::SplitMessSupported, this, &CChannel::OnSplitMessSupported );
+    QObject::connect ( &Protocol, &CProtocol::SplitMessSupported, this, &CChannel::SplitMessageSupported );
 
     QObject::connect ( &Protocol, &CProtocol::LicenceRequired, this, &CChannel::LicenceRequired );
 
@@ -282,13 +295,17 @@ bool CChannel::SetSockBufNumFrames ( const int iNewNumFrames, const bool bPreser
 
     // only in case there is no error, we are the server and auto jitter buffer
     // setting is enabled, we have to report the current setting to the client
-    if ( !ReturnValue && bIsServer && bCurDoAutoSockBufSize )
+    if ( !ReturnValue && bIsServer )
     {
-        // we cannot call the "CreateJitBufMes" function directly since
-        // this would give us problems with different threads (e.g. the
-        // timer thread) and the protocol mechanism (problem with
-        // qRegisterMetaType(), etc.)
-        emit ServerAutoSockBufSizeChange ( iNewNumFrames );
+        if ( bCurDoAutoSockBufSize )
+        {
+            // we cannot call the "CreateJitBufMes" function directly since
+            // this would give us problems with different threads (e.g. the
+            // timer thread) and the protocol mechanism (problem with
+            // qRegisterMetaType(), etc.)
+            emit ServerAutoSockBufSizeChange ( iNewNumFrames );
+        }
+        emit ServerJitterPolicyChanged ( iNewNumFrames, bCurDoAutoSockBufSize );
     }
 
     return ReturnValue; // set error flag
@@ -404,6 +421,7 @@ void CChannel::OnJittBufSizeChange ( int iNewJitBufSize )
         if ( iNewJitBufSize == AUTO_NET_BUF_SIZE_FOR_PROTOCOL )
         {
             SetDoAutoSockBufSize ( true );
+            emit ServerJitterPolicyChanged ( GetSockBufNumFrames(), true );
         }
         else
         {

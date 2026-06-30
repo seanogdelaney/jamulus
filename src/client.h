@@ -59,6 +59,9 @@
 #include "global.h"
 #include "socket.h"
 #include "channel.h"
+#include "multisource.h"
+
+#include <array>
 #include "util.h"
 #include "plugins/audioreverb.h"
 #include "buffer.h"
@@ -141,6 +144,41 @@ public:
     // can store here other information about an active channel
 };
 
+/** One configured physical input route in Advanced multi-source mode. */
+class CAdvancedAudioChannelConfig
+{
+public:
+    CAdvancedAudioChannelConfig ( const QString& strNTag = QString(),
+                                  const int      iNInstrument = CInstPictures::GetNotUsedInstrument(),
+                                  const int      iNInputChannel1 = 0,
+                                  const int      iNInputChannel2 = INVALID_INDEX ) :
+        strFaderTag ( strNTag ),
+        iInstrument ( iNInstrument ),
+        iInputChannel1 ( iNInputChannel1 ),
+        iInputChannel2 ( iNInputChannel2 )
+    {
+    }
+
+    QString strFaderTag;
+    int     iInstrument;
+    int     iInputChannel1;
+    int     iInputChannel2; // INVALID_INDEX means mono
+};
+
+/** Source-local codec and reusable PCM storage. It is configured outside the callback. */
+class CClientAdvancedSource
+{
+public:
+    CMultiSourceSourceConfig Config;
+    int                      iInputChannel1 = INVALID_INDEX;
+    int                      iInputChannel2 = INVALID_INDEX;
+    OpusCustomEncoder*       pEncoder       = nullptr;
+    CVector<int16_t>         vecPCM;
+    CVector<uint8_t>         vecCoded;
+    float                    fLocalMonitorGain = 1.0f;
+    float                    fLocalMonitorPan  = 0.5f;
+};
+
 class CClientSettings;
 
 class CClient : public QObject
@@ -184,6 +222,12 @@ public:
 
     EAudChanConf GetAudioChannels() const { return eAudioChannelConf; }
     void         SetAudioChannels ( const EAudChanConf eNAudChanConf );
+
+    const QVector<CAdvancedAudioChannelConfig>& GetAdvancedAudioChannels() const { return vecAdvancedAudioChannels; }
+    void SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels );
+    EAudChanConf GetLegacyAudioChannels() const { return eLegacyAudioChannelConf; }
+    QString GetAdvancedStatus() const { return strAdvancedStatus; }
+    bool IsAdvancedCaptureSupported() const { return Sound.SupportsAdvancedCapture(); }
 
     int  GetAudioInFader() const { return iAudioInFader; }
     void SetAudioInFader ( const int iNV ) { iAudioInFader = iNV; }
@@ -344,6 +388,16 @@ protected:
     void Init();
     void ProcessSndCrdAudioData ( CVector<short>& vecsStereoSndCrd );
     void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd );
+    void ConfigureAdvancedSources();
+    void DestroyAdvancedSources();
+    void BuildAdvancedSourceConfig();
+    void FillAdvancedSourcePCM ( CClientAdvancedSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
+    bool SendAdvancedFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
+    void BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
+    int GetCodedBytesForAdvancedSource ( int audioChannels, bool& raw ) const;
+    void BeginAdvancedNegotiation();
+    void SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourceMap );
+    bool IsOwnedServerFader ( int serverFaderID ) const;
 
     int  PreparePingMessage();
     int  EvaluatePingMessage ( const int iMs );
@@ -388,6 +442,19 @@ protected:
     int                    iOPUSFrameSizeSamples;
     EAudioQuality          eAudioQuality;
     EAudChanConf           eAudioChannelConf;
+    // Advanced is an input mode; this remains the negotiated legacy return/fallback profile.
+    EAudChanConf           eLegacyAudioChannelConf;
+    QVector<CAdvancedAudioChannelConfig> vecAdvancedAudioChannels;
+    CClientAdvancedSource  AdvancedSources[MultiSource::kMaxSourceRows];
+    int                    iAdvancedSourceCount;
+    MultiSource::FramePacketizer AdvancedPacketizer;
+    MultiSource::Negotiation     AdvancedNegotiation;
+    uint32_t               iAdvancedFrameSequence;
+    std::array<bool, MAX_NUM_CHANNELS> bOwnedServerFaderIDs;
+    QString                strAdvancedStatus;
+    bool                   bAdvancedSplitMessageSupported;
+    bool                   bAdvancedCapabilityReceived;
+    bool                   bAdvancedConfigSent;
     int                    iNumAudioChannels;
     bool                   bIsInitializationPhase;
     bool                   bMuteOutStream;
@@ -416,6 +483,11 @@ protected:
     CBuffer<int16_t> SndCrdConversionBufferIn;
     CBuffer<int16_t> SndCrdConversionBufferOut;
     CVector<int16_t> vecDataConvBuf;
+    CVector<int16_t> vecInputDataConvBuf;
+    CVector<int16_t> vecCapturedInputFallback;
+    int              iCaptureInputChannels;
+    const CVector<int16_t>* pCurrentCaptureInput;
+    int              iCurrentCaptureInputChannels;
     CVector<int16_t> vecsStereoSndCrdMuteStream;
     CVector<int16_t> vecZeros;
 
@@ -445,6 +517,7 @@ protected:
     // for gain or pan rate limiting
     QMutex MutexGainOrPan;
     QTimer TimerGainOrPan;
+    QTimer TimerAdvancedNegotiation;
     int    minGainOrPanId;
     int    maxGainOrPanId;
     int    iCurPingTime;
@@ -480,6 +553,12 @@ protected slots:
     void OnControllerInFaderIsMute ( int iChannelIdx, bool bIsMute );
     void OnControllerInMuteMyself ( bool bMute );
     void OnClientIDReceived ( int iServerChanID );
+    void OnMultiSourceCaps();
+    void OnAdvancedSplitMessageSupported();
+    void SendAdvancedConfigIfReady();
+    void OnMultiSourceAccept ( CMultiSourceAcceptMap accept );
+    void OnMultiSourceReject ( uint8_t reason );
+    void OnAdvancedNegotiationTimeout();
     void OnRawAudioSupported();
     void OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted );
     void OnCLChannelLevelListReceived ( CHostAddress InetAddr, CVector<uint16_t> vecLevelList );
@@ -489,6 +568,8 @@ signals:
     void ConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo );
     void ChatTextReceived ( QString strChatText );
     void ClientIDReceived ( int iChanID );
+    void OwnedSourceIDsReceived ( CVector<int> vecClientChannelIDs );
+    void AdvancedStatusChanged ( QString strStatus );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );

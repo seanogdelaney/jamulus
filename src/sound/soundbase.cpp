@@ -54,6 +54,8 @@ CSoundBase::CSoundBase ( const QString& strNewSystemDriverTechniqueName,
     pProcessCallbackArg ( pParg ),
     bRun ( false ),
     bCallbackEntered ( false ),
+    iCapturedInputChannels ( 0 ),
+    bCaptureProvidedForCallback ( false ),
     strSystemDriverTechniqueName ( strNewSystemDriverTechniqueName ),
     iCtrlMIDIChannel ( INVALID_MIDI_CH ),
     aMidiCtls ( 128 )

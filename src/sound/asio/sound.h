@@ -88,6 +88,8 @@ public:
     virtual void OpenDriverSetup() { ASIOControlPanel(); }
 
     // channel selection
+    virtual bool    SupportsAdvancedCapture() const override { return true; }
+
     virtual int     GetNumInputChannels() { return static_cast<int> ( lNumInChanPlusAddChan ); }
     virtual QString GetInputChannelName ( const int iDiD ) { return channelInputName[iDiD]; }
     virtual void    SetLeftInputChannel ( const int iNewChan );
@@ -129,6 +131,7 @@ protected:
     CVector<int> vSelectedOutputChannels;
 
     CVector<int16_t> vecsMultChanAudioSndCrd;
+    CVector<int16_t> vecInputAudioSndCrd;
 
     QMutex ASIOMutex;
 
