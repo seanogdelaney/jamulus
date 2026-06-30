@@ -620,11 +620,30 @@ void CClientSettings::ReadSettingsFromXML ( const QDomDocument& IniXMLDocument, 
         }
     }
 
-    // audio channels
-    if ( GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 2 /* CC_STEREO */, iValue ) )
+    // Audio routing. Keep the ordinary return/fallback profile separate from
+    // the Advanced capture table so an old/refusing server remains usable.
+    int requestedAudioChannels = CC_MONO;
+    GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 3 /* CC_ADVANCED */, requestedAudioChannels );
+    int legacyAudioChannels = CC_MONO;
+    GetNumericIniSet ( IniXMLDocument, "client", "legacyaudiochannels", 0, 2 /* CC_STEREO */, legacyAudioChannels );
+    pClient->SetAudioChannels ( static_cast<EAudChanConf> ( legacyAudioChannels ) );
+    QVector<CAdvancedAudioChannelConfig> advancedRows;
+    int advancedCount = 0;
+    if ( GetNumericIniSet ( IniXMLDocument, "client", "advancedsourcecount", 0, MAX_NUM_IN_OUT_CHANNELS, advancedCount ) )
     {
-        pClient->SetAudioChannels ( static_cast<EAudChanConf> ( iValue ) );
+        for ( int source = 0; source < advancedCount; ++source )
+        {
+            const QString prefix = QString ( "advancedsource%1" ).arg ( source );
+            const QString tag = GetIniSetting ( IniXMLDocument, "client", prefix + "tag" ).trimmed();
+            int icon = CInstPictures::GetNotUsedInstrument(), ch1 = 0, ch2 = INVALID_INDEX;
+            GetNumericIniSet ( IniXMLDocument, "client", prefix + "icon", 0, CInstPictures::GetNumAvailableInst() - 1, icon );
+            GetNumericIniSet ( IniXMLDocument, "client", prefix + "ch1", 0, MAX_NUM_IN_OUT_CHANNELS - 1, ch1 );
+            GetNumericIniSet ( IniXMLDocument, "client", prefix + "ch2", INVALID_INDEX, MAX_NUM_IN_OUT_CHANNELS - 1, ch2 );
+            if ( !tag.isEmpty() ) advancedRows.append ( CAdvancedAudioChannelConfig ( tag, icon, ch1, ch2 ) );
+        }
     }
+    if ( requestedAudioChannels == CC_ADVANCED ) pClient->SetAdvancedAudioChannels ( advancedRows );
+    else pClient->SetAudioChannels ( static_cast<EAudChanConf> ( requestedAudioChannels ) );
 
     // audio quality
     if ( GetNumericIniSet ( IniXMLDocument, "client", "audioquality", 0, 3 /* AQ_RAW */, iValue ) )
@@ -987,8 +1006,19 @@ void CClientSettings::WriteSettingsToXML ( QDomDocument& IniXMLDocument, bool is
     // MeterStyle
     SetNumericIniSet ( IniXMLDocument, "client", "meterstyle", static_cast<int> ( pClient->GetMeterStyle() ) );
 
-    // audio channels
+    // audio channels and Advanced capture table
     SetNumericIniSet ( IniXMLDocument, "client", "audiochannels", static_cast<int> ( pClient->GetAudioChannels() ) );
+    SetNumericIniSet ( IniXMLDocument, "client", "legacyaudiochannels", static_cast<int> ( pClient->GetLegacyAudioChannels() ) );
+    const QVector<CAdvancedAudioChannelConfig>& advancedRows = pClient->GetAdvancedAudioChannels();
+    SetNumericIniSet ( IniXMLDocument, "client", "advancedsourcecount", advancedRows.size() );
+    for ( int source = 0; source < advancedRows.size(); ++source )
+    {
+        const QString prefix = QString ( "advancedsource%1" ).arg ( source );
+        PutIniSetting ( IniXMLDocument, "client", prefix + "tag", advancedRows[source].strFaderTag );
+        SetNumericIniSet ( IniXMLDocument, "client", prefix + "icon", advancedRows[source].iInstrument );
+        SetNumericIniSet ( IniXMLDocument, "client", prefix + "ch1", advancedRows[source].iInputChannel1 );
+        SetNumericIniSet ( IniXMLDocument, "client", prefix + "ch2", advancedRows[source].iInputChannel2 );
+    }
 
     // audio quality
     SetNumericIniSet ( IniXMLDocument, "client", "audioquality", static_cast<int> ( pClient->GetAudioQuality() ) );

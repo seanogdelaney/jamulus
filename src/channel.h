@@ -169,6 +169,11 @@ public:
     }
     void CreateClientIDMes ( const int iChanID ) { Protocol.CreateClientIDMes ( iChanID ); }
     void CreateRawAudioSupportedMes() { Protocol.CreateRawAudioSupportedMes(); }
+    void CreateReqMultiSourceCapsMes() { Protocol.CreateReqMultiSourceCapsMes(); }
+    void CreateMultiSourceCapsMes() { Protocol.CreateMultiSourceCapsMes(); }
+    void CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config ) { Protocol.CreateMultiSourceConfigMes ( config ); }
+    void CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept ) { Protocol.CreateMultiSourceAcceptMes ( accept ); }
+    void CreateMultiSourceRejectMes ( uint8_t reason ) { Protocol.CreateMultiSourceRejectMes ( reason ); }
     void CreateReqNetwTranspPropsMes() { Protocol.CreateReqNetwTranspPropsMes(); }
     void CreateReqSplitMessSupportMes() { Protocol.CreateReqSplitMessSupportMes(); }
     void CreateReqJitBufMes() { Protocol.CreateReqJitBufMes(); }
@@ -261,6 +266,7 @@ public slots:
     void OnReqNetTranspProps();
     void OnReqSplitMessSupport();
     void OnSplitMessSupported() { Protocol.SetSplitMessageSupported ( true ); }
+    bool IsSplitMessageSupported() const { return Protocol.IsSplitMessageSupported(); }
 
     void OnVersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );
 
@@ -288,11 +294,18 @@ signals:
     void ReqJittBufSize();
     void JittBufSizeChanged ( int iNewJitBufSize );
     void ServerAutoSockBufSizeChange ( int iNNumFra );
+    void ServerJitterPolicyChanged ( int iNumFrames, bool bAuto );
     void ReqConnClientsList();
     void ConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo );
     void ChanInfoHasChanged();
     void ClientIDReceived ( int iChanID );
     void RawAudioSupported();
+    void SplitMessageSupported();
+    void ReqMultiSourceCaps();
+    void MultiSourceCapsReceived();
+    void MultiSourceConfigReceived ( CVector<CMultiSourceSourceConfig> config );
+    void MultiSourceAcceptReceived ( CMultiSourceAcceptMap accept );
+    void MultiSourceRejected ( uint8_t reason );
     void MuteStateHasChanged ( int iChanID, bool bIsMuted );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void ReqChanInfo();

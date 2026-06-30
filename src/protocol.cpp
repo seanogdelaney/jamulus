@@ -869,6 +869,26 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                     EvaluateRawAudioSupportedMes();
                     break;
 
+                case PROTMESSID_REQ_MULTISOURCE_CAPS:
+                    EvaluateReqMultiSourceCapsMes();
+                    break;
+
+                case PROTMESSID_MULTISOURCE_CAPS:
+                    EvaluateMultiSourceCapsMes ( vecbyMesBodyDataRef );
+                    break;
+
+                case PROTMESSID_MULTISOURCE_CONFIG:
+                    EvaluateMultiSourceConfigMes ( vecbyMesBodyDataRef );
+                    break;
+
+                case PROTMESSID_MULTISOURCE_ACCEPT:
+                    EvaluateMultiSourceAcceptMes ( vecbyMesBodyDataRef );
+                    break;
+
+                case PROTMESSID_MULTISOURCE_REJECT:
+                    EvaluateMultiSourceRejectMes ( vecbyMesBodyDataRef );
+                    break;
+
                 case PROTMESSID_LICENCE_REQUIRED:
                     EvaluateLicenceRequiredMes ( vecbyMesBodyDataRef );
                     break;
@@ -1592,6 +1612,71 @@ bool CProtocol::EvaluateRawAudioSupportedMes()
     emit RawAudioSupported();
 
     return false; // no error
+}
+
+void CProtocol::CreateReqMultiSourceCapsMes() { CreateAndSendMessage ( PROTMESSID_REQ_MULTISOURCE_CAPS, CVector<uint8_t> ( 0 ) ); }
+
+bool CProtocol::EvaluateReqMultiSourceCapsMes()
+{
+    emit ReqMultiSourceCaps();
+    return true;
+}
+
+void CProtocol::CreateMultiSourceCapsMes()
+{
+    CVector<uint8_t> data;
+    MultiSourceProtocol::EncodeCaps ( data );
+    CreateAndSendMessage ( PROTMESSID_MULTISOURCE_CAPS, data );
+}
+
+bool CProtocol::EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData )
+{
+    if ( !MultiSourceProtocol::DecodeCaps ( vecData ) ) return false;
+    emit MultiSourceCapsReceived();
+    return true;
+}
+
+void CProtocol::CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config )
+{
+    CVector<uint8_t> data;
+    if ( MultiSourceProtocol::EncodeConfig ( config, data ) ) CreateAndSendMessage ( PROTMESSID_MULTISOURCE_CONFIG, data );
+}
+
+bool CProtocol::EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData )
+{
+    CVector<CMultiSourceSourceConfig> config;
+    if ( !MultiSourceProtocol::DecodeConfig ( vecData, config ) ) return false;
+    emit MultiSourceConfigReceived ( config );
+    return true;
+}
+
+void CProtocol::CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept )
+{
+    CVector<uint8_t> data;
+    if ( MultiSourceProtocol::EncodeAccept ( accept, data ) ) CreateAndSendMessage ( PROTMESSID_MULTISOURCE_ACCEPT, data );
+}
+
+bool CProtocol::EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData )
+{
+    CMultiSourceAcceptMap accept;
+    if ( !MultiSourceProtocol::DecodeAccept ( vecData, accept ) ) return false;
+    emit MultiSourceAcceptReceived ( accept );
+    return true;
+}
+
+void CProtocol::CreateMultiSourceRejectMes ( const uint8_t reason )
+{
+    CVector<uint8_t> data;
+    MultiSourceProtocol::EncodeReject ( reason, data );
+    CreateAndSendMessage ( PROTMESSID_MULTISOURCE_REJECT, data );
+}
+
+bool CProtocol::EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData )
+{
+    uint8_t reason = 0;
+    if ( !MultiSourceProtocol::DecodeReject ( vecData, reason ) ) return false;
+    emit MultiSourceRejected ( reason );
+    return true;
 }
 
 void CProtocol::CreateLicenceRequiredMes ( const ELicenceType eLicenceType )
