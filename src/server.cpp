@@ -47,6 +47,8 @@
 #include "server.h"
 #include "util.h"
 
+#include <cstring>
+
 // CServer implementation ******************************************************
 CServer::CServer ( const int          iNewMaxNumChan,
                    const QString&     strLoggingFileName,
