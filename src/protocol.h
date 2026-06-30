@@ -52,6 +52,7 @@
 #include <list>
 #include <cmath>
 #include "global.h"
+#include "multisource.h"
 #include "util.h"
 
 /* Definitions ****************************************************************/
@@ -85,6 +86,11 @@
 #define PROTMESSID_REQ_SPLIT_MESS_SUPPORT   34 // request support for split messages
 #define PROTMESSID_SPLIT_MESS_SUPPORTED     35 // split messages are supported
 #define PROTMESSID_RAWAUDIO_SUPPORTED       36 // raw (uncompressed) audio is supported
+#define PROTMESSID_REQ_MULTISOURCE_CAPS      37 // request Advanced multi-source capability
+#define PROTMESSID_MULTISOURCE_CAPS          38 // Advanced multi-source capability response
+#define PROTMESSID_MULTISOURCE_CONFIG        39 // Advanced source descriptors (split-capable)
+#define PROTMESSID_MULTISOURCE_ACCEPT        40 // accepted source/fader map and generation
+#define PROTMESSID_MULTISOURCE_REJECT        41 // rejected Advanced configuration
 
 // message IDs of connection less messages (CLM)
 // DEFINITION -> start at 1000, end at 1999, see IsConnectionLessMessageID
@@ -135,6 +141,7 @@ public:
 
     void Reset();
     void SetSplitMessageSupported ( const bool bIn ) { bSplitMessageSupported = bIn; }
+    bool IsSplitMessageSupported() const { return bSplitMessageSupported; }
 
     void CreateJitBufMes ( const int iJitBufSize );
     void CreateReqJitBufMes();
@@ -152,6 +159,11 @@ public:
     void CreateReqSplitMessSupportMes();
     void CreateSplitMessSupportedMes();
     void CreateRawAudioSupportedMes();
+    void CreateReqMultiSourceCapsMes();
+    void CreateMultiSourceCapsMes();
+    void CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config );
+    void CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept );
+    void CreateMultiSourceRejectMes ( uint8_t reason );
     void CreateLicenceRequiredMes ( const ELicenceType eLicenceType );
     void CreateOpusSupportedMes();
 
@@ -289,6 +301,11 @@ protected:
     bool EvaluateReqSplitMessSupportMes();
     bool EvaluateSplitMessSupportedMes();
     bool EvaluateRawAudioSupportedMes();
+    bool EvaluateReqMultiSourceCapsMes();
+    bool EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData );
+    bool EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData );
+    bool EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData );
+    bool EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData );
     bool EvaluateLicenceRequiredMes ( const CVector<uint8_t>& vecData );
     bool EvaluateVersionAndOSMes ( const CVector<uint8_t>& vecData );
     bool EvaluateRecorderStateMes ( const CVector<uint8_t>& vecData );
@@ -355,6 +372,11 @@ signals:
     void ReqSplitMessSupport();
     void SplitMessSupported();
     void RawAudioSupported();
+    void ReqMultiSourceCaps();
+    void MultiSourceCapsReceived();
+    void MultiSourceConfigReceived ( CVector<CMultiSourceSourceConfig> config );
+    void MultiSourceAcceptReceived ( CMultiSourceAcceptMap accept );
+    void MultiSourceRejected ( uint8_t reason );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );
     void RecorderStateReceived ( ERecorderState eRecorderState );

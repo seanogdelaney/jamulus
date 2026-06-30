@@ -405,16 +405,16 @@ CSocket::~CSocket()
 
 void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr )
 {
-    QMutexLocker locker ( &Mutex );
+    SendPacket ( vecbySendBuf.Size() > 0 ? &vecbySendBuf[0] : nullptr, vecbySendBuf.Size(), HostAddr );
+}
 
-    const int iVecSizeOut = vecbySendBuf.Size();
+void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, const CHostAddress& HostAddr )
+{
+    QMutexLocker locker ( &Mutex );
 
     if ( iVecSizeOut > 0 )
     {
-        // send packet through network (we have to convert the constant unsigned
-        // char vector in "const char*", for this we first convert the const
-        // uint8_t vector in a read/write uint8_t vector and then do the cast to
-        // const char *)
+        // send packet through network
 
         for ( int tries = 0; tries < 2; tries++ ) // retry loop in case send fails on iOS
         {
@@ -434,7 +434,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                     sa4.sin_addr.s_addr = htonl ( HostAddr.InetAddr.toIPv4Address() );
 
                     status = sendto ( UdpSocket4,
-                                      (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                      (const char*) pbySendBuf,
                                       iVecSizeOut,
                                       0,
                                       (struct sockaddr*) &sa4,
@@ -458,7 +458,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                     sa6.sin6_scope_id = HostAddr.InetAddr.scopeId().toUInt();
 
                     status = sendto ( UdpSocket6,
-                                      (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                      (const char*) pbySendBuf,
                                       iVecSizeOut,
                                       0,
                                       (struct sockaddr*) &sa6,

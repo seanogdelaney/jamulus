@@ -110,6 +110,7 @@ public:
     }
 
     virtual int     GetNumInputChannels() { return 2; }
+    virtual bool    SupportsAdvancedCapture() const { return false; }
     virtual QString GetInputChannelName ( const int ) { return "Default"; }
     virtual void    SetLeftInputChannel ( const int ) {}
     virtual void    SetRightInputChannel ( const int ) {}
@@ -133,6 +134,15 @@ public:
 
     bool IsRunning() const { return bRun; }
     bool IsCallbackEntered() const { return bCallbackEntered; }
+
+    /**
+     * Complete input capture for the current callback.  The legacy callback
+     * buffer remains stereo because it is also the output buffer; advanced
+     * routing reads this capture before that buffer is overwritten by the
+     * return mix.
+     */
+    const CVector<int16_t>& GetCapturedInputAudio() const { return vecCapturedInputAudio; }
+    int GetCapturedInputChannels() const { return iCapturedInputChannels; }
 
     // TODO this should be protected but since it is used
     // in a callback function it has to be public -> better solution
@@ -186,12 +196,47 @@ protected:
     void ( *fpProcessCallback ) ( CVector<int16_t>& psData, void* arg );
     void* pProcessCallbackArg;
 
+    /** Allocate the capture view during driver initialisation, never from its callback. */
+    void PrepareCapturedInputAudio ( const int iSamples, const int iNumChannels )
+    {
+        if ( iSamples > 0 && iNumChannels > 0 )
+        {
+            vecCapturedInputAudio.Init ( iSamples * iNumChannels );
+            iCapturedInputChannels = iNumChannels;
+        }
+    }
+
+    /** Set the full capture before calling ProcessCallback. */
+    void SetCapturedInputAudio ( const CVector<int16_t>& vecInput, const int iNumChannels )
+    {
+        // The multichannel view is allocated by the backend at Init(). A
+        // mismatched callback indicates a driver reconfiguration and is left
+        // to the existing reinitialisation path rather than allocating in RT.
+        if ( ( iNumChannels > 0 ) && vecInput.Size() == vecCapturedInputAudio.Size() )
+        {
+            vecCapturedInputAudio = vecInput;
+            iCapturedInputChannels = iNumChannels;
+            bCaptureProvidedForCallback = true;
+        }
+    }
+
     // callback function call for derived classes
     void ProcessCallback ( CVector<int16_t>& psData )
     {
+        // Drivers that have not yet supplied a multichannel capture retain the
+        // long-standing stereo callback behaviour.
+        if ( !bCaptureProvidedForCallback )
+        {
+            SetCapturedInputAudio ( psData, 2 );
+        }
+        bCaptureProvidedForCallback = false;
         bCallbackEntered = true;
         ( *fpProcessCallback ) ( psData, pProcessCallbackArg );
     }
+
+    CVector<int16_t> vecCapturedInputAudio;
+    int              iCapturedInputChannels;
+    bool             bCaptureProvidedForCallback;
 
     bool   bRun;
     bool   bCallbackEntered;
