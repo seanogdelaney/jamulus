@@ -294,7 +294,16 @@ jobs:
           set -eu
           apt-get -qq update
           apt-get install -y software-properties-common sudo curl
-          add-apt-repository ppa:git-core/ppa
+          # Launchpad key retrieval occasionally times out on hosted runners.
+          for attempt in 1 2 3; do
+            if add-apt-repository -y ppa:git-core/ppa; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
@@ -507,4 +516,3 @@ jobs:
           GITHUB_TOKEN:             ${{ secrets.GITHUB_TOKEN }}
         run:                        |
           gh release upload "${{ needs.create_release.outputs.tag_name }}" "repo/InRelease" "repo/key.asc" "repo/Packages" "repo/Release" --clobber -R "${{ github.repository}}"
-
