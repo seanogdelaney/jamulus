@@ -33,6 +33,15 @@ inline bool SequenceBefore ( const uint32_t a, const uint32_t b ) { return stati
 
 struct SourceDescriptor
 {
+    SourceDescriptor() = default;
+    SourceDescriptor ( const uint8_t  sourceKey,
+                       const uint8_t  channels,
+                       const uint16_t bytes,
+                       const bool     isRaw ) :
+        key ( sourceKey ), audioChannels ( channels ), payloadBytes ( bytes ), raw ( isRaw )
+    {
+    }
+
     uint8_t  key          = 0;
     uint8_t  audioChannels = 1; // 1 or 2
     uint16_t payloadBytes = 0;
@@ -41,6 +50,15 @@ struct SourceDescriptor
 
 struct RoutingRow
 {
+    RoutingRow() = default;
+    RoutingRow ( const std::string& sourceTag,
+                 const uint8_t      sourceIcon,
+                 const int          firstChannel,
+                 const int          secondChannel ) :
+        tag ( sourceTag ), icon ( sourceIcon ), channelOne ( firstChannel ), channelTwo ( secondChannel )
+    {
+    }
+
     std::string tag;
     uint8_t     icon = 0;
     int         channelOne = -1;
@@ -49,6 +67,12 @@ struct RoutingRow
 
 struct RecordView
 {
+    RecordView() = default;
+    RecordView ( const uint8_t sourceKey, const uint8_t* const payload, const uint16_t payloadLength ) :
+        key ( sourceKey ), data ( payload ), length ( payloadLength )
+    {
+    }
+
     uint8_t        key    = 0;
     const uint8_t* data   = nullptr;
     uint16_t       length = 0;
