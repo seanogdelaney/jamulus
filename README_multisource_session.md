@@ -103,8 +103,9 @@ Manual server-jitter settings remain supported and retain the requested target.
 
 * All sources in one session share `CT_OPUS` or `CT_OPUS64`, frame cadence and Raw policy.
   Mono/stereo shape, payload length, tag and icon are source-local.
-* The server's configured channel cap applies to visible source faders. Sessions have a
-  separate compile-time pool of the same maximum. Reservations are atomic and hidden.
+* The server's configured channel cap applies to physical user sessions, preserving the
+  legacy one-user/one-channel admission meaning. Visible source faders use the fixed
+  compile-time pool; reservations are atomic and hidden.
 * Advanced ingress uses the existing one server jitter setting as its session target;
   no misleading per-source server jitter control is added.
 * Source-local monitoring state is preallocated. Its controls are not exposed as a
