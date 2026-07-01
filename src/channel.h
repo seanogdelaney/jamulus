@@ -107,6 +107,10 @@ public:
     // session mutex and performs the full teardown if this returns true.
     bool AdvanceTimeOutCounter ( int iNumSamples );
 
+    // Advanced uplink bypasses PutAudioData(). Advance the same physical
+    // session join fade once for each accepted logical Advanced frame.
+    void AdvanceFadeInCounter();
+
     // Reset every per-endpoint state which must not survive a server slot reuse.
     // This is intentionally server-side only and must be called from the
     // CChannel/CProtocol QObject thread, not the socket worker.

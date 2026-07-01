@@ -1028,9 +1028,11 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
         const CVector<int16_t>& input         = vecvecsData[sourceIndex];
         const int               inputChannels = vecNumAudioChannels[sourceIndex];
         float                   gain          = target.GetGain ( sourceID ) * source.FadeInGain();
-        // The target session's join fade remains session-scoped, while source
-        // fade remains independent for each newly activated Advanced source.
-        gain *= target.GetFadeInGain();
+        // Preserve legacy join behaviour: a target session's own sources use
+        // their source fade only, while other sessions are also attenuated by
+        // the target session's join fade.
+        if ( source.ParentSessionID() != sessionID )
+            gain *= target.GetFadeInGain();
         const float pan = target.GetPan ( sourceID );
 
         if ( targetChannels == 1 )
@@ -1386,6 +1388,8 @@ bool CServer::PutAdvancedAudioData ( const CVector<uint8_t>& packet, const int p
     bool firstFragmentForSequence = false;
     if ( !state.Ingress.Put ( &packet[0], static_cast<size_t> ( packetBytes ), &firstFragmentForSequence ) )
         return false;
+    if ( firstFragmentForSequence )
+        vecSessions[sessionID].AdvanceFadeInCounter();
     if ( state.eState == CServerSessionState::ST_ACTIVE && state.bHaveNextSequence && firstFragmentForSequence )
     {
         state.Ingress.ObserveArrival ( fragment.sequence, state.iNextSequence, state.iIngressTargetFrames );
