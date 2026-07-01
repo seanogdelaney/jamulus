@@ -78,7 +78,7 @@ CServer::CServer ( const int          iNewMaxNumChan,
                    const ELicenceType eNLicenceType ) :
     bUseDoubleSystemFrameSize ( bNUseDoubleSystemFrameSize ),
     bUseMultithreading ( bNUseMultithreading ),
-    iMaxNumChannels ( iNewMaxNumChan ),
+    iMaxNumSessions ( iNewMaxNumChan ),
     iCurNumSessions ( 0 ),
     iCurNumSources ( 0 ),
     bDisableRaw ( bNDisableRaw ),
@@ -113,7 +113,8 @@ CServer::CServer ( const int          iNewMaxNumChan,
     for ( i = 0; i < MAX_NUM_CHANNELS; i++ )
     {
         // Allocate codec/transport primitives for the fixed session/source
-        // pools.  Active visible faders remain capped by iMaxNumChannels.
+        // pools. The configured server limit caps physical user sessions;
+        // visible source faders use the fixed source pool.
         // init OPUS -----------------------------------------------------------
         OpusMode[i] = opus_custom_mode_create ( SYSTEM_SAMPLE_RATE_HZ, DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES, &iOpusError );
 
@@ -180,45 +181,49 @@ CServer::CServer ( const int          iNewMaxNumChan,
     // do not know the required sizes for the vectors, we allocate memory for
     // the worst case here:
 
-    // allocate worst case memory for the temporary vectors
-    vecChanIDsCurConChan.Init ( iMaxNumChannels );
-    vecSessionIDsCurConSession.Init ( MAX_NUM_CHANNELS );
-    vecvecfGains.Init ( iMaxNumChannels );
-    vecvecfPannings.Init ( iMaxNumChannels );
-    vecvecsData.Init ( iMaxNumChannels );
-    vecvecsData2.Init ( iMaxNumChannels );
-    vecvecsSendData.Init ( iMaxNumChannels );
-    vecvecfIntermediateProcBuf.Init ( iMaxNumChannels );
-    vecvecbyCodedData.Init ( iMaxNumChannels );
+    // Source-indexed scratch must cover the complete source pool. A single
+    // session may expose several source faders, so the configured session cap
+    // is not a valid bound for these arrays.
+    vecChanIDsCurConChan.Init ( MAX_NUM_CHANNELS );
+    vecSessionIDsCurConSession.Init ( iMaxNumSessions );
+    vecvecfGains.Init ( MAX_NUM_CHANNELS );
+    vecvecfPannings.Init ( MAX_NUM_CHANNELS );
+    vecvecsData.Init ( MAX_NUM_CHANNELS );
+    vecvecsData2.Init ( MAX_NUM_CHANNELS );
+    vecvecsSendData.Init ( iMaxNumSessions );
+    vecvecfIntermediateProcBuf.Init ( iMaxNumSessions );
+    vecvecbyCodedData.Init ( MAX_NUM_CHANNELS );
     vecSourceIngressPayload.Init ( MAX_NUM_CHANNELS );
     vecSourceIngressPresent.Init ( 2 * MAX_NUM_CHANNELS );
-    vecNumAudioChannels.Init ( iMaxNumChannels );
-    vecNumFrameSizeConvBlocks.Init ( iMaxNumChannels );
-    vecUseDoubleSysFraSizeConvBuf.Init ( iMaxNumChannels );
-    vecAudioComprType.Init ( iMaxNumChannels );
+    vecNumAudioChannels.Init ( MAX_NUM_CHANNELS );
+    vecNumFrameSizeConvBlocks.Init ( MAX_NUM_CHANNELS );
+    vecUseDoubleSysFraSizeConvBuf.Init ( MAX_NUM_CHANNELS );
+    vecAudioComprType.Init ( MAX_NUM_CHANNELS );
 
-    for ( i = 0; i < iMaxNumChannels; i++ )
+    for ( i = 0; i < MAX_NUM_CHANNELS; i++ )
     {
         // init vectors storing information of all channels
-        vecvecfGains[i].Init ( iMaxNumChannels );
-        vecvecfPannings[i].Init ( iMaxNumChannels );
+        vecvecfGains[i].Init ( MAX_NUM_CHANNELS );
+        vecvecfPannings[i].Init ( MAX_NUM_CHANNELS );
 
         // we always use stereo audio buffers (which is the worst case)
         vecvecsData[i].Init ( 2 /* stereo */ * DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES /* worst case buffer size */ );
         vecvecsData2[i].Init ( 2 /* stereo */ * DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES /* worst case buffer size */ );
 
-        // (note that we only allocate iMaxNumChannels buffers for the send
-        // and coded data because of the OMP implementation)
+        // Decode scratch is indexed by source order. Encoding scratch is
+        // session-indexed and is initialized separately below.
+        vecvecbyCodedData[i].Init ( MAX_SIZE_BYTES_NETW_BUF );
+    }
+
+    for ( i = 0; i < iMaxNumSessions; i++ )
+    {
         vecvecsSendData[i].Init ( 2 /* stereo */ * DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES /* worst case buffer size */ );
 
         // allocate worst case memory for intermediate processing buffers in float precision
         vecvecfIntermediateProcBuf[i].Init ( 2 /* stereo */ * DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES /* worst case buffer size */ );
-
-        // allocate worst case memory for the coded data
-        vecvecbyCodedData[i].Init ( MAX_SIZE_BYTES_NETW_BUF );
     }
-    // These arrays are indexed by actual session/source IDs, which may be
-    // above the configured active-fader cap while a map is reserved.
+    // These arrays are indexed by actual session/source IDs. Advanced source
+    // faders can outnumber configured user sessions.
     for ( i = 0; i < MAX_NUM_CHANNELS; ++i )
     {
         vecSourceIngressPayload[i].Init ( 2 * MultiSource::kMaxRawStereoPayloadBytes );
@@ -226,8 +231,8 @@ CServer::CServer ( const int          iNewMaxNumChan,
         vecSessionState[i].Reset();
     }
 
-    // allocate worst case memory for the channel levels
-    vecChannelLevels.Init ( iMaxNumChannels );
+    // allocate worst case memory for the visible source faders
+    vecChannelLevels.Init ( MAX_NUM_CHANNELS );
 
     // enable logging (if requested)
     if ( !strLoggingFileName.isEmpty() )
@@ -255,9 +260,8 @@ CServer::CServer ( const int          iNewMaxNumChan,
     // recorder in the SetRecordingDir() function)
     SetRecordingDir ( strRecordingDirName );
 
-    // Enable the complete fixed transport pool.  Source visibility is capped
-    // separately by iMaxNumChannels; prepared Advanced maps may occupy source
-    // IDs above that active count until promotion replaces the legacy source.
+    // Enable the complete fixed transport/source pool. The configured limit
+    // is enforced on active physical sessions when a new endpoint arrives.
     for ( i = 0; i < MAX_NUM_CHANNELS; i++ )
     {
         vecSessions[i].SetEnable ( true );
@@ -619,7 +623,7 @@ void CServer::OnAboutToQuit()
     if ( bDisconnectAllClientsOnQuit )
     {
         QMutexLocker locker ( &Mutex );
-        for ( int i = 0; i < iMaxNumChannels; i++ )
+        for ( int i = 0; i < MAX_NUM_CHANNELS; i++ )
         {
             if ( vecSessions[i].IsConnected() )
             {
@@ -724,7 +728,7 @@ void CServer::OnTimer()
 
         // Source IDs are the visible fader order. Session IDs remain private
         // transport identities and are built separately below.
-        for ( int sourceID = 0; sourceID < iMaxNumChannels; ++sourceID )
+        for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
         {
             if ( vecSources[sourceID].IsActive() )
                 vecChanIDsCurConChan[iNumSources++] = sourceID;
@@ -1255,11 +1259,7 @@ void CServer::CreateOtherMuteStateChanged ( const int targetSessionID, const int
 int CServer::GetNumberOfConnectedClients()
 {
     QMutexLocker locker ( &MutexChanOrder );
-    int          count = 0;
-    for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
-        if ( vecSources[sourceID].IsActive() )
-            ++count;
-    return count;
+    return iCurNumSessions;
 }
 
 int CServer::GetNumberOfConnectedSessions()
@@ -1285,10 +1285,10 @@ int CServer::FindChannel ( const CHostAddress& address, const bool allowNew )
             right = middle;
     }
 
-    // New legacy sessions always require one visible source. Session capacity is
-    // independently bounded by the compile-time pool, while the configured
-    // server limit applies to the visible source pool.
-    if ( !allowNew || iCurNumSessions >= MAX_NUM_CHANNELS || iCurNumSources >= iMaxNumChannels )
+    // The configured server limit is a physical user/session limit, as it was
+    // before one session could own several visible source faders. A legacy
+    // source still needs one free slot in the fixed source pool.
+    if ( !allowNew || iCurNumSessions >= iMaxNumSessions || iCurNumSources >= MAX_NUM_CHANNELS )
         return INVALID_CHANNEL_ID;
     int       freeOrderIndex = iCurNumSessions++;
     const int sessionID      = vecSessionOrder[freeOrderIndex];
@@ -1424,12 +1424,12 @@ void CServer::GetConCliParam ( CVector<CHostAddress>&     addresses,
                                CVector<int>&              networkFactors,
                                CVector<CChannelCoreInfo>& info )
 {
-    addresses.Init ( iMaxNumChannels );
-    names.Init ( iMaxNumChannels );
-    jitterFrames.Init ( iMaxNumChannels );
-    networkFactors.Init ( iMaxNumChannels );
-    info.Init ( iMaxNumChannels );
-    for ( int sourceID = 0; sourceID < iMaxNumChannels; ++sourceID )
+    addresses.Init ( MAX_NUM_CHANNELS );
+    names.Init ( MAX_NUM_CHANNELS );
+    jitterFrames.Init ( MAX_NUM_CHANNELS );
+    networkFactors.Init ( MAX_NUM_CHANNELS );
+    info.Init ( MAX_NUM_CHANNELS );
+    for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
     {
         if ( !vecSources[sourceID].IsActive() )
             continue;
@@ -1560,15 +1560,11 @@ bool CServer::PrepareAdvancedSources ( const int sessionID, const CVector<CMulti
         return false;
     }
 
-    // The configured maximum counts visible sources. Reserved faders replace
-    // the still-visible legacy source on promotion, so calculate that effective
-    // future count rather than pretending the transport session is a fader.
-    int effectiveVisibleSources = 0;
-    for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
-        if ( vecSources[sourceID].IsActive() )
-            ++effectiveVisibleSources;
-    effectiveVisibleSources += config.Size() - 1;
-    if ( effectiveVisibleSources > iMaxNumChannels || iCurNumSources + config.Size() > MAX_NUM_CHANNELS )
+    // The configured maximum limits physical sessions and was enforced when
+    // this endpoint was admitted. Keep the legacy fader alive until the first
+    // accepted Advanced frame promotes the map, so the temporary reservation
+    // still needs config.Size() free entries in the fixed source pool.
+    if ( config.Size() > MAX_NUM_CHANNELS - iCurNumSources )
     {
         rejectReason = MultiSourceProtocol::kRejectCapacity;
         return false;
