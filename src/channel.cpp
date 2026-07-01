@@ -118,6 +118,8 @@ CChannel::CChannel ( const bool bNIsServer ) :
     QObject::connect ( &Protocol, &CProtocol::MultiSourceAcceptReceived, this, &CChannel::MultiSourceAcceptReceived );
 
     QObject::connect ( &Protocol, &CProtocol::MultiSourceRejected, this, &CChannel::MultiSourceRejected );
+    QObject::connect ( &Protocol, &CProtocol::MultiSourceActive, this, &CChannel::MultiSourceActive );
+    QObject::connect ( &Protocol, &CProtocol::ReliableMessageSent, this, &CChannel::ReliableMessageSent );
 
     QObject::connect ( &Protocol, &CProtocol::MuteStateHasChangedReceived, this, &CChannel::MuteStateHasChangedReceived );
 
@@ -553,6 +555,53 @@ void CChannel::Disconnect()
         // (assuming that no audio packet is received in the meantime)
         iConTimeOut = 1; // a small number > 0
     }
+}
+
+bool CChannel::AdvanceTimeOutCounter ( const int iNumSamples )
+{
+    QMutexLocker locker ( &MutexSocketBuf );
+
+    if ( iConTimeOut <= 0 )
+        return false;
+
+    // Keep the timeout unit identical to GetData(): audio samples, rather
+    // than timer callbacks. The caller supplies one server-frame duration,
+    // once per physical Advanced session.
+    iConTimeOut -= qMax ( 1, iNumSamples );
+    if ( iConTimeOut > 0 )
+        return false;
+
+    iConTimeOut = 0;
+    return true;
+}
+
+void CChannel::ResetForServerReuse()
+{
+    // CServer serialises this against PutAudioData() with its session mutex.
+    // Protocol owns a QTimer, so this routine is deliberately called from the
+    // server QObject thread rather than the high-priority socket worker.
+    Protocol.Reset();
+
+    QMutexLocker locker ( &Mutex );
+    QMutexLocker socketLocker ( &MutexSocketBuf );
+    QMutexLocker convLocker ( &MutexConvBuf );
+
+    iConTimeOut         = 0;
+    iFadeInCnt          = 0;
+    iFadeInCntMax       = FADE_IN_NUM_FRAMES_DBLE_FRAMESIZE;
+    iSendSequenceNumber = 0;
+    ResetNetworkTransportProperties();
+
+    // Empty both packet-direction conversion stores. Leaving either one live
+    // makes the next endpoint occupying this fixed server slot inherit stale
+    // legacy audio or a half-filled return packet.
+    SockBuf.SetUseDoubleSystemFrameSize ( false );
+    SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, false );
+    ConvBuf.Init ( iNetwFrameSize * iNetwFrameSizeFact, false );
+
+    ResetInfo();
+    InetAddr = CHostAddress();
+    SignalLevelMeter.Reset();
 }
 
 void CChannel::PutProtocolData ( const int iRecCounter, const int iRecID, const CVector<uint8_t>& vecbyMesBodyData, const CHostAddress& RecHostAddr )

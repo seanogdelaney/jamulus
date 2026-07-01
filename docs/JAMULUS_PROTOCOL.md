@@ -241,19 +241,31 @@ The new reliable message identifiers are:
 | `MULTISOURCE_CONFIG` | client → server | versioned, split-message-capable source descriptors |
 | `MULTISOURCE_ACCEPT` | server → client | configuration generation and local-key → ordinary fader-ID map |
 | `MULTISOURCE_REJECT` | server → client | version and rejection reason |
+| `MULTISOURCE_ACTIVE` | server → client | version and accepted generation, sent after the first valid Advanced audio frame commits the source map |
 
 `MULTISOURCE_CONFIG` is sent only after the existing split-message capability
-has been negotiated. Each descriptor contains a session-local key, 1/2 input
-channels, codec (`CT_OPUS` or `CT_OPUS64`), session Raw flag, exact fixed
-payload size, instrument icon, and UTF-8 tag. Sources in a configuration share
-codec family and Raw policy.
+has been negotiated. A server sends `MULTISOURCE_CAPS` only after it has
+completed that prerequisite itself, so the semantic response means both
+“feature supported” and “configuration may now be sent”. Each descriptor
+contains a session-local key, 1/2 input channels, codec (`CT_OPUS` or
+`CT_OPUS64`), session Raw flag, exact fixed payload size, instrument icon, and
+UTF-8 tag. Sources in a configuration share codec family and Raw policy.
 
 The client keeps transmitting ordinary legacy upload packets until it receives
 `MULTISOURCE_ACCEPT`. At the next codec-frame boundary it transmits advanced
 fragments with the accepted generation. The server reserves source faders
 without exposing them, then promotes atomically on the first valid advanced
-fragment. Old servers do not send `MULTISOURCE_CAPS`, so a timeout leaves the
-legacy session unchanged.
+fragment and returns `MULTISOURCE_ACTIVE` for that generation. `ACCEPT` is the
+permission to start Advanced uplink; `ACTIVE` is only the later confirmation
+that the temporary legacy fader has been replaced. Old servers do not send
+`MULTISOURCE_CAPS`, so a timeout leaves the legacy session unchanged.
+
+The client starts each negotiation deadline only when the relevant logical
+request has actually left the ACK-gated reliable-message FIFO. It never treats
+a generic ACK as a capability response. The client emits stage-specific status
+for split capability, capability response, configuration acceptance, and first
+frame activation; this makes an old/refusing server distinguishable from a
+queued or malformed startup exchange.
 
 ### UDP uplink fragment
 

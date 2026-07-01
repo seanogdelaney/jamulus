@@ -148,16 +148,15 @@ public:
 class CAdvancedAudioChannelConfig
 {
 public:
-    CAdvancedAudioChannelConfig ( const QString& strNTag = QString(),
-                                  const int      iNInstrument = CInstPictures::GetNotUsedInstrument(),
+    CAdvancedAudioChannelConfig ( const QString& strNTag         = QString(),
+                                  const int      iNInstrument    = CInstPictures::GetNotUsedInstrument(),
                                   const int      iNInputChannel1 = 0,
                                   const int      iNInputChannel2 = INVALID_INDEX ) :
         strFaderTag ( strNTag ),
         iInstrument ( iNInstrument ),
         iInputChannel1 ( iNInputChannel1 ),
         iInputChannel2 ( iNInputChannel2 )
-    {
-    }
+    {}
 
     QString strFaderTag;
     int     iInstrument;
@@ -224,10 +223,14 @@ public:
     void         SetAudioChannels ( const EAudChanConf eNAudChanConf );
 
     const QVector<CAdvancedAudioChannelConfig>& GetAdvancedAudioChannels() const { return vecAdvancedAudioChannels; }
-    void SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels );
-    EAudChanConf GetLegacyAudioChannels() const { return eLegacyAudioChannelConf; }
-    QString GetAdvancedStatus() const { return strAdvancedStatus; }
-    bool IsAdvancedCaptureSupported() const { return Sound.SupportsAdvancedCapture(); }
+    void                                        SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels );
+    EAudChanConf                                GetLegacyAudioChannels() const { return eLegacyAudioChannelConf; }
+    QString                                     GetAdvancedStatus() const { return strAdvancedStatus; }
+    bool                                        IsAdvancedCaptureSupported() const { return Sound.SupportsAdvancedCapture(); }
+    // Advanced source descriptors are negotiated once at connection startup.
+    // They remain immutable until disconnect so the audio callback and server
+    // always agree on keys, codec state and source/fader mapping.
+    bool IsAdvancedRoutingLocked() const { return eAudioChannelConf == CC_ADVANCED && bAdvancedRoutingLocked; }
 
     int  GetAudioInFader() const { return iAudioInFader; }
     void SetAudioInFader ( const int iNV ) { iAudioInFader = iNV; }
@@ -394,10 +397,24 @@ protected:
     void FillAdvancedSourcePCM ( CClientAdvancedSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
     bool SendAdvancedFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
     void BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
-    int GetCodedBytesForAdvancedSource ( int audioChannels, bool& raw ) const;
-    void BeginAdvancedNegotiation();
-    void SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourceMap );
-    bool IsOwnedServerFader ( int serverFaderID ) const;
+    int  GetCodedBytesForAdvancedSource ( int audioChannels, bool& raw ) const;
+    enum class EAdvancedDeadline : uint8_t
+    {
+        None,
+        SplitCapability,
+        CapabilityResponse,
+        ConfigurationResponse,
+        Activation
+    };
+
+    void    BeginAdvancedNegotiation();
+    void    SendAdvancedConfigIfReady();
+    void    StartAdvancedDeadline ( EAdvancedDeadline deadline, int timeoutMs );
+    void    StopAdvancedDeadline();
+    void    SetAdvancedStatus ( const QString& status );
+    QString AdvancedRejectReason ( uint8_t reason ) const;
+    void    SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourceMap );
+    bool    IsOwnedServerFader ( int serverFaderID ) const;
 
     int  PreparePingMessage();
     int  EvaluatePingMessage ( const int iMs );
@@ -425,41 +442,40 @@ protected:
     QMutex MutexChannels;
 
     // audio encoder/decoder
-    OpusCustomMode*        Opus64Mode;
-    OpusCustomEncoder*     Opus64EncoderMono;
-    OpusCustomDecoder*     Opus64DecoderMono;
-    OpusCustomEncoder*     Opus64EncoderStereo;
-    OpusCustomDecoder*     Opus64DecoderStereo;
-    OpusCustomMode*        OpusMode;
-    OpusCustomEncoder*     OpusEncoderMono;
-    OpusCustomDecoder*     OpusDecoderMono;
-    OpusCustomEncoder*     OpusEncoderStereo;
-    OpusCustomDecoder*     OpusDecoderStereo;
-    OpusCustomEncoder*     CurOpusEncoder;
-    OpusCustomDecoder*     CurOpusDecoder;
-    EAudComprType          eAudioCompressionType;
-    int                    iCeltNumCodedBytes;
-    int                    iOPUSFrameSizeSamples;
-    EAudioQuality          eAudioQuality;
-    EAudChanConf           eAudioChannelConf;
+    OpusCustomMode*    Opus64Mode;
+    OpusCustomEncoder* Opus64EncoderMono;
+    OpusCustomDecoder* Opus64DecoderMono;
+    OpusCustomEncoder* Opus64EncoderStereo;
+    OpusCustomDecoder* Opus64DecoderStereo;
+    OpusCustomMode*    OpusMode;
+    OpusCustomEncoder* OpusEncoderMono;
+    OpusCustomDecoder* OpusDecoderMono;
+    OpusCustomEncoder* OpusEncoderStereo;
+    OpusCustomDecoder* OpusDecoderStereo;
+    OpusCustomEncoder* CurOpusEncoder;
+    OpusCustomDecoder* CurOpusDecoder;
+    EAudComprType      eAudioCompressionType;
+    int                iCeltNumCodedBytes;
+    int                iOPUSFrameSizeSamples;
+    EAudioQuality      eAudioQuality;
+    EAudChanConf       eAudioChannelConf;
     // Advanced is an input mode; this remains the negotiated legacy return/fallback profile.
-    EAudChanConf           eLegacyAudioChannelConf;
+    EAudChanConf                         eLegacyAudioChannelConf;
     QVector<CAdvancedAudioChannelConfig> vecAdvancedAudioChannels;
-    CClientAdvancedSource  AdvancedSources[MultiSource::kMaxSourceRows];
-    int                    iAdvancedSourceCount;
-    MultiSource::FramePacketizer AdvancedPacketizer;
-    MultiSource::Negotiation     AdvancedNegotiation;
-    uint32_t               iAdvancedFrameSequence;
-    std::array<bool, MAX_NUM_CHANNELS> bOwnedServerFaderIDs;
-    QString                strAdvancedStatus;
-    bool                   bAdvancedSplitMessageSupported;
-    bool                   bAdvancedCapabilityReceived;
-    bool                   bAdvancedConfigSent;
-    int                    iNumAudioChannels;
-    bool                   bIsInitializationPhase;
-    bool                   bMuteOutStream;
-    float                  fMuteOutStreamGain;
-    CVector<unsigned char> vecCeltData;
+    CClientAdvancedSource                AdvancedSources[MultiSource::kMaxSourceRows];
+    int                                  iAdvancedSourceCount;
+    MultiSource::FramePacketizer         AdvancedPacketizer;
+    MultiSource::Negotiation             AdvancedNegotiation;
+    uint32_t                             iAdvancedFrameSequence;
+    std::array<bool, MAX_NUM_CHANNELS>   bOwnedServerFaderIDs;
+    QString                              strAdvancedStatus;
+    EAdvancedDeadline                    eAdvancedDeadline;
+    bool                                 bAdvancedRoutingLocked;
+    int                                  iNumAudioChannels;
+    bool                                 bIsInitializationPhase;
+    bool                                 bMuteOutStream;
+    float                                fMuteOutStreamGain;
+    CVector<unsigned char>               vecCeltData;
 
     bool            bIPv6Available; // must be before Socket - passed by reference to Socket
     CHighPrioSocket Socket;
@@ -478,18 +494,18 @@ protected:
     int iSndCrdPrefFrameSizeFactor;
     int iSndCrdFrameSizeFactor;
 
-    bool             bSndCrdConversionBufferRequired;
-    int              iSndCardMonoBlockSizeSamConvBuff;
-    CBuffer<int16_t> SndCrdConversionBufferIn;
-    CBuffer<int16_t> SndCrdConversionBufferOut;
-    CVector<int16_t> vecDataConvBuf;
-    CVector<int16_t> vecInputDataConvBuf;
-    CVector<int16_t> vecCapturedInputFallback;
-    int              iCaptureInputChannels;
+    bool                    bSndCrdConversionBufferRequired;
+    int                     iSndCardMonoBlockSizeSamConvBuff;
+    CBuffer<int16_t>        SndCrdConversionBufferIn;
+    CBuffer<int16_t>        SndCrdConversionBufferOut;
+    CVector<int16_t>        vecDataConvBuf;
+    CVector<int16_t>        vecInputDataConvBuf;
+    CVector<int16_t>        vecCapturedInputFallback;
+    int                     iCaptureInputChannels;
     const CVector<int16_t>* pCurrentCaptureInput;
-    int              iCurrentCaptureInputChannels;
-    CVector<int16_t> vecsStereoSndCrdMuteStream;
-    CVector<int16_t> vecZeros;
+    int                     iCurrentCaptureInputChannels;
+    CVector<int16_t>        vecsStereoSndCrdMuteStream;
+    CVector<int16_t>        vecZeros;
 
     bool bFraSiFactPrefSupported;
     bool bFraSiFactDefSupported;
@@ -555,9 +571,10 @@ protected slots:
     void OnClientIDReceived ( int iServerChanID );
     void OnMultiSourceCaps();
     void OnAdvancedSplitMessageSupported();
-    void SendAdvancedConfigIfReady();
+    void OnAdvancedReliableMessageSent ( int logicalMessageID );
     void OnMultiSourceAccept ( CMultiSourceAcceptMap accept );
     void OnMultiSourceReject ( uint8_t reason );
+    void OnMultiSourceActive ( int generation );
     void OnAdvancedNegotiationTimeout();
     void OnRawAudioSupported();
     void OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted );

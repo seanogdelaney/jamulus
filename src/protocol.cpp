@@ -502,6 +502,11 @@ CProtocol::CProtocol()
 
 void CProtocol::Reset()
 {
+    // Reset is called only from the owning QObject thread. Stop the retry
+    // timer as well as clearing its queue; otherwise a retired CChannel slot
+    // can later resend a stale message into the next session using that slot.
+    TimerSendMess.stop();
+
     QMutexLocker locker ( &Mutex );
 
     // prepare internal variables for initial protocol transfer
@@ -516,7 +521,7 @@ void CProtocol::Reset()
     SendMessQueue.clear();
 }
 
-void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID )
+void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID )
 {
     bool bListWasEmpty;
 
@@ -526,7 +531,7 @@ void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, c
         bListWasEmpty = SendMessQueue.empty();
 
         // create send message object for the queue
-        CSendMessage SendMessageObj ( vecMessage, iCnt, iID );
+        CSendMessage SendMessageObj ( vecMessage, iCnt, iID, iLogicalID );
 
         // we want to have a FIFO: we add at the end and take from the beginning
         SendMessQueue.push_back ( SendMessageObj );
@@ -543,7 +548,8 @@ void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, c
 void CProtocol::SendMessage()
 {
     CVector<uint8_t> vecMessage;
-    bool             bSendMess = false;
+    int              iLogicalMessageID = PROTMESSID_ILLEGAL;
+    bool             bSendMess         = false;
 
     Mutex.lock();
     {
@@ -552,7 +558,8 @@ void CProtocol::SendMessage()
         if ( !SendMessQueue.empty() )
         {
             vecMessage.Init ( SendMessQueue.front().vecMessage.Size() );
-            vecMessage = SendMessQueue.front().vecMessage;
+            vecMessage        = SendMessQueue.front().vecMessage;
+            iLogicalMessageID = SendMessQueue.front().iLogicalID;
 
             // start or restart the ack timeout
             TimerSendMess.start ( SEND_MESS_TIMEOUT_MS );
@@ -569,8 +576,11 @@ void CProtocol::SendMessage()
 
     if ( bSendMess )
     {
-        // send message
+        // Send first, then expose the logical send boundary.  The latter is
+        // used by higher-level negotiations for response deadlines; queueing
+        // alone is not evidence that a request has left the FIFO.
         emit MessReadyForSending ( vecMessage );
+        emit ReliableMessageSent ( iLogicalMessageID );
     }
 }
 
@@ -618,7 +628,7 @@ void CProtocol::CreateAndSendMessage ( const int iID, const CVector<uint8_t>& ve
             GenMessageFrame ( vecNewMessage, iCurCounter, PROTMESSID_SPECIAL_SPLIT_MESSAGE, vecNewSplitMessage );
 
             // enqueue message
-            EnqueueMessage ( vecNewMessage, iCurCounter, PROTMESSID_SPECIAL_SPLIT_MESSAGE );
+            EnqueueMessage ( vecNewMessage, iCurCounter, PROTMESSID_SPECIAL_SPLIT_MESSAGE, iID );
         }
     }
     else
@@ -637,7 +647,7 @@ void CProtocol::CreateAndSendMessage ( const int iID, const CVector<uint8_t>& ve
         GenMessageFrame ( vecNewMessage, iCurCounter, iID, vecData );
 
         // enqueue message
-        EnqueueMessage ( vecNewMessage, iCurCounter, iID );
+        EnqueueMessage ( vecNewMessage, iCurCounter, iID, iID );
     }
 }
 
@@ -887,6 +897,10 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
 
                 case PROTMESSID_MULTISOURCE_REJECT:
                     EvaluateMultiSourceRejectMes ( vecbyMesBodyDataRef );
+                    break;
+
+                case PROTMESSID_MULTISOURCE_ACTIVE:
+                    EvaluateMultiSourceActiveMes ( vecbyMesBodyDataRef );
                     break;
 
                 case PROTMESSID_LICENCE_REQUIRED:
@@ -1631,7 +1645,8 @@ void CProtocol::CreateMultiSourceCapsMes()
 
 bool CProtocol::EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData )
 {
-    if ( !MultiSourceProtocol::DecodeCaps ( vecData ) ) return false;
+    if ( !MultiSourceProtocol::DecodeCaps ( vecData ) )
+        return false;
     emit MultiSourceCapsReceived();
     return true;
 }
@@ -1639,13 +1654,15 @@ bool CProtocol::EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData )
 void CProtocol::CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config )
 {
     CVector<uint8_t> data;
-    if ( MultiSourceProtocol::EncodeConfig ( config, data ) ) CreateAndSendMessage ( PROTMESSID_MULTISOURCE_CONFIG, data );
+    if ( MultiSourceProtocol::EncodeConfig ( config, data ) )
+        CreateAndSendMessage ( PROTMESSID_MULTISOURCE_CONFIG, data );
 }
 
 bool CProtocol::EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData )
 {
     CVector<CMultiSourceSourceConfig> config;
-    if ( !MultiSourceProtocol::DecodeConfig ( vecData, config ) ) return false;
+    if ( !MultiSourceProtocol::DecodeConfig ( vecData, config ) )
+        return false;
     emit MultiSourceConfigReceived ( config );
     return true;
 }
@@ -1653,13 +1670,15 @@ bool CProtocol::EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData )
 void CProtocol::CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept )
 {
     CVector<uint8_t> data;
-    if ( MultiSourceProtocol::EncodeAccept ( accept, data ) ) CreateAndSendMessage ( PROTMESSID_MULTISOURCE_ACCEPT, data );
+    if ( MultiSourceProtocol::EncodeAccept ( accept, data ) )
+        CreateAndSendMessage ( PROTMESSID_MULTISOURCE_ACCEPT, data );
 }
 
 bool CProtocol::EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData )
 {
     CMultiSourceAcceptMap accept;
-    if ( !MultiSourceProtocol::DecodeAccept ( vecData, accept ) ) return false;
+    if ( !MultiSourceProtocol::DecodeAccept ( vecData, accept ) )
+        return false;
     emit MultiSourceAcceptReceived ( accept );
     return true;
 }
@@ -1674,8 +1693,25 @@ void CProtocol::CreateMultiSourceRejectMes ( const uint8_t reason )
 bool CProtocol::EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData )
 {
     uint8_t reason = 0;
-    if ( !MultiSourceProtocol::DecodeReject ( vecData, reason ) ) return false;
+    if ( !MultiSourceProtocol::DecodeReject ( vecData, reason ) )
+        return false;
     emit MultiSourceRejected ( reason );
+    return true;
+}
+
+void CProtocol::CreateMultiSourceActiveMes ( const uint16_t generation )
+{
+    CVector<uint8_t> data;
+    if ( MultiSourceProtocol::EncodeActive ( generation, data ) )
+        CreateAndSendMessage ( PROTMESSID_MULTISOURCE_ACTIVE, data );
+}
+
+bool CProtocol::EvaluateMultiSourceActiveMes ( const CVector<uint8_t>& vecData )
+{
+    uint16_t generation = 0;
+    if ( !MultiSourceProtocol::DecodeActive ( vecData, generation ) )
+        return false;
+    emit MultiSourceActive ( generation );
     return true;
 }
 

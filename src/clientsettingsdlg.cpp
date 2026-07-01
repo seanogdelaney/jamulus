@@ -65,33 +65,45 @@ namespace
 class CAdvancedAudioChannelsDlg : public QDialog
 {
 public:
-    CAdvancedAudioChannelsDlg ( CClient* client, QWidget* parent ) :
-        QDialog ( parent ), pClient ( client )
+    CAdvancedAudioChannelsDlg ( CClient* client, QWidget* parent ) : QDialog ( parent ), pClient ( client )
     {
         setWindowTitle ( tr ( "Advanced Audio Routing" ) );
         QVBoxLayout* layout = new QVBoxLayout ( this );
-        layout->addWidget ( new QLabel ( tr ( "Each row becomes a separate remote mixer fader. Changes take effect on reconnect." ), this ) );
+        layout->addWidget ( new QLabel ( tr ( "Each row becomes a separate remote mixer fader. Configure this table before connecting: Advanced "
+                                              "routing is fixed until disconnect." ),
+                                         this ) );
         pTable = new QTableWidget ( this );
         pTable->setColumnCount ( 4 );
         pTable->setHorizontalHeaderLabels ( { tr ( "Fader icon" ), tr ( "Fader tag" ), tr ( "Ch1" ), tr ( "Ch2" ) } );
         pTable->horizontalHeader()->setSectionResizeMode ( QHeaderView::Stretch );
         layout->addWidget ( pTable );
         QHBoxLayout* controls = new QHBoxLayout;
-        QPushButton* add = new QPushButton ( tr ( "Add" ), this );
-        QPushButton* remove = new QPushButton ( tr ( "Remove" ), this );
-        QPushButton* moveUp = new QPushButton ( tr ( "Up" ), this );
+        QPushButton* add      = new QPushButton ( tr ( "Add" ), this );
+        QPushButton* remove   = new QPushButton ( tr ( "Remove" ), this );
+        QPushButton* moveUp   = new QPushButton ( tr ( "Up" ), this );
         QPushButton* moveDown = new QPushButton ( tr ( "Down" ), this );
-        controls->addWidget ( add ); controls->addWidget ( remove ); controls->addWidget ( moveUp ); controls->addWidget ( moveDown ); controls->addStretch();
+        controls->addWidget ( add );
+        controls->addWidget ( remove );
+        controls->addWidget ( moveUp );
+        controls->addWidget ( moveDown );
+        controls->addStretch();
         layout->addLayout ( controls );
         QDialogButtonBox* buttons = new QDialogButtonBox ( QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this );
         layout->addWidget ( buttons );
         connect ( add, &QPushButton::clicked, this, [this] { AddRow(); } );
-        connect ( remove, &QPushButton::clicked, this, [this] { if ( pTable->currentRow() >= 0 ) pTable->removeRow ( pTable->currentRow() ); } );
+        connect ( remove, &QPushButton::clicked, this, [this] {
+            if ( pTable->currentRow() >= 0 )
+                pTable->removeRow ( pTable->currentRow() );
+        } );
         connect ( moveUp, &QPushButton::clicked, this, [this] { MoveCurrentRow ( -1 ); } );
         connect ( moveDown, &QPushButton::clicked, this, [this] { MoveCurrentRow ( 1 ); } );
         connect ( buttons, &QDialogButtonBox::accepted, this, [this] {
             QString error;
-            if ( !Validate ( &error ) ) { QMessageBox::warning ( this, tr ( "Advanced Audio Routing" ), error ); return; }
+            if ( !Validate ( &error ) )
+            {
+                QMessageBox::warning ( this, tr ( "Advanced Audio Routing" ), error );
+                return;
+            }
             accept();
         } );
         connect ( buttons, &QDialogButtonBox::rejected, this, &QDialog::reject );
@@ -101,7 +113,9 @@ public:
             AddRow ( CAdvancedAudioChannelConfig ( tr ( "Vox" ), pClient->ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
             AddRow ( CAdvancedAudioChannelConfig ( tr ( "Guitar" ), pClient->ChannelInfo.iInstrument, 1, INVALID_INDEX ) );
         }
-        else for ( const CAdvancedAudioChannelConfig& row : rows ) AddRow ( row );
+        else
+            for ( const CAdvancedAudioChannelConfig& row : rows )
+                AddRow ( row );
     }
 
     QVector<CAdvancedAudioChannelConfig> GetChannels() const
@@ -109,13 +123,16 @@ public:
         QVector<CAdvancedAudioChannelConfig> rows;
         for ( int row = 0; row < pTable->rowCount(); ++row )
         {
-            const auto* icon = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 0 ) );
-            const auto* ch1 = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 2 ) );
-            const auto* ch2 = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 3 ) );
-            const QTableWidgetItem* tag = pTable->item ( row, 1 );
-            if ( icon == nullptr || ch1 == nullptr || ch2 == nullptr ) continue;
-            rows.append ( CAdvancedAudioChannelConfig ( tag == nullptr ? QString() : tag->text(), icon->currentData().toInt(),
-                                                        ch1->currentData().toInt(), ch2->currentData().toInt() ) );
+            const auto*             icon = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 0 ) );
+            const auto*             ch1  = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 2 ) );
+            const auto*             ch2  = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 3 ) );
+            const QTableWidgetItem* tag  = pTable->item ( row, 1 );
+            if ( icon == nullptr || ch1 == nullptr || ch2 == nullptr )
+                continue;
+            rows.append ( CAdvancedAudioChannelConfig ( tag == nullptr ? QString() : tag->text(),
+                                                        icon->currentData().toInt(),
+                                                        ch1->currentData().toInt(),
+                                                        ch2->currentData().toInt() ) );
         }
         return rows;
     }
@@ -135,7 +152,8 @@ private:
     QComboBox* ChannelCombo ( bool optional, int selected ) const
     {
         QComboBox* combo = new QComboBox;
-        if ( optional ) combo->addItem ( tr ( "" ), INVALID_INDEX );
+        if ( optional )
+            combo->addItem ( tr ( "" ), INVALID_INDEX );
         for ( int channel = 0; channel < pClient->GetSndCrdNumInputChannels(); ++channel )
             combo->addItem ( pClient->GetSndCrdInputChannelName ( channel ), channel );
         const int index = combo->findData ( selected );
@@ -144,7 +162,8 @@ private:
     }
     void AddRow ( const CAdvancedAudioChannelConfig& source = CAdvancedAudioChannelConfig() )
     {
-        if ( pTable->rowCount() >= MAX_NUM_IN_OUT_CHANNELS ) return;
+        if ( pTable->rowCount() >= MAX_NUM_IN_OUT_CHANNELS )
+            return;
         const int row = pTable->rowCount();
         pTable->insertRow ( row );
         pTable->setCellWidget ( row, 0, InstrumentCombo ( source.iInstrument ) );
@@ -155,53 +174,73 @@ private:
     void MoveCurrentRow ( const int direction )
     {
         const int from = pTable->currentRow();
-        const int to = from + direction;
-        if ( from < 0 || to < 0 || to >= pTable->rowCount() ) return;
+        const int to   = from + direction;
+        if ( from < 0 || to < 0 || to >= pTable->rowCount() )
+            return;
 
-        QWidget* fromWidgets[4] = {};
-        QWidget* toWidgets[4] = {};
-        QTableWidgetItem* fromItems[4] = {};
-        QTableWidgetItem* toItems[4] = {};
+        QWidget*          fromWidgets[4] = {};
+        QWidget*          toWidgets[4]   = {};
+        QTableWidgetItem* fromItems[4]   = {};
+        QTableWidgetItem* toItems[4]     = {};
         for ( int column = 0; column < 4; ++column )
         {
             fromWidgets[column] = pTable->cellWidget ( from, column );
-            toWidgets[column] = pTable->cellWidget ( to, column );
-            if ( fromWidgets[column] != nullptr ) pTable->removeCellWidget ( from, column );
-            if ( toWidgets[column] != nullptr ) pTable->removeCellWidget ( to, column );
+            toWidgets[column]   = pTable->cellWidget ( to, column );
+            if ( fromWidgets[column] != nullptr )
+                pTable->removeCellWidget ( from, column );
+            if ( toWidgets[column] != nullptr )
+                pTable->removeCellWidget ( to, column );
             fromItems[column] = pTable->takeItem ( from, column );
-            toItems[column] = pTable->takeItem ( to, column );
+            toItems[column]   = pTable->takeItem ( to, column );
         }
         for ( int column = 0; column < 4; ++column )
         {
-            if ( fromWidgets[column] != nullptr ) pTable->setCellWidget ( to, column, fromWidgets[column] );
-            if ( toWidgets[column] != nullptr ) pTable->setCellWidget ( from, column, toWidgets[column] );
-            if ( fromItems[column] != nullptr ) pTable->setItem ( to, column, fromItems[column] );
-            if ( toItems[column] != nullptr ) pTable->setItem ( from, column, toItems[column] );
+            if ( fromWidgets[column] != nullptr )
+                pTable->setCellWidget ( to, column, fromWidgets[column] );
+            if ( toWidgets[column] != nullptr )
+                pTable->setCellWidget ( from, column, toWidgets[column] );
+            if ( fromItems[column] != nullptr )
+                pTable->setItem ( to, column, fromItems[column] );
+            if ( toItems[column] != nullptr )
+                pTable->setItem ( from, column, toItems[column] );
         }
         pTable->setCurrentCell ( to, 1 );
     }
 
     bool Validate ( QString* error ) const
     {
-        if ( pTable->rowCount() == 0 ) { *error = tr ( "Add at least one source." ); return false; }
-        std::array<bool, MAX_NUM_IN_OUT_CHANNELS> used {};
-        QStringList tags;
+        if ( pTable->rowCount() == 0 )
+        {
+            *error = tr ( "Add at least one source." );
+            return false;
+        }
+        std::array<bool, MAX_NUM_IN_OUT_CHANNELS> used{};
+        QStringList                               tags;
         for ( int row = 0; row < pTable->rowCount(); ++row )
         {
             const QTableWidgetItem* tagItem = pTable->item ( row, 1 );
-            const QString tag = tagItem == nullptr ? QString() : tagItem->text().trimmed();
-            const auto* ch1 = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 2 ) );
-            const auto* ch2 = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 3 ) );
+            const QString           tag     = tagItem == nullptr ? QString() : tagItem->text().trimmed();
+            const auto*             ch1     = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 2 ) );
+            const auto*             ch2     = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 3 ) );
             if ( tag.isEmpty() || tags.contains ( tag, Qt::CaseSensitive ) || ch1 == nullptr || ch2 == nullptr )
-            { *error = tr ( "Tags must be non-empty and unique." ); return false; }
+            {
+                *error = tr ( "Tags must be non-empty and unique." );
+                return false;
+            }
             const int a = ch1->currentData().toInt(), b = ch2->currentData().toInt();
             if ( a < 0 || a >= MAX_NUM_IN_OUT_CHANNELS || b >= MAX_NUM_IN_OUT_CHANNELS || a == b || used[a] || ( b != INVALID_INDEX && used[b] ) )
-            { *error = tr ( "Each physical input may be used by only one row." ); return false; }
-            tags.append ( tag ); used[a] = true; if ( b != INVALID_INDEX ) used[b] = true;
+            {
+                *error = tr ( "Each physical input may be used by only one row." );
+                return false;
+            }
+            tags.append ( tag );
+            used[a] = true;
+            if ( b != INVALID_INDEX )
+                used[b] = true;
         }
         return true;
     }
-    CClient* pClient;
+    CClient*      pClient;
     QTableWidget* pTable;
 };
 } // namespace
@@ -1423,11 +1462,22 @@ void CClientSettingsDlg::OnROutChanActivated ( int iChanIdx )
 void CClientSettingsDlg::OnAudioChannelsActivated ( int iChanIdx )
 {
     const EAudChanConf mode = static_cast<EAudChanConf> ( cbxAudioChannels->itemData ( iChanIdx ).toInt() );
+    if ( ( pClient->IsConnected() || pClient->IsAdvancedRoutingLocked() ) && ( mode == CC_ADVANCED || pClient->GetAudioChannels() == CC_ADVANCED ) )
+    {
+        QMessageBox::information (
+            this,
+            tr ( "Advanced Audio Routing" ),
+            tr ( "Advanced routing is fixed for this connection. Disconnect before changing the source table or audio input mode." ) );
+        QSignalBlocker blocker ( cbxAudioChannels );
+        cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
+        return;
+    }
     if ( mode == CC_ADVANCED )
     {
         if ( !pClient->IsAdvancedCaptureSupported() )
         {
-            QMessageBox::information ( this, tr ( "Advanced Audio Routing" ),
+            QMessageBox::information ( this,
+                                       tr ( "Advanced Audio Routing" ),
                                        tr ( "Advanced routing is currently available with ASIO, CoreAudio macOS, and JACK." ) );
             QSignalBlocker blocker ( cbxAudioChannels );
             cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
@@ -1442,13 +1492,23 @@ void CClientSettingsDlg::OnAudioChannelsActivated ( int iChanIdx )
         }
         pClient->SetAdvancedAudioChannels ( dialog.GetChannels() );
     }
-    else pClient->SetAudioChannels ( mode );
+    else
+        pClient->SetAudioChannels ( mode );
     emit AudioChannelsChanged();
     UpdateDisplay(); // upload rate will be changed
 }
 
 void CClientSettingsDlg::OnAudioQualityActivated ( int iQualityIdx )
 {
+    if ( pClient->IsAdvancedRoutingLocked() && iQualityIdx != static_cast<int> ( pClient->GetAudioQuality() ) )
+    {
+        QMessageBox::information ( this,
+                                   tr ( "Advanced Audio Routing" ),
+                                   tr ( "Advanced routing is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
+        QSignalBlocker blocker ( cbxAudioQuality );
+        cbxAudioQuality->setCurrentIndex ( static_cast<int> ( pClient->GetAudioQuality() ) );
+        return;
+    }
     pClient->SetAudioQuality ( static_cast<EAudioQuality> ( iQualityIdx ) );
     UpdateDisplay(); // upload rate will be changed
 }
@@ -1477,7 +1537,17 @@ void CClientSettingsDlg::OnAutoJitBufStateChanged ( int value )
 
 void CClientSettingsDlg::OnEnableOPUS64StateChanged ( int value )
 {
-    pClient->SetEnableOPUS64 ( value == Qt::Checked );
+    const bool enabled = value == Qt::Checked;
+    if ( pClient->IsAdvancedRoutingLocked() && enabled != pClient->GetEnableOPUS64() )
+    {
+        QMessageBox::information ( this,
+                                   tr ( "Advanced Audio Routing" ),
+                                   tr ( "Advanced routing is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
+        QSignalBlocker blocker ( chbSmallNetworkBuffers );
+        chbSmallNetworkBuffers->setCheckState ( pClient->GetEnableOPUS64() ? Qt::Checked : Qt::Unchecked );
+        return;
+    }
+    pClient->SetEnableOPUS64 ( enabled );
     UpdateDisplay();
 }
 
