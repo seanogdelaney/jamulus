@@ -575,6 +575,17 @@ bool CChannel::AdvanceTimeOutCounter ( const int iNumSamples )
     return true;
 }
 
+void CChannel::AdvanceFadeInCounter()
+{
+    QMutexLocker locker ( &MutexSocketBuf );
+
+    // Keep the admission condition and rate identical to PutAudioData().
+    // Advanced receive is multiplexed, so the caller invokes this once per
+    // accepted logical frame rather than once per UDP fragment.
+    if ( iFadeInCnt < iFadeInCntMax && bIsIdentified )
+        ++iFadeInCnt;
+}
+
 void CChannel::ResetForServerReuse()
 {
     // CServer serialises this against PutAudioData() with its session mutex.
