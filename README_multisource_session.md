@@ -32,8 +32,31 @@ wire bounds, session promotion and the one-source assumptions found in HEAD.
 | patched Advanced | patched | capability → split config → hidden reservation → accepted generation → first advanced frame promotes source map |
 
 Only `MULTISOURCE_CAPS` is positive capability evidence. An old server's generic ACK
-to the unknown request is ignored. Source-map/table edits are stored but apply only on
-a controlled reconnect. An accepted packet with an unknown/stale generation is dropped.
+to the unknown request is ignored. Source-map/table edits must be made while
+disconnected and apply on the next connection. In the client UI the Advanced table,
+input mode, quality/Raw choice and Small Network Buffers setting are locked from
+startup until disconnect:
+**“Advanced routing is fixed for this connection. Disconnect to change it.”**
+An accepted packet with an unknown/stale generation is dropped.
+
+### Deterministic startup follow-on
+
+The initial implementation started its capability/configuration timeout when a
+message was appended to Jamulus's ACK-gated reliable FIFO. On a busy first
+connection that message could still be behind ordinary startup traffic, making a
+capable server look unsupported. This follow-on makes every stage explicit:
+
+```text
+legacy → split reply → caps request physically sent → semantic caps reply
+       → source config physically sent → accept → first Advanced frame → active confirmation
+```
+
+`MULTISOURCE_CAPS` now means the server's split-message prerequisite is complete
+and it is ready to receive configuration. The new `MULTISOURCE_ACTIVE` control
+message confirms the server has atomically replaced the temporary legacy fader
+after the first valid generation-tagged frame. Generic ACKs remain irrelevant to
+capability. The status line identifies a split timeout, caps timeout, map rejection,
+accept-without-first-frame, or missing activation confirmation.
 
 ## Wire format and bounds
 
@@ -54,6 +77,28 @@ The preallocated full-capture view is implemented by ASIO, CoreAudio macOS, and 
 Other backends retain their legacy stereo callback and do not offer Advanced mode.
 JACK registers distinct input ports for all available capture channels.
 
+## Advanced ingress auto-jitter follow-on
+
+The initial multi-source session implementation inherited the legacy server
+bootstrap target (`DEF_NET_BUF_SIZE_NUM_BL`, normally 10 logical frames) and
+then stopped calling the legacy `CNetBufWithStats` auto-tuner after promotion.
+That made a low-jitter LAN report and retain roughly ten server frames.
+
+This follow-on patch adds a fixed-state, session-level estimator to
+`MultiSource::SessionIngress`. It observes the first valid fragment of each
+logical capture-frame sequence and treats a sequence as arrived when any
+fragment arrives; a lost fragment therefore remains source-local PLC/silence,
+not a session jitter event. Auto mode begins at two logical frames, increases
+on a late/missing logical frame, and falls back after clean observations. A
+reduction reanchors the playout sequence to
+`highestReceived - (targetFrames - 1)`, dropping excess unplayed backlog rather
+than merely changing the value shown in the client.
+
+The existing jitter-buffer protocol remains the reporting mechanism: when the
+Advanced server target changes in auto mode, the client receives the normal
+server jitter-size message and its delay estimate follows the actual target.
+Manual server-jitter settings remain supported and retain the requested target.
+
 ## Intentional first-version constraints
 
 * All sources in one session share `CT_OPUS` or `CT_OPUS64`, frame cadence and Raw policy.
@@ -65,6 +110,9 @@ JACK registers distinct input ports for all available capture channels.
 * Source-local monitoring state is preallocated. Its controls are not exposed as a
   separate first-version UI surface; defaults preserve ordinary centered mono/direct
   stereo local-monitor behavior.
+* There is deliberately no live Advanced map reconfiguration. Configure source rows
+  while disconnected; disconnect to apply a changed table, input mapping, source
+  format, tag/icon, quality/Raw policy or network-frame size.
 
 ## Added focused tests
 
