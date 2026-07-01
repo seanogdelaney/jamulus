@@ -46,7 +46,23 @@ bool IsDuplicateKey ( const RecordView* records, const size_t count, const uint8
     }
     return false;
 }
+
+constexpr uint32_t kAutoScoreScale = 10000;
+constexpr uint32_t kAutoScoreDecay = 63;
+// 0.05 %. One late logical frame immediately raises the target, while clean
+// frame arrivals decay the event in roughly 0.6 s at 128 samples / 48 kHz.
+constexpr uint32_t kAutoScoreLimit = 5;
 } // namespace
+
+uint32_t ReanchorPlayoutSequence ( const uint32_t currentNextSequence, const uint32_t highestReceivedSequence, const int targetFrames )
+{
+    if ( targetFrames <= 1 )
+    {
+        return SequenceBefore ( currentNextSequence, highestReceivedSequence ) ? highestReceivedSequence : currentNextSequence;
+    }
+    const uint32_t desired = highestReceivedSequence - static_cast<uint32_t> ( targetFrames - 1 );
+    return SequenceBefore ( currentNextSequence, desired ) ? desired : currentNextSequence;
+}
 
 bool FramePacketizer::Packetize ( const uint16_t          generation,
                                   const uint32_t          sequence,
@@ -63,10 +79,10 @@ bool FramePacketizer::Packetize ( const uint16_t          generation,
         return false;
     }
 
-    std::array<size_t, kMaxFragments> firstRecord {};
-    std::array<size_t, kMaxFragments> recordsInPacket {};
-    size_t                             packetCount = 0;
-    size_t                             recordIndex = 0;
+    std::array<size_t, kMaxFragments> firstRecord{};
+    std::array<size_t, kMaxFragments> recordsInPacket{};
+    size_t                            packetCount = 0;
+    size_t                            recordIndex = 0;
 
     while ( recordIndex < recordCount )
     {
@@ -109,10 +125,10 @@ bool FramePacketizer::Packetize ( const uint16_t          generation,
         out[3] = raw ? 1 : 0;
         Put16 ( out + 4, generation );
         Put32 ( out + 6, sequence );
-        out[10] = static_cast<uint8_t> ( packet );
-        out[11] = static_cast<uint8_t> ( packetCount );
-        out[12] = static_cast<uint8_t> ( recordsInPacket[packet] );
-        out[13] = 0;
+        out[10]         = static_cast<uint8_t> ( packet );
+        out[11]         = static_cast<uint8_t> ( packetCount );
+        out[12]         = static_cast<uint8_t> ( recordsInPacket[packet] );
+        out[13]         = 0;
         size_t position = kHeaderBytes;
         for ( size_t i = 0; i < recordsInPacket[packet]; ++i )
         {
@@ -133,7 +149,7 @@ bool FramePacketizer::Packetize ( const uint16_t          generation,
 
 bool ParseFragment ( const uint8_t* const data, const size_t length, ParsedFragment& parsed )
 {
-    parsed = ParsedFragment {};
+    parsed = ParsedFragment{};
     if ( ( data == nullptr ) || ( length < kHeaderBytes ) || ( length > kMaxApplicationDatagram ) || ( Get16 ( data ) != kMagic ) ||
          ( data[2] != kVersion ) || ( ( data[3] & ~uint8_t ( 1 ) ) != 0 ) || ( data[13] != 0 ) )
     {
@@ -174,11 +190,11 @@ bool ParseFragment ( const uint8_t* const data, const size_t length, ParsedFragm
     return position == length;
 }
 
-bool SessionIngress::Configure ( const uint16_t                 generation,
-                                 const bool                     raw,
-                                 const SourceDescriptor* const  descriptors,
-                                 const size_t                   descriptorCount,
-                                 const size_t                   ringFrames )
+bool SessionIngress::Configure ( const uint16_t                generation,
+                                 const bool                    raw,
+                                 const SourceDescriptor* const descriptors,
+                                 const size_t                  descriptorCount,
+                                 const size_t                  ringFrames )
 {
     Reset();
     if ( ( descriptors == nullptr ) || ( descriptorCount == 0 ) || ( descriptorCount > kMaxSourceRows ) || ( ringFrames == 0 ) )
@@ -188,8 +204,8 @@ bool SessionIngress::Configure ( const uint16_t                 generation,
     for ( size_t i = 0; i < descriptorCount; ++i )
     {
         if ( ( descriptors[i].key == 0 ) || ( descriptors[i].audioChannels < 1 ) || ( descriptors[i].audioChannels > 2 ) ||
-             ( descriptors[i].payloadBytes == 0 ) || ( descriptors[i].payloadBytes > kMaxRawStereoPayloadBytes ) ||
-             ( descriptors[i].raw != raw ) || FindDescriptor ( descriptors[i].key ) >= 0 )
+             ( descriptors[i].payloadBytes == 0 ) || ( descriptors[i].payloadBytes > kMaxRawStereoPayloadBytes ) || ( descriptors[i].raw != raw ) ||
+             FindDescriptor ( descriptors[i].key ) >= 0 )
         {
             Reset();
             return false;
@@ -198,7 +214,7 @@ bool SessionIngress::Configure ( const uint16_t                 generation,
     }
 
     configuredGeneration = generation;
-    rawSession            = raw;
+    rawSession           = raw;
     ringSlots.resize ( ringFrames );
     metadata.resize ( ringFrames * descriptorCount );
     payloadStorage.resize ( ringFrames * descriptorCount * kMaxRawStereoPayloadBytes );
@@ -215,6 +231,7 @@ void SessionIngress::Reset()
     ringSlots.clear();
     metadata.clear();
     payloadStorage.clear();
+    autoLateScores.fill ( 0 );
 }
 
 int SessionIngress::FindDescriptor ( const uint8_t key ) const
@@ -239,7 +256,7 @@ void SessionIngress::PrepareSlot ( const size_t slotIndex, const uint32_t sequen
     const size_t offset = slotIndex * sourceDescriptors.size();
     std::fill ( metadata.begin() + static_cast<std::ptrdiff_t> ( offset ),
                 metadata.begin() + static_cast<std::ptrdiff_t> ( offset + sourceDescriptors.size() ),
-                RecordMeta {} );
+                RecordMeta{} );
 }
 
 bool SessionIngress::IsTooOld ( const uint32_t sequence ) const
@@ -248,16 +265,18 @@ bool SessionIngress::IsTooOld ( const uint32_t sequence ) const
            static_cast<uint32_t> ( highestSequence - sequence ) >= ringSlots.size();
 }
 
-bool SessionIngress::Put ( const uint8_t* const data, const size_t length )
+bool SessionIngress::Put ( const uint8_t* const data, const size_t length, bool* const firstFragmentForSequence )
 {
+    if ( firstFragmentForSequence != nullptr )
+        *firstFragmentForSequence = false;
     ParsedFragment fragment;
-    if ( !ParseFragment ( data, length, fragment ) || ( fragment.generation != configuredGeneration ) || ( ( fragment.flags & 1 ) != ( rawSession ? 1 : 0 ) ) ||
-         ringSlots.empty() || IsTooOld ( fragment.sequence ) )
+    if ( !ParseFragment ( data, length, fragment ) || ( fragment.generation != configuredGeneration ) ||
+         ( ( fragment.flags & 1 ) != ( rawSession ? 1 : 0 ) ) || ringSlots.empty() || IsTooOld ( fragment.sequence ) )
     {
         return false;
     }
 
-    std::array<int, kMaxSourceRows> indexes {};
+    std::array<int, kMaxSourceRows> indexes{};
     for ( uint8_t i = 0; i < fragment.recordCount; ++i )
     {
         indexes[i] = FindDescriptor ( fragment.records[i].key );
@@ -274,6 +293,7 @@ bool SessionIngress::Put ( const uint8_t* const data, const size_t length )
         PrepareSlot ( slotIndex, fragment.sequence, fragment.fragmentCount );
         slot = ringSlots[slotIndex];
     }
+    const bool firstFragment = slot.fragmentMask == 0;
     if ( slot.fragmentCount != fragment.fragmentCount || ( slot.fragmentMask & ( uint32_t ( 1 ) << fragment.fragmentIndex ) ) != 0 )
     {
         return false;
@@ -294,8 +314,7 @@ bool SessionIngress::Put ( const uint8_t* const data, const size_t length )
         RecordMeta&  recordMeta  = metadata[metadataBase + sourceIndex];
         recordMeta.present       = true;
         recordMeta.length        = fragment.records[i].length;
-        uint8_t* target          = payloadStorage.data() +
-                         ( ( slotIndex * sourceDescriptors.size() + sourceIndex ) * kMaxRawStereoPayloadBytes );
+        uint8_t* target          = payloadStorage.data() + ( ( slotIndex * sourceDescriptors.size() + sourceIndex ) * kMaxRawStereoPayloadBytes );
         std::memcpy ( target, fragment.records[i].data, fragment.records[i].length );
     }
     slot.fragmentMask |= uint32_t ( 1 ) << fragment.fragmentIndex;
@@ -304,7 +323,54 @@ bool SessionIngress::Put ( const uint8_t* const data, const size_t length )
         haveHighestSequence = true;
         highestSequence     = fragment.sequence;
     }
+    if ( firstFragmentForSequence != nullptr )
+        *firstFragmentForSequence = firstFragment;
     return true;
+}
+
+void SessionIngress::UpdateAutoStatistic ( const int candidateFrames, const bool late )
+{
+    if ( candidateFrames < kMinAutoIngressFrames || candidateFrames > kMaxAutoIngressFrames )
+        return;
+    uint32_t score                                          = autoLateScores[static_cast<size_t> ( candidateFrames )];
+    score                                                   = ( score * kAutoScoreDecay + ( late ? kAutoScoreScale : 0 ) ) / ( kAutoScoreDecay + 1 );
+    autoLateScores[static_cast<size_t> ( candidateFrames )] = static_cast<uint16_t> ( score );
+}
+
+void SessionIngress::ObserveArrival ( const uint32_t sequence, const uint32_t nextPlayoutSequence, const int currentTargetFrames )
+{
+    const int     target = std::max ( kMinAutoIngressFrames, std::min ( kMaxAutoIngressFrames, currentTargetFrames ) );
+    const int32_t lead   = static_cast<int32_t> ( sequence - nextPlayoutSequence );
+    for ( int candidate = kMinAutoIngressFrames; candidate <= target; ++candidate )
+    {
+        // With a smaller candidate buffer, playout would already have advanced
+        // by target-candidate frames at this wall-clock instant.
+        UpdateAutoStatistic ( candidate, lead < target - candidate );
+    }
+}
+
+void SessionIngress::ObservePlayoutResult ( const bool frameReceived, const int currentTargetFrames )
+{
+    if ( frameReceived )
+        return;
+    const int target = std::max ( kMinAutoIngressFrames, std::min ( kMaxAutoIngressFrames, currentTargetFrames ) );
+    // A missing logical frame at the current deadline proves that every
+    // smaller/equal target would also have missed it.  Do not charge larger
+    // candidates: they may still receive a late fragment.
+    for ( int candidate = kMinAutoIngressFrames; candidate <= target; ++candidate )
+    {
+        UpdateAutoStatistic ( candidate, true );
+    }
+}
+
+int SessionIngress::AutoTargetFrames() const
+{
+    for ( int candidate = kMinAutoIngressFrames; candidate <= kMaxAutoIngressFrames; ++candidate )
+    {
+        if ( autoLateScores[static_cast<size_t> ( candidate )] <= kAutoScoreLimit )
+            return candidate;
+    }
+    return kMaxAutoIngressFrames;
 }
 
 bool SessionIngress::Read ( const uint32_t sequence, RecordView* const records, const size_t capacity ) const
@@ -315,7 +381,7 @@ bool SessionIngress::Read ( const uint32_t sequence, RecordView* const records, 
     }
     for ( size_t i = 0; i < sourceDescriptors.size(); ++i )
     {
-        records[i] = RecordView { sourceDescriptors[i].key, nullptr, 0 };
+        records[i] = RecordView{ sourceDescriptors[i].key, nullptr, 0 };
     }
     const Slot& slot = ringSlots[sequence % ringSlots.size()];
     if ( !slot.occupied || ( slot.sequence != sequence ) )
@@ -329,64 +395,130 @@ bool SessionIngress::Read ( const uint32_t sequence, RecordView* const records, 
         if ( recordMeta.present )
         {
             records[i].length = recordMeta.length;
-            records[i].data   = payloadStorage.data() +
-                              ( ( ( sequence % ringSlots.size() ) * sourceDescriptors.size() + i ) * kMaxRawStereoPayloadBytes );
+            records[i].data =
+                payloadStorage.data() + ( ( ( sequence % ringSlots.size() ) * sourceDescriptors.size() + i ) * kMaxRawStereoPayloadBytes );
         }
     }
     return true;
 }
 
-bool Negotiation::BeginCapabilityRequest()
+void Negotiation::Reset()
 {
-    if ( state != NegotiationState::Legacy && state != NegotiationState::Refused )
+    generation.store ( 0, std::memory_order_release );
+    state.store ( NegotiationState::Legacy, std::memory_order_release );
+}
+
+bool Negotiation::Transition ( const NegotiationState expected, const NegotiationState desired )
+{
+    NegotiationState current = expected;
+    return state.compare_exchange_strong ( current, desired, std::memory_order_acq_rel, std::memory_order_acquire );
+}
+
+bool Negotiation::Begin()
+{
+    NegotiationState current = state.load ( std::memory_order_acquire );
+    while ( current == NegotiationState::Legacy || current == NegotiationState::Refused )
     {
-        return false;
+        if ( state.compare_exchange_weak ( current,
+                                           NegotiationState::AwaitingSplitCapability,
+                                           std::memory_order_acq_rel,
+                                           std::memory_order_acquire ) )
+        {
+            generation.store ( 0, std::memory_order_release );
+            return true;
+        }
     }
-    state = NegotiationState::CapabilityRequested;
-    return true;
+    return false;
+}
+
+bool Negotiation::OnSplitCapabilityReceived() { return Transition ( NegotiationState::AwaitingSplitCapability, NegotiationState::CapabilityQueued ); }
+
+bool Negotiation::OnCapabilityRequestSent()
+{
+    return Transition ( NegotiationState::CapabilityQueued, NegotiationState::AwaitingCapabilityResponse );
 }
 
 bool Negotiation::OnCapabilityResponse ( const uint8_t protocolVersion )
 {
-    if ( state != NegotiationState::CapabilityRequested || protocolVersion != kVersion )
-    {
+    if ( protocolVersion != kVersion )
         return false;
-    }
-    state = NegotiationState::ConfigurationQueued;
-    return true;
+    return Transition ( NegotiationState::AwaitingCapabilityResponse, NegotiationState::ConfigurationQueued );
 }
 
-bool Negotiation::OnConfigurationQueued()
+bool Negotiation::OnConfigurationRequestSent()
 {
-    return state == NegotiationState::ConfigurationQueued;
+    return Transition ( NegotiationState::ConfigurationQueued, NegotiationState::AwaitingConfigurationResponse );
 }
 
 bool Negotiation::OnAccept ( const uint16_t acceptedGeneration )
 {
-    if ( state != NegotiationState::ConfigurationQueued || acceptedGeneration == 0 )
-    {
+    if ( acceptedGeneration == 0 || State() != NegotiationState::AwaitingConfigurationResponse )
         return false;
+
+    // Publish the generation before making the sendable state visible to the
+    // audio callback.  It must never packetize generation zero.
+    generation.store ( acceptedGeneration, std::memory_order_release );
+    if ( Transition ( NegotiationState::AwaitingConfigurationResponse, NegotiationState::Prepared ) )
+        return true;
+
+    generation.store ( 0, std::memory_order_release );
+    return false;
+}
+
+void Negotiation::OnReject() { state.store ( NegotiationState::Refused, std::memory_order_release ); }
+
+void Negotiation::OnTimeout()
+{
+    const NegotiationState current = State();
+    if ( current != NegotiationState::Active && current != NegotiationState::AwaitingActivation )
+    {
+        generation.store ( 0, std::memory_order_release );
+        state.store ( NegotiationState::Legacy, std::memory_order_release );
     }
-    generation = acceptedGeneration;
-    state      = NegotiationState::Prepared;
-    return true;
 }
 
 bool Negotiation::OnFirstAcceptedFrame ( const uint16_t packetGeneration )
 {
-    if ( state != NegotiationState::Prepared || packetGeneration != generation )
-    {
+    if ( packetGeneration != Generation() )
         return false;
-    }
-    state = NegotiationState::Active;
-    return true;
+    return Transition ( NegotiationState::Prepared, NegotiationState::AwaitingActivation );
 }
+
+bool Negotiation::OnActivation ( const uint16_t activatedGeneration )
+{
+    if ( activatedGeneration == 0 || activatedGeneration != Generation() )
+        return false;
+
+    // UDP can deliver the server's confirmation almost immediately after the
+    // packet is sent.  Accept either state so a queued Qt protocol event cannot
+    // race a just-returning audio callback.
+    if ( Transition ( NegotiationState::AwaitingActivation, NegotiationState::Active ) )
+        return true;
+    return Transition ( NegotiationState::Prepared, NegotiationState::Active );
+}
+
+bool Negotiation::CanSendAdvanced() const
+{
+    const NegotiationState current = State();
+    return current == NegotiationState::Prepared || current == NegotiationState::AwaitingActivation || current == NegotiationState::Active;
+}
+
+bool Negotiation::IsPreAcceptance() const
+{
+    const NegotiationState current = State();
+    return current == NegotiationState::AwaitingSplitCapability || current == NegotiationState::CapabilityQueued ||
+           current == NegotiationState::AwaitingCapabilityResponse || current == NegotiationState::ConfigurationQueued ||
+           current == NegotiationState::AwaitingConfigurationResponse;
+}
+
+bool Negotiation::IsAwaitingActivation() const { return State() == NegotiationState::AwaitingActivation; }
 
 bool ValidateRoutingRows ( const RoutingRow* const rows, const size_t count, const int physicalInputChannels, std::string* const error )
 {
     if ( ( rows == nullptr ) || ( count == 0 ) || ( count > kMaxSourceRows ) || ( physicalInputChannels <= 0 ) )
     {
-        if ( error != nullptr ) *error = "source count or capture channel count is invalid";
+        if ( error != nullptr )
+            *error = "source count or capture channel count is invalid";
         return false;
     }
     for ( size_t i = 0; i < count; ++i )
@@ -394,7 +526,8 @@ bool ValidateRoutingRows ( const RoutingRow* const rows, const size_t count, con
         if ( rows[i].tag.empty() || rows[i].channelOne < 0 || rows[i].channelOne >= physicalInputChannels ||
              ( rows[i].channelTwo >= physicalInputChannels ) || rows[i].channelTwo == rows[i].channelOne )
         {
-            if ( error != nullptr ) *error = "a source has an empty tag or invalid channel assignment";
+            if ( error != nullptr )
+                *error = "a source has an empty tag or invalid channel assignment";
             return false;
         }
         for ( size_t earlier = 0; earlier < i; ++earlier )
@@ -404,7 +537,8 @@ bool ValidateRoutingRows ( const RoutingRow* const rows, const size_t count, con
                  ( rows[earlier].channelTwo >= 0 &&
                    ( rows[earlier].channelTwo == rows[i].channelOne || rows[earlier].channelTwo == rows[i].channelTwo ) ) )
             {
-                if ( error != nullptr ) *error = "fader tags and physical input assignments must be unique";
+                if ( error != nullptr )
+                    *error = "fader tags and physical input assignments must be unique";
                 return false;
             }
         }

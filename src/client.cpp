@@ -74,9 +74,8 @@ CClient::CClient ( const quint16  iPortNumber,
     iAdvancedFrameSequence ( 0 ),
     bOwnedServerFaderIDs(),
     strAdvancedStatus ( "Advanced inactive" ),
-    bAdvancedSplitMessageSupported ( false ),
-    bAdvancedCapabilityReceived ( false ),
-    bAdvancedConfigSent ( false ),
+    eAdvancedDeadline ( EAdvancedDeadline::None ),
+    bAdvancedRoutingLocked ( false ),
     iNumAudioChannels ( 1 ),
     bIsInitializationPhase ( true ),
     bMuteOutStream ( false ),
@@ -170,6 +169,8 @@ CClient::CClient ( const quint16  iPortNumber,
     QObject::connect ( &Channel, &CChannel::SplitMessageSupported, this, &CClient::OnAdvancedSplitMessageSupported );
     QObject::connect ( &Channel, &CChannel::MultiSourceAcceptReceived, this, &CClient::OnMultiSourceAccept );
     QObject::connect ( &Channel, &CChannel::MultiSourceRejected, this, &CClient::OnMultiSourceReject );
+    QObject::connect ( &Channel, &CChannel::MultiSourceActive, this, &CClient::OnMultiSourceActive );
+    QObject::connect ( &Channel, &CChannel::ReliableMessageSent, this, &CClient::OnAdvancedReliableMessageSent );
 
     QObject::connect ( &Channel, &CChannel::RawAudioSupported, this, &CClient::OnRawAudioSupported );
 
@@ -346,9 +347,8 @@ void CClient::OnNewConnection()
     Channel.CreateReqChannelLevelListMes();
     //### TODO: END ###//
 
-    // Source tables may exceed the ordinary reliable-message payload. Request
-    // the project's ordered split-message capability before the Advanced probe.
-    Channel.CreateReqSplitMessSupportMes();
+    // Advanced owns the split handshake and only requests its semantic
+    // capability after the split response has actually arrived.
     BeginAdvancedNegotiation();
 }
 
@@ -446,11 +446,13 @@ void CClient::OnConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo )
             if ( clientID != INVALID_INDEX )
             {
                 ownedClientIDs.push_back ( clientID );
-                if ( bMuteMeInPersonalMix ) SetRemoteChanGain ( clientID, 0, false );
+                if ( bMuteMeInPersonalMix )
+                    SetRemoteChanGain ( clientID, 0, false );
             }
         }
     }
-    if ( !ownedClientIDs.empty() ) emit OwnedSourceIDsReceived ( ownedClientIDs );
+    if ( !ownedClientIDs.empty() )
+        emit OwnedSourceIDsReceived ( ownedClientIDs );
 
     // pass the received list onwards, now containing client channel IDs
     emit ConClientListMesReceived ( vecChanInfo );
@@ -722,6 +724,12 @@ void CClient::SetSndCrdPrefFrameSizeFactor ( const int iNewFactor )
 
 void CClient::SetEnableOPUS64 ( const bool eNEnableOPUS64 )
 {
+    if ( IsAdvancedRoutingLocked() && eNEnableOPUS64 != bEnableOPUS64 )
+    {
+        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
+        return;
+    }
+
     // init with new parameter, if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -742,6 +750,12 @@ void CClient::SetEnableOPUS64 ( const bool eNEnableOPUS64 )
 
 void CClient::SetAudioQuality ( const EAudioQuality eNAudioQuality )
 {
+    if ( IsAdvancedRoutingLocked() && eNAudioQuality != eAudioQuality )
+    {
+        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
+        return;
+    }
+
     // init with new parameter, if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -762,6 +776,13 @@ void CClient::SetAudioQuality ( const EAudioQuality eNAudioQuality )
 
 void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
 {
+    if ( ( Channel.IsConnected() || bAdvancedRoutingLocked ) && eNAudChanConf != eAudioChannelConf &&
+         ( eAudioChannelConf == CC_ADVANCED || eNAudChanConf == CC_ADVANCED ) )
+    {
+        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing the audio input mode." ) );
+        return;
+    }
+
     // init with new parameter, if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -772,7 +793,8 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
 
     // Preserve the last normal input profile. Advanced is an uplink routing
     // mode and must not overwrite the established return/fallback profile.
-    if ( eNAudChanConf != CC_ADVANCED ) eLegacyAudioChannelConf = eNAudChanConf;
+    if ( eNAudChanConf != CC_ADVANCED )
+        eLegacyAudioChannelConf = eNAudChanConf;
     eAudioChannelConf = eNAudChanConf;
     Init();
 
@@ -782,32 +804,39 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
     }
 }
 
-
 void CClient::SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels )
 {
-    QVector<CAdvancedAudioChannelConfig> checked;
-    std::array<bool, MAX_NUM_IN_OUT_CHANNELS> usedInputs {};
+    if ( Channel.IsConnected() || bAdvancedRoutingLocked )
+    {
+        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before editing source rows." ) );
+        return;
+    }
+
+    QVector<CAdvancedAudioChannelConfig>      checked;
+    std::array<bool, MAX_NUM_IN_OUT_CHANNELS> usedInputs{};
 
     for ( const CAdvancedAudioChannelConfig& route : vecNewChannels )
     {
         const QString tag = route.strFaderTag.trimmed();
-        if ( checked.size() >= static_cast<int> ( MultiSource::kMaxSourceRows ) || tag.isEmpty() ||
-             route.iInputChannel1 < 0 || route.iInputChannel1 >= Sound.GetNumInputChannels() || route.iInputChannel1 >= MAX_NUM_IN_OUT_CHANNELS ||
-             ( route.iInputChannel2 != INVALID_INDEX &&
-               ( route.iInputChannel2 < 0 || route.iInputChannel2 >= Sound.GetNumInputChannels() || route.iInputChannel2 >= MAX_NUM_IN_OUT_CHANNELS ) ) ||
-             route.iInputChannel1 == route.iInputChannel2 ||
-             usedInputs[route.iInputChannel1] ||
+        if ( checked.size() >= static_cast<int> ( MultiSource::kMaxSourceRows ) || tag.isEmpty() || route.iInputChannel1 < 0 ||
+             route.iInputChannel1 >= Sound.GetNumInputChannels() || route.iInputChannel1 >= MAX_NUM_IN_OUT_CHANNELS ||
+             ( route.iInputChannel2 != INVALID_INDEX && ( route.iInputChannel2 < 0 || route.iInputChannel2 >= Sound.GetNumInputChannels() ||
+                                                          route.iInputChannel2 >= MAX_NUM_IN_OUT_CHANNELS ) ) ||
+             route.iInputChannel1 == route.iInputChannel2 || usedInputs[route.iInputChannel1] ||
              ( route.iInputChannel2 != INVALID_INDEX && usedInputs[route.iInputChannel2] ) )
         {
             continue;
         }
         bool duplicateTag = false;
-        for ( const CAdvancedAudioChannelConfig& earlier : checked ) duplicateTag |= earlier.strFaderTag.trimmed() == tag;
-        if ( duplicateTag ) continue;
+        for ( const CAdvancedAudioChannelConfig& earlier : checked )
+            duplicateTag |= earlier.strFaderTag.trimmed() == tag;
+        if ( duplicateTag )
+            continue;
         CAdvancedAudioChannelConfig normalised ( tag, route.iInstrument, route.iInputChannel1, route.iInputChannel2 );
         checked.append ( normalised );
         usedInputs[route.iInputChannel1] = true;
-        if ( route.iInputChannel2 != INVALID_INDEX ) usedInputs[route.iInputChannel2] = true;
+        if ( route.iInputChannel2 != INVALID_INDEX )
+            usedInputs[route.iInputChannel2] = true;
     }
 
     if ( checked.isEmpty() )
@@ -821,28 +850,37 @@ void CClient::SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConf
 int CClient::GetCodedBytesForAdvancedSource ( const int audioChannels, bool& raw ) const
 {
     raw = eAudioQuality == AQ_RAW && bRawAudioIsSupported;
-    if ( raw ) return static_cast<int> ( sizeof ( int16_t ) * audioChannels * iOPUSFrameSizeSamples );
+    if ( raw )
+        return static_cast<int> ( sizeof ( int16_t ) * audioChannels * iOPUSFrameSizeSamples );
     const EAudioQuality quality = eAudioQuality == AQ_RAW ? AQ_HIGH : eAudioQuality;
     if ( eAudioCompressionType == CT_OPUS )
     {
         if ( audioChannels == 1 )
         {
-            if ( quality == AQ_LOW ) return OPUS_NUM_BYTES_MONO_LOW_QUALITY_DBLE_FRAMESIZE;
-            if ( quality == AQ_NORMAL ) return OPUS_NUM_BYTES_MONO_NORMAL_QUALITY_DBLE_FRAMESIZE;
+            if ( quality == AQ_LOW )
+                return OPUS_NUM_BYTES_MONO_LOW_QUALITY_DBLE_FRAMESIZE;
+            if ( quality == AQ_NORMAL )
+                return OPUS_NUM_BYTES_MONO_NORMAL_QUALITY_DBLE_FRAMESIZE;
             return OPUS_NUM_BYTES_MONO_HIGH_QUALITY_DBLE_FRAMESIZE;
         }
-        if ( quality == AQ_LOW ) return OPUS_NUM_BYTES_STEREO_LOW_QUALITY_DBLE_FRAMESIZE;
-        if ( quality == AQ_NORMAL ) return OPUS_NUM_BYTES_STEREO_NORMAL_QUALITY_DBLE_FRAMESIZE;
+        if ( quality == AQ_LOW )
+            return OPUS_NUM_BYTES_STEREO_LOW_QUALITY_DBLE_FRAMESIZE;
+        if ( quality == AQ_NORMAL )
+            return OPUS_NUM_BYTES_STEREO_NORMAL_QUALITY_DBLE_FRAMESIZE;
         return OPUS_NUM_BYTES_STEREO_HIGH_QUALITY_DBLE_FRAMESIZE;
     }
     if ( audioChannels == 1 )
     {
-        if ( quality == AQ_LOW ) return OPUS_NUM_BYTES_MONO_LOW_QUALITY;
-        if ( quality == AQ_NORMAL ) return OPUS_NUM_BYTES_MONO_NORMAL_QUALITY;
+        if ( quality == AQ_LOW )
+            return OPUS_NUM_BYTES_MONO_LOW_QUALITY;
+        if ( quality == AQ_NORMAL )
+            return OPUS_NUM_BYTES_MONO_NORMAL_QUALITY;
         return OPUS_NUM_BYTES_MONO_HIGH_QUALITY;
     }
-    if ( quality == AQ_LOW ) return OPUS_NUM_BYTES_STEREO_LOW_QUALITY;
-    if ( quality == AQ_NORMAL ) return OPUS_NUM_BYTES_STEREO_NORMAL_QUALITY;
+    if ( quality == AQ_LOW )
+        return OPUS_NUM_BYTES_STEREO_LOW_QUALITY;
+    if ( quality == AQ_NORMAL )
+        return OPUS_NUM_BYTES_STEREO_NORMAL_QUALITY;
     return OPUS_NUM_BYTES_STEREO_HIGH_QUALITY;
 }
 
@@ -850,7 +888,8 @@ void CClient::DestroyAdvancedSources()
 {
     for ( size_t i = 0; i < MultiSource::kMaxSourceRows; ++i )
     {
-        if ( AdvancedSources[i].pEncoder != nullptr ) opus_custom_encoder_destroy ( AdvancedSources[i].pEncoder );
+        if ( AdvancedSources[i].pEncoder != nullptr )
+            opus_custom_encoder_destroy ( AdvancedSources[i].pEncoder );
         AdvancedSources[i] = CClientAdvancedSource();
     }
     iAdvancedSourceCount = 0;
@@ -859,7 +898,8 @@ void CClient::DestroyAdvancedSources()
 void CClient::ConfigureAdvancedSources()
 {
     DestroyAdvancedSources();
-    if ( eAudioChannelConf != CC_ADVANCED ) return;
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return;
 
     const int inputChannels = Sound.GetNumInputChannels();
     for ( int i = 0; i < vecAdvancedAudioChannels.size() && i < static_cast<int> ( MultiSource::kMaxSourceRows ); ++i )
@@ -870,26 +910,26 @@ void CClient::ConfigureAdvancedSources()
         {
             continue;
         }
-        CClientAdvancedSource& source = AdvancedSources[iAdvancedSourceCount];
-        const int channels = route.iInputChannel2 == INVALID_INDEX ? 1 : 2;
-        bool raw = false;
-        const int codedBytes = GetCodedBytesForAdvancedSource ( channels, raw );
-        source.Config.iKey          = static_cast<uint8_t> ( iAdvancedSourceCount + 1 );
-        source.Config.iNumChannels  = static_cast<uint8_t> ( channels );
-        source.Config.eCodec        = eAudioCompressionType;
-        source.Config.bRaw          = raw;
-        source.Config.iPayloadBytes = static_cast<uint16_t> ( codedBytes );
-        source.Config.iInstrument   = route.iInstrument;
-        source.Config.strTag        = route.strFaderTag.trimmed();
-        source.iInputChannel1       = route.iInputChannel1;
-        source.iInputChannel2       = route.iInputChannel2;
+        CClientAdvancedSource& source     = AdvancedSources[iAdvancedSourceCount];
+        const int              channels   = route.iInputChannel2 == INVALID_INDEX ? 1 : 2;
+        bool                   raw        = false;
+        const int              codedBytes = GetCodedBytesForAdvancedSource ( channels, raw );
+        source.Config.iKey                = static_cast<uint8_t> ( iAdvancedSourceCount + 1 );
+        source.Config.iNumChannels        = static_cast<uint8_t> ( channels );
+        source.Config.eCodec              = eAudioCompressionType;
+        source.Config.bRaw                = raw;
+        source.Config.iPayloadBytes       = static_cast<uint16_t> ( codedBytes );
+        source.Config.iInstrument         = route.iInstrument;
+        source.Config.strTag              = route.strFaderTag.trimmed();
+        source.iInputChannel1             = route.iInputChannel1;
+        source.iInputChannel2             = route.iInputChannel2;
         source.vecPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
         source.vecCoded.Init ( codedBytes, 0 );
         if ( !raw )
         {
-            int opusError = OPUS_OK;
-            const OpusCustomMode* mode = eAudioCompressionType == CT_OPUS ? OpusMode : Opus64Mode;
-            source.pEncoder = opus_custom_encoder_create ( mode, channels, &opusError );
+            int                   opusError = OPUS_OK;
+            const OpusCustomMode* mode      = eAudioCompressionType == CT_OPUS ? OpusMode : Opus64Mode;
+            source.pEncoder                 = opus_custom_encoder_create ( mode, channels, &opusError );
             if ( opusError != OPUS_OK || source.pEncoder == nullptr )
             {
                 DestroyAdvancedSources();
@@ -899,16 +939,20 @@ void CClient::ConfigureAdvancedSources()
             }
             opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_VBR ( 0 ) );
             opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-            opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_BITRATE ( CalcBitRateBitsPerSecFromCodedBytes ( codedBytes, iOPUSFrameSizeSamples ) ) );
-            if ( eAudioCompressionType == CT_OPUS ) opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_COMPLEXITY ( 1 ) );
-            else opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
+            opus_custom_encoder_ctl ( source.pEncoder,
+                                      OPUS_SET_BITRATE ( CalcBitRateBitsPerSecFromCodedBytes ( codedBytes, iOPUSFrameSizeSamples ) ) );
+            if ( eAudioCompressionType == CT_OPUS )
+                opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_COMPLEXITY ( 1 ) );
+            else
+                opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
         }
         ++iAdvancedSourceCount;
     }
     iAdvancedFrameSequence = 0;
-    if ( iAdvancedSourceCount == 0 ) strAdvancedStatus = tr ( "Advanced routing unavailable: no valid source rows." );
-    else strAdvancedStatus = tr ( "Advanced routing will take effect on reconnect." );
-    emit AdvancedStatusChanged ( strAdvancedStatus );
+    if ( iAdvancedSourceCount == 0 )
+        SetAdvancedStatus ( tr ( "Advanced routing unavailable: no valid source rows." ) );
+    else
+        SetAdvancedStatus ( tr ( "Advanced routing will be used on the next connection." ) );
 }
 
 void CClient::BuildAdvancedSourceConfig()
@@ -918,31 +962,35 @@ void CClient::BuildAdvancedSourceConfig()
     ConfigureAdvancedSources();
 }
 
-void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource& source,
+void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource&  source,
                                       const CVector<int16_t>& captured,
-                                      const int captureChannels,
-                                      const int frameOffset )
+                                      const int               captureChannels,
+                                      const int               frameOffset )
 {
     const int channels = source.Config.iNumChannels;
     for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
     {
         const int inputOffset = ( frame + frameOffset ) * captureChannels;
-        int16_t left = 0;
-        int16_t right = 0;
+        int16_t   left        = 0;
+        int16_t   right       = 0;
         if ( source.iInputChannel1 >= 0 && source.iInputChannel1 < captureChannels && inputOffset + source.iInputChannel1 < captured.Size() )
             left = captured[inputOffset + source.iInputChannel1];
-        if ( channels == 2 && source.iInputChannel2 >= 0 && source.iInputChannel2 < captureChannels && inputOffset + source.iInputChannel2 < captured.Size() )
+        if ( channels == 2 && source.iInputChannel2 >= 0 && source.iInputChannel2 < captureChannels &&
+             inputOffset + source.iInputChannel2 < captured.Size() )
             right = captured[inputOffset + source.iInputChannel2];
         if ( iInputBoost != 1 )
         {
             left = Float2Short ( static_cast<float> ( left ) * iInputBoost );
-            if ( channels == 2 ) right = Float2Short ( static_cast<float> ( right ) * iInputBoost );
+            if ( channels == 2 )
+                right = Float2Short ( static_cast<float> ( right ) * iInputBoost );
         }
-        if ( bMuteOutStream ) left = right = 0;
-        if ( channels == 1 ) source.vecPCM[frame] = left;
+        if ( bMuteOutStream )
+            left = right = 0;
+        if ( channels == 1 )
+            source.vecPCM[frame] = left;
         else
         {
-            source.vecPCM[2 * frame] = left;
+            source.vecPCM[2 * frame]     = left;
             source.vecPCM[2 * frame + 1] = right;
         }
     }
@@ -950,8 +998,9 @@ void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource& source,
 
 bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
 {
-    if ( !AdvancedNegotiation.CanSendAdvanced() || iAdvancedSourceCount == 0 || captureChannels <= 0 ) return false;
-    std::array<MultiSource::RecordView, MultiSource::kMaxSourceRows> records {};
+    if ( !AdvancedNegotiation.CanSendAdvanced() || iAdvancedSourceCount == 0 || captureChannels <= 0 )
+        return false;
+    std::array<MultiSource::RecordView, MultiSource::kMaxSourceRows> records{};
     for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
     {
         CClientAdvancedSource& source = AdvancedSources[sourceIndex];
@@ -966,10 +1015,15 @@ bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int ca
         }
         records[sourceIndex] = { source.Config.iKey, &source.vecCoded[0], source.Config.iPayloadBytes };
     }
-    const MultiSource::Datagram* datagrams = nullptr;
-    size_t datagramCount = 0;
-    if ( !AdvancedPacketizer.Packetize ( AdvancedNegotiation.Generation(), iAdvancedFrameSequence++, AdvancedSources[0].Config.bRaw,
-                                         records.data(), static_cast<size_t> ( iAdvancedSourceCount ), datagrams, datagramCount ) )
+    const MultiSource::Datagram* datagrams     = nullptr;
+    size_t                       datagramCount = 0;
+    if ( !AdvancedPacketizer.Packetize ( AdvancedNegotiation.Generation(),
+                                         iAdvancedFrameSequence++,
+                                         AdvancedSources[0].Config.bRaw,
+                                         records.data(),
+                                         static_cast<size_t> ( iAdvancedSourceCount ),
+                                         datagrams,
+                                         datagramCount ) )
     {
         return false;
     }
@@ -988,92 +1042,175 @@ void CClient::BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, const 
 {
     for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
     {
-        const CClientAdvancedSource& source = AdvancedSources[sourceIndex];
-        const float gain = source.fLocalMonitorGain * fMuteOutStreamGain;
-        const float gainLeft = MathUtils::GetLeftPan ( source.fLocalMonitorPan, false ) * gain;
-        const float gainRight = MathUtils::GetRightPan ( source.fLocalMonitorPan, false ) * gain;
+        const CClientAdvancedSource& source    = AdvancedSources[sourceIndex];
+        const float                  gain      = source.fLocalMonitorGain * fMuteOutStreamGain;
+        const float                  gainLeft  = MathUtils::GetLeftPan ( source.fLocalMonitorPan, false ) * gain;
+        const float                  gainRight = MathUtils::GetRightPan ( source.fLocalMonitorPan, false ) * gain;
         for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
         {
             const int out = 2 * ( frameOffset + frame );
-            if ( out + 1 >= localMonitor.Size() ) break;
+            if ( out + 1 >= localMonitor.Size() )
+                break;
             if ( source.Config.iNumChannels == 1 )
             {
-                const float value = source.vecPCM[frame];
-                localMonitor[out] = Float2Short ( localMonitor[out] + value * gainLeft );
+                const float value     = source.vecPCM[frame];
+                localMonitor[out]     = Float2Short ( localMonitor[out] + value * gainLeft );
                 localMonitor[out + 1] = Float2Short ( localMonitor[out + 1] + value * gainRight );
             }
             else
             {
-                localMonitor[out] = Float2Short ( localMonitor[out] + source.vecPCM[2 * frame] * gainLeft );
+                localMonitor[out]     = Float2Short ( localMonitor[out] + source.vecPCM[2 * frame] * gainLeft );
                 localMonitor[out + 1] = Float2Short ( localMonitor[out + 1] + source.vecPCM[2 * frame + 1] * gainRight );
             }
         }
     }
 }
 
-void CClient::BeginAdvancedNegotiation()
+void CClient::SetAdvancedStatus ( const QString& status )
+{
+    strAdvancedStatus = status;
+    emit AdvancedStatusChanged ( strAdvancedStatus );
+}
+
+void CClient::StartAdvancedDeadline ( const EAdvancedDeadline deadline, const int timeoutMs )
+{
+    eAdvancedDeadline = deadline;
+    TimerAdvancedNegotiation.start ( timeoutMs );
+}
+
+void CClient::StopAdvancedDeadline()
 {
     TimerAdvancedNegotiation.stop();
+    eAdvancedDeadline = EAdvancedDeadline::None;
+}
+
+QString CClient::AdvancedRejectReason ( const uint8_t reason ) const
+{
+    switch ( reason )
+    {
+    case MultiSourceProtocol::kRejectMalformed:
+        return tr ( "invalid source map" );
+    case MultiSourceProtocol::kRejectCapacity:
+        return tr ( "server source capacity is exhausted" );
+    case MultiSourceProtocol::kRejectUnsupported:
+        return tr ( "the requested codec or Raw mode is unsupported" );
+    case MultiSourceProtocol::kRejectSplitMessageNotReady:
+        return tr ( "split-message setup was incomplete" );
+    case MultiSourceProtocol::kRejectInvalidSessionState:
+        return tr ( "the session was no longer in legacy startup" );
+    default:
+        return tr ( "an unspecified server policy rejected it" );
+    }
+}
+
+void CClient::BeginAdvancedNegotiation()
+{
+    StopAdvancedDeadline();
     AdvancedNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
-    bAdvancedSplitMessageSupported = Channel.IsSplitMessageSupported();
-    bAdvancedCapabilityReceived = false;
-    bAdvancedConfigSent = false;
-    if ( eAudioChannelConf != CC_ADVANCED ) return;
+
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return;
     if ( !Sound.SupportsAdvancedCapture() )
     {
-        strAdvancedStatus = tr ( "Advanced routing is unavailable on this audio backend; using the saved legacy input mode." );
-        emit AdvancedStatusChanged ( strAdvancedStatus );
+        SetAdvancedStatus ( tr ( "Advanced routing is unavailable on this audio backend; using the saved legacy input mode." ) );
         return;
     }
     if ( iAdvancedSourceCount == 0 )
     {
-        strAdvancedStatus = tr ( "Advanced routing has no valid source rows; using the saved legacy input mode." );
-        emit AdvancedStatusChanged ( strAdvancedStatus );
+        SetAdvancedStatus ( tr ( "Advanced routing has no valid source rows; using the saved legacy input mode." ) );
         return;
     }
-    if ( AdvancedNegotiation.BeginCapabilityRequest() )
+    if ( !AdvancedNegotiation.Begin() )
+        return;
+
+    if ( Channel.IsSplitMessageSupported() )
     {
-        strAdvancedStatus = tr ( "Requesting Advanced multi-source support from server…" );
-        emit AdvancedStatusChanged ( strAdvancedStatus );
-        Channel.CreateReqMultiSourceCapsMes();
-        TimerAdvancedNegotiation.start ( 2500 );
+        // This normally cannot occur on a fresh connection because protocol
+        // reset clears the bit. Keeping the branch makes reconnect/reuse safe.
+        if ( AdvancedNegotiation.OnSplitCapabilityReceived() )
+        {
+            SetAdvancedStatus ( tr ( "Advanced split-message capability is ready; requesting server support." ) );
+            Channel.CreateReqMultiSourceCapsMes();
+        }
+        return;
+    }
+
+    SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection; preparing split-message capability." ) );
+    Channel.CreateReqSplitMessSupportMes();
+}
+
+void CClient::OnAdvancedReliableMessageSent ( const int logicalMessageID )
+{
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return;
+
+    switch ( logicalMessageID )
+    {
+    case PROTMESSID_REQ_SPLIT_MESS_SUPPORT:
+        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingSplitCapability && eAdvancedDeadline == EAdvancedDeadline::None )
+        {
+            SetAdvancedStatus ( tr ( "Waiting for split-message capability before Advanced negotiation." ) );
+            StartAdvancedDeadline ( EAdvancedDeadline::SplitCapability, 3000 );
+        }
+        break;
+
+    case PROTMESSID_REQ_MULTISOURCE_CAPS:
+        if ( AdvancedNegotiation.OnCapabilityRequestSent() )
+        {
+            SetAdvancedStatus ( tr ( "Advanced capability request sent; waiting for the server's semantic response." ) );
+            StartAdvancedDeadline ( EAdvancedDeadline::CapabilityResponse, 3000 );
+        }
+        break;
+
+    case PROTMESSID_MULTISOURCE_CONFIG:
+        if ( AdvancedNegotiation.OnConfigurationRequestSent() )
+        {
+            // A full 64-row map can comprise several ACK-gated split packets.
+            // This begins at the first packet actually sent, not when the map
+            // was merely appended behind ordinary connection traffic.
+            SetAdvancedStatus ( tr ( "Advanced source configuration sent; waiting for server acceptance." ) );
+            StartAdvancedDeadline ( EAdvancedDeadline::ConfigurationResponse, 8000 );
+        }
+        break;
+
+    default:
+        break;
     }
 }
 
 void CClient::OnMultiSourceCaps()
 {
-    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.OnCapabilityResponse ( MultiSource::kVersion ) ) return;
-    bAdvancedCapabilityReceived = true;
+    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.OnCapabilityResponse ( MultiSource::kVersion ) )
+        return;
+
+    StopAdvancedDeadline();
+    SetAdvancedStatus ( tr ( "Advanced server capability confirmed; queuing the fixed source map." ) );
     SendAdvancedConfigIfReady();
 }
 
 void CClient::OnAdvancedSplitMessageSupported()
 {
-    bAdvancedSplitMessageSupported = true;
-    SendAdvancedConfigIfReady();
+    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.OnSplitCapabilityReceived() )
+        return;
+
+    StopAdvancedDeadline();
+    SetAdvancedStatus ( tr ( "Advanced split-message capability confirmed; requesting server support." ) );
+    Channel.CreateReqMultiSourceCapsMes();
 }
 
 void CClient::SendAdvancedConfigIfReady()
 {
-    if ( eAudioChannelConf != CC_ADVANCED || !bAdvancedCapabilityReceived || !bAdvancedSplitMessageSupported || bAdvancedConfigSent ||
-         !AdvancedNegotiation.OnConfigurationQueued() )
-    {
-        if ( eAudioChannelConf == CC_ADVANCED && bAdvancedCapabilityReceived && !bAdvancedSplitMessageSupported )
-        {
-            strAdvancedStatus = tr ( "Advanced server found; waiting for split-message capability." );
-            emit AdvancedStatusChanged ( strAdvancedStatus );
-        }
+    if ( eAudioChannelConf != CC_ADVANCED || AdvancedNegotiation.State() != MultiSource::NegotiationState::ConfigurationQueued )
         return;
-    }
+
     CVector<CMultiSourceSourceConfig> config;
     config.Init ( iAdvancedSourceCount );
-    for ( int i = 0; i < iAdvancedSourceCount; ++i ) config[i] = AdvancedSources[i].Config;
+    for ( int i = 0; i < iAdvancedSourceCount; ++i )
+        config[i] = AdvancedSources[i].Config;
+
     Channel.CreateMultiSourceConfigMes ( config );
-    bAdvancedConfigSent = true;
-    TimerAdvancedNegotiation.start ( 4000 );
-    strAdvancedStatus = tr ( "Advanced multi-source configuration sent; waiting for server acceptance." );
-    emit AdvancedStatusChanged ( strAdvancedStatus );
+    SetAdvancedStatus ( tr ( "Advanced source configuration queued behind connection setup." ) );
 }
 
 void CClient::SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourceMap )
@@ -1085,8 +1222,9 @@ void CClient::SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourc
         if ( mapped.iFaderID >= 0 && mapped.iFaderID < MAX_NUM_CHANNELS )
         {
             bOwnedServerFaderIDs[mapped.iFaderID] = true;
-            const int clientID = FindClientChannel ( mapped.iFaderID, false );
-            if ( clientID != INVALID_INDEX ) clientIDs.push_back ( clientID );
+            const int clientID                    = FindClientChannel ( mapped.iFaderID, false );
+            if ( clientID != INVALID_INDEX )
+                clientIDs.push_back ( clientID );
         }
     }
     emit OwnedSourceIDsReceived ( clientIDs );
@@ -1099,14 +1237,16 @@ bool CClient::IsOwnedServerFader ( const int serverFaderID ) const
 
 void CClient::OnMultiSourceAccept ( CMultiSourceAcceptMap accept )
 {
-    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.OnAccept ( accept.iGeneration ) ) return;
-    TimerAdvancedNegotiation.stop();
-    // Preserve the local descriptor metadata while installing normal visible fader IDs.
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return;
+
+    // Validate the complete ordinary-fader map before publishing a sendable
+    // generation to the audio callback.
     if ( accept.vecSources.Size() != iAdvancedSourceCount )
     {
         AdvancedNegotiation.OnReject();
-        strAdvancedStatus = tr ( "Server returned an invalid Advanced source map; using legacy input." );
-        emit AdvancedStatusChanged ( strAdvancedStatus );
+        StopAdvancedDeadline();
+        SetAdvancedStatus ( tr ( "Server returned an invalid Advanced source map; using legacy input." ) );
         return;
     }
     for ( int i = 0; i < accept.vecSources.Size(); ++i )
@@ -1114,34 +1254,102 @@ void CClient::OnMultiSourceAccept ( CMultiSourceAcceptMap accept )
         if ( accept.vecSources[i].iKey != AdvancedSources[i].Config.iKey )
         {
             AdvancedNegotiation.OnReject();
-            strAdvancedStatus = tr ( "Server returned a mismatched Advanced source map; using legacy input." );
-            emit AdvancedStatusChanged ( strAdvancedStatus );
+            StopAdvancedDeadline();
+            SetAdvancedStatus ( tr ( "Server returned a mismatched Advanced source map; using legacy input." ) );
             return;
         }
-        AdvancedSources[i].Config.iFaderID = accept.vecSources[i].iFaderID;
     }
+    if ( !AdvancedNegotiation.OnAccept ( accept.iGeneration ) )
+        return;
+
+    StopAdvancedDeadline();
+    for ( int i = 0; i < accept.vecSources.Size(); ++i )
+        AdvancedSources[i].Config.iFaderID = accept.vecSources[i].iFaderID;
     SetOwnedSourceIDs ( accept.vecSources );
-    strAdvancedStatus = tr ( "Advanced multi-source accepted; switching at the next codec frame." );
-    emit AdvancedStatusChanged ( strAdvancedStatus );
+
+    // The audio callback now starts multiplexed frames at the next codec
+    // boundary. Until the server acknowledges activation, no source map is
+    // claimed active in the user-facing status.
+    SetAdvancedStatus ( tr ( "Advanced source map accepted; waiting for the first codec frame." ) );
+    StartAdvancedDeadline ( EAdvancedDeadline::Activation, 3000 );
 }
 
-void CClient::OnMultiSourceReject ( const uint8_t )
+void CClient::OnMultiSourceReject ( const uint8_t reason )
 {
-    TimerAdvancedNegotiation.stop();
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return;
+
+    StopAdvancedDeadline();
     AdvancedNegotiation.OnReject();
-    strAdvancedStatus = tr ( "Server declined Advanced multi-source routing; using the saved legacy input mode." );
-    emit AdvancedStatusChanged ( strAdvancedStatus );
+    SetAdvancedStatus (
+        tr ( "Server declined Advanced multi-source routing (%1); using the saved legacy input mode." ).arg ( AdvancedRejectReason ( reason ) ) );
+}
+
+void CClient::OnMultiSourceActive ( const int generation )
+{
+    if ( eAudioChannelConf != CC_ADVANCED || generation < 1 || generation > 0xffff ||
+         !AdvancedNegotiation.OnActivation ( static_cast<uint16_t> ( generation ) ) )
+    {
+        return;
+    }
+
+    StopAdvancedDeadline();
+    SetAdvancedStatus ( tr ( "Advanced multi-source routing is active (%1 source faders)." ).arg ( iAdvancedSourceCount ) );
 }
 
 void CClient::OnAdvancedNegotiationTimeout()
 {
-    // Generic ACKs from an old server do not prove support.  Lack of the
-    // semantic response/acceptance is a bounded, clean legacy fallback.
-    if ( AdvancedNegotiation.State() != MultiSource::NegotiationState::Active )
+    const EAdvancedDeadline deadline = eAdvancedDeadline;
+    eAdvancedDeadline                = EAdvancedDeadline::None;
+
+    switch ( deadline )
     {
-        AdvancedNegotiation.OnTimeout();
-        strAdvancedStatus = tr ( "Server does not support Advanced multi-source routing; using the saved legacy input mode." );
-        emit AdvancedStatusChanged ( strAdvancedStatus );
+    case EAdvancedDeadline::SplitCapability:
+        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingSplitCapability )
+        {
+            AdvancedNegotiation.OnTimeout();
+            SetAdvancedStatus ( tr ( "Server did not confirm split-message capability; using the saved legacy input mode." ) );
+        }
+        break;
+
+    case EAdvancedDeadline::CapabilityResponse:
+        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingCapabilityResponse )
+        {
+            AdvancedNegotiation.OnTimeout();
+            // An old server may ACK the unknown probe. Only its dedicated
+            // MULTISOURCE_CAPS response is affirmative evidence.
+            SetAdvancedStatus ( tr ( "Server did not return Advanced capability support; using the saved legacy input mode." ) );
+        }
+        break;
+
+    case EAdvancedDeadline::ConfigurationResponse:
+        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingConfigurationResponse )
+        {
+            AdvancedNegotiation.OnTimeout();
+            SetAdvancedStatus ( tr ( "Server did not accept the Advanced source map; using the saved legacy input mode." ) );
+        }
+        break;
+
+    case EAdvancedDeadline::Activation:
+        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::Prepared )
+        {
+            // No advanced packet was produced, so remaining in legacy mode is
+            // safe: the server has not promoted the hidden map.
+            AdvancedNegotiation.OnTimeout();
+            SetAdvancedStatus ( tr ( "Advanced source map was accepted but no codec frame was produced; using legacy input." ) );
+        }
+        else if ( AdvancedNegotiation.IsAwaitingActivation() )
+        {
+            // Preserve compatibility with a server from the initial
+            // multi-source patch which has already promoted on the first frame
+            // but does not yet send MULTISOURCE_ACTIVE. Never revert to legacy
+            // after advanced datagrams have begun.
+            SetAdvancedStatus ( tr ( "Advanced audio is being sent, but the server has not confirmed source-map activation." ) );
+        }
+        break;
+
+    case EAdvancedDeadline::None:
+        break;
     }
 }
 
@@ -1407,7 +1615,8 @@ void CClient::OnClientIDReceived ( int iServerChanID )
     // A legacy session starts with one owned fader. Advanced acceptance later
     // replaces this set atomically with every source fader ID.
     bOwnedServerFaderIDs.fill ( false );
-    if ( iServerChanID >= 0 && iServerChanID < MAX_NUM_CHANNELS ) bOwnedServerFaderIDs[iServerChanID] = true;
+    if ( iServerChanID >= 0 && iServerChanID < MAX_NUM_CHANNELS )
+        bOwnedServerFaderIDs[iServerChanID] = true;
 
     // for headless mode we support to mute our own signal in the personal mix
     // (note that the check for headless is done in the main.cpp and must not
@@ -1443,6 +1652,11 @@ void CClient::OnRawAudioSupported()
 
 void CClient::Start()
 {
+    // Advanced source descriptors, codec choice and routing are a
+    // connection-time contract. Lock them before audio/socket startup, not
+    // only after the server has answered the first protocol message.
+    bAdvancedRoutingLocked = eAudioChannelConf == CC_ADVANCED;
+
     // init object
     Init();
 
@@ -1468,13 +1682,11 @@ void CClient::Stop()
 
     // disable channel
     Channel.SetEnable ( false );
-    TimerAdvancedNegotiation.stop();
+    bAdvancedRoutingLocked = false;
+    StopAdvancedDeadline();
     AdvancedNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
-    bAdvancedSplitMessageSupported = false;
-    bAdvancedCapabilityReceived = false;
-    strAdvancedStatus = "Advanced inactive";
-    emit AdvancedStatusChanged ( strAdvancedStatus );
+    SetAdvancedStatus ( "Advanced inactive" );
 
     // Fall back to opus in case raw was used
     bRawAudioIsSupported = false;
@@ -1784,8 +1996,7 @@ void CClient::Init()
         const int iSndCardStereoBlockSizeSamConvBuff = 2 * iSndCardMonoBlockSizeSamConvBuff;
         const int iConBufSize                        = iStereoBlockSizeSam + iSndCardStereoBlockSizeSamConvBuff;
         iCaptureInputChannels                        = qMax ( 2, Sound.GetNumInputChannels() );
-        const int iInputConBufSize                   = iMonoBlockSizeSam * iCaptureInputChannels +
-                                                        iSndCardMonoBlockSizeSamConvBuff * iCaptureInputChannels;
+        const int iInputConBufSize = iMonoBlockSizeSam * iCaptureInputChannels + iSndCardMonoBlockSizeSamConvBuff * iCaptureInputChannels;
 
         SndCrdConversionBufferIn.Init ( iInputConBufSize );
         SndCrdConversionBufferOut.Init ( iConBufSize );
@@ -1799,7 +2010,8 @@ void CClient::Init()
         SndCrdConversionBufferOut.Put ( vecZeros, iStereoBlockSizeSam );
     }
 
-    if ( !bSndCrdConversionBufferRequired ) iCaptureInputChannels = qMax ( 2, Sound.GetNumInputChannels() );
+    if ( !bSndCrdConversionBufferRequired )
+        iCaptureInputChannels = qMax ( 2, Sound.GetNumInputChannels() );
 
     // reset initialization phase flag and mute flag
     bIsInitializationPhase = true;
@@ -1824,12 +2036,12 @@ void CClient::AudioCallback ( CVector<int16_t>& psData, void* arg )
 
 void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
 {
-    const CVector<int16_t>& captured = Sound.GetCapturedInputAudio();
-    const int captureChannels = Sound.GetCapturedInputChannels() > 0 ? Sound.GetCapturedInputChannels() : 2;
+    const CVector<int16_t>& captured        = Sound.GetCapturedInputAudio();
+    const int               captureChannels = Sound.GetCapturedInputChannels() > 0 ? Sound.GetCapturedInputChannels() : 2;
 
     if ( bSndCrdConversionBufferRequired )
     {
-        const int callbackFrames = vecsStereoSndCrd.Size() / 2;
+        const int callbackFrames         = vecsStereoSndCrd.Size() / 2;
         const int expectedCaptureSamples = callbackFrames * iCaptureInputChannels;
         if ( captureChannels == iCaptureInputChannels && captured.Size() >= expectedCaptureSamples )
         {
@@ -1844,8 +2056,10 @@ void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
             for ( int frame = 0; frame < callbackFrames && 2 * frame + 1 < vecsStereoSndCrd.Size(); ++frame )
             {
                 const int out = frame * iCaptureInputChannels;
-                if ( out < available ) vecCapturedInputFallback[out] = vecsStereoSndCrd[2 * frame];
-                if ( iCaptureInputChannels > 1 && out + 1 < available ) vecCapturedInputFallback[out + 1] = vecsStereoSndCrd[2 * frame + 1];
+                if ( out < available )
+                    vecCapturedInputFallback[out] = vecsStereoSndCrd[2 * frame];
+                if ( iCaptureInputChannels > 1 && out + 1 < available )
+                    vecCapturedInputFallback[out + 1] = vecsStereoSndCrd[2 * frame + 1];
             }
             SndCrdConversionBufferIn.Put ( vecCapturedInputFallback, available );
         }
@@ -1854,7 +2068,7 @@ void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
         while ( SndCrdConversionBufferIn.GetAvailData() >= inputBlockSamples )
         {
             SndCrdConversionBufferIn.Get ( vecInputDataConvBuf, inputBlockSamples );
-            pCurrentCaptureInput = &vecInputDataConvBuf;
+            pCurrentCaptureInput         = &vecInputDataConvBuf;
             iCurrentCaptureInputChannels = iCaptureInputChannels;
             vecDataConvBuf.Reset ( 0 );
             ProcessAudioDataIntern ( vecDataConvBuf );
@@ -1864,7 +2078,7 @@ void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
     }
     else
     {
-        pCurrentCaptureInput = &captured;
+        pCurrentCaptureInput         = &captured;
         iCurrentCaptureInputChannels = captureChannels;
         ProcessAudioDataIntern ( vecsStereoSndCrd );
     }
@@ -1873,21 +2087,22 @@ void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
 
 void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
 {
-    int            i = 0;
-    int            j = 0;
-    int            iUnused = 0;
+    int            i             = 0;
+    int            j             = 0;
+    int            iUnused       = 0;
     unsigned char* pCurCodedData = nullptr;
 
-    const EAudChanConf eInputProfile = eAudioChannelConf == CC_ADVANCED ? eLegacyAudioChannelConf : eAudioChannelConf;
-    const CVector<int16_t>& captured = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
-    const int captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
-    const bool advancedActive = eAudioChannelConf == CC_ADVANCED && AdvancedNegotiation.CanSendAdvanced() &&
-                                Sound.SupportsAdvancedCapture() && iAdvancedSourceCount > 0;
+    const EAudChanConf      eInputProfile   = eAudioChannelConf == CC_ADVANCED ? eLegacyAudioChannelConf : eAudioChannelConf;
+    const CVector<int16_t>& captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
+    const int               captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
+    const bool              advancedActive =
+        eAudioChannelConf == CC_ADVANCED && AdvancedNegotiation.CanSendAdvanced() && Sound.SupportsAdvancedCapture() && iAdvancedSourceCount > 0;
 
     // Transmit signal ---------------------------------------------------------
     if ( advancedActive )
     {
-        if ( bMuteOutStream ) vecsStereoSndCrdMuteStream.Reset ( 0 );
+        if ( bMuteOutStream )
+            vecsStereoSndCrdMuteStream.Reset ( 0 );
         for ( i = 0; i < iSndCrdFrameSizeFactor; ++i )
         {
             const int frameOffset = i * iOPUSFrameSizeSamples;
@@ -1898,13 +2113,13 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
                 AdvancedNegotiation.OnTimeout();
                 break;
             }
-            if ( bMuteOutStream ) BuildAdvancedLocalMonitor ( vecsStereoSndCrdMuteStream, frameOffset );
+            if ( bMuteOutStream )
+                BuildAdvancedLocalMonitor ( vecsStereoSndCrdMuteStream, frameOffset );
         }
 #ifndef HEADLESS
         if ( iAdvancedSourceCount > 0 )
         {
-            SignalLevelMeter.Update ( AdvancedSources[0].vecPCM, iOPUSFrameSizeSamples,
-                                      AdvancedSources[0].Config.iNumChannels == 2 );
+            SignalLevelMeter.Update ( AdvancedSources[0].vecPCM, iOPUSFrameSizeSamples, AdvancedSources[0].Config.iNumChannels == 2 );
         }
 #endif
     }
@@ -1961,13 +2176,17 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
         {
             if ( CurOpusEncoder != nullptr )
             {
-                if ( bMuteOutStream ) iUnused = opus_custom_encode ( CurOpusEncoder, &vecZeros[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
-                else iUnused = opus_custom_encode ( CurOpusEncoder, &vecsStereoSndCrd[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
+                if ( bMuteOutStream )
+                    iUnused = opus_custom_encode ( CurOpusEncoder, &vecZeros[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
+                else
+                    iUnused = opus_custom_encode ( CurOpusEncoder, &vecsStereoSndCrd[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
             }
             else if ( bRawAudioIsSupported )
             {
-                if ( bMuteOutStream ) memset ( &vecCeltData[0], 0, iCeltNumCodedBytes );
-                else memcpy ( &vecCeltData[0], &vecsStereoSndCrd[j], iCeltNumCodedBytes );
+                if ( bMuteOutStream )
+                    memset ( &vecCeltData[0], 0, iCeltNumCodedBytes );
+                else
+                    memcpy ( &vecCeltData[0], &vecsStereoSndCrd[j], iCeltNumCodedBytes );
             }
             Channel.PrepAndSendPacket ( &Socket, vecCeltData, iCeltNumCodedBytes );
         }
