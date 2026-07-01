@@ -86,11 +86,12 @@
 #define PROTMESSID_REQ_SPLIT_MESS_SUPPORT   34 // request support for split messages
 #define PROTMESSID_SPLIT_MESS_SUPPORTED     35 // split messages are supported
 #define PROTMESSID_RAWAUDIO_SUPPORTED       36 // raw (uncompressed) audio is supported
-#define PROTMESSID_REQ_MULTISOURCE_CAPS      37 // request Advanced multi-source capability
-#define PROTMESSID_MULTISOURCE_CAPS          38 // Advanced multi-source capability response
-#define PROTMESSID_MULTISOURCE_CONFIG        39 // Advanced source descriptors (split-capable)
-#define PROTMESSID_MULTISOURCE_ACCEPT        40 // accepted source/fader map and generation
-#define PROTMESSID_MULTISOURCE_REJECT        41 // rejected Advanced configuration
+#define PROTMESSID_REQ_MULTISOURCE_CAPS     37 // request Advanced multi-source capability
+#define PROTMESSID_MULTISOURCE_CAPS         38 // Advanced multi-source capability response
+#define PROTMESSID_MULTISOURCE_CONFIG       39 // Advanced source descriptors (split-capable)
+#define PROTMESSID_MULTISOURCE_ACCEPT       40 // accepted source/fader map and generation
+#define PROTMESSID_MULTISOURCE_REJECT       41 // rejected Advanced configuration
+#define PROTMESSID_MULTISOURCE_ACTIVE       42 // Advanced source map committed after first audio frame
 
 // message IDs of connection less messages (CLM)
 // DEFINITION -> start at 1000, end at 1999, see IsConnectionLessMessageID
@@ -164,6 +165,7 @@ public:
     void CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config );
     void CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept );
     void CreateMultiSourceRejectMes ( uint8_t reason );
+    void CreateMultiSourceActiveMes ( uint16_t generation );
     void CreateLicenceRequiredMes ( const ELicenceType eLicenceType );
     void CreateOpusSupportedMes();
 
@@ -215,14 +217,20 @@ protected:
     class CSendMessage
     {
     public:
-        CSendMessage() : vecMessage ( 0 ), iID ( PROTMESSID_ILLEGAL ), iCnt ( 0 ) {}
-        CSendMessage ( const CVector<uint8_t>& nMess, const int iNCnt, const int iNID ) : vecMessage ( nMess ), iID ( iNID ), iCnt ( iNCnt ) {}
+        CSendMessage() : vecMessage ( 0 ), iID ( PROTMESSID_ILLEGAL ), iLogicalID ( PROTMESSID_ILLEGAL ), iCnt ( 0 ) {}
+        CSendMessage ( const CVector<uint8_t>& nMess, const int iNCnt, const int iNID, const int iNLogicalID ) :
+            vecMessage ( nMess ),
+            iID ( iNID ),
+            iLogicalID ( iNLogicalID ),
+            iCnt ( iNCnt )
+        {}
 
         CSendMessage ( const CSendMessage& SendMess )
         {
             vecMessage.Init ( SendMess.vecMessage.Size() );
             vecMessage = SendMess.vecMessage;
             iID        = SendMess.iID;
+            iLogicalID = SendMess.iLogicalID;
             iCnt       = SendMess.iCnt;
         }
 
@@ -231,16 +239,17 @@ protected:
             vecMessage.Init ( NewSendMess.vecMessage.Size() );
             vecMessage = NewSendMess.vecMessage;
 
-            iID  = NewSendMess.iID;
-            iCnt = NewSendMess.iCnt;
+            iID        = NewSendMess.iID;
+            iLogicalID = NewSendMess.iLogicalID;
+            iCnt       = NewSendMess.iCnt;
             return *this;
         }
 
         CVector<uint8_t> vecMessage;
-        int              iID, iCnt;
+        int              iID, iLogicalID, iCnt;
     };
 
-    void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID );
+    void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID );
 
     void GenMessageFrame ( CVector<uint8_t>& vecOut, const int iCnt, const int iID, const CVector<uint8_t>& vecData );
 
@@ -306,6 +315,7 @@ protected:
     bool EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData );
     bool EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData );
     bool EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData );
+    bool EvaluateMultiSourceActiveMes ( const CVector<uint8_t>& vecData );
     bool EvaluateLicenceRequiredMes ( const CVector<uint8_t>& vecData );
     bool EvaluateVersionAndOSMes ( const CVector<uint8_t>& vecData );
     bool EvaluateRecorderStateMes ( const CVector<uint8_t>& vecData );
@@ -377,6 +387,10 @@ signals:
     void MultiSourceConfigReceived ( CVector<CMultiSourceSourceConfig> config );
     void MultiSourceAcceptReceived ( CMultiSourceAcceptMap accept );
     void MultiSourceRejected ( uint8_t reason );
+    void MultiSourceActive ( int generation );
+    // Emitted after a queued reliable protocol frame has actually been handed
+    // to the socket. Split fragments retain their original logical message ID.
+    void ReliableMessageSent ( int logicalMessageID );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );
     void RecorderStateReceived ( ERecorderState eRecorderState );

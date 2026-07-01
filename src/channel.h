@@ -103,6 +103,16 @@ public:
     bool IsConnected() const { return iConTimeOut > 0; }
     void Disconnect();
 
+    // Server-side Advanced sessions do not call GetData(), so they need an
+    // explicit one-per-session timeout tick. The caller owns the CServer
+    // session mutex and performs the full teardown if this returns true.
+    bool AdvanceTimeOutCounter ( int iNumSamples );
+
+    // Reset every per-endpoint state which must not survive a server slot reuse.
+    // This is intentionally server-side only and must be called from the
+    // CChannel/CProtocol QObject thread, not the socket worker.
+    void ResetForServerReuse();
+
     void SetEnable ( const bool bNEnStat );
     bool IsEnabled() { return bIsEnabled; }
 
@@ -174,6 +184,7 @@ public:
     void CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config ) { Protocol.CreateMultiSourceConfigMes ( config ); }
     void CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept ) { Protocol.CreateMultiSourceAcceptMes ( accept ); }
     void CreateMultiSourceRejectMes ( uint8_t reason ) { Protocol.CreateMultiSourceRejectMes ( reason ); }
+    void CreateMultiSourceActiveMes ( uint16_t generation ) { Protocol.CreateMultiSourceActiveMes ( generation ); }
     void CreateReqNetwTranspPropsMes() { Protocol.CreateReqNetwTranspPropsMes(); }
     void CreateReqSplitMessSupportMes() { Protocol.CreateReqSplitMessSupportMes(); }
     void CreateReqJitBufMes() { Protocol.CreateReqJitBufMes(); }
@@ -306,6 +317,8 @@ signals:
     void MultiSourceConfigReceived ( CVector<CMultiSourceSourceConfig> config );
     void MultiSourceAcceptReceived ( CMultiSourceAcceptMap accept );
     void MultiSourceRejected ( uint8_t reason );
+    void MultiSourceActive ( int generation );
+    void ReliableMessageSent ( int logicalMessageID );
     void MuteStateHasChanged ( int iChanID, bool bIsMuted );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void ReqChanInfo();
