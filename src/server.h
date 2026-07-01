@@ -168,7 +168,7 @@ public:
         CChannelCoreInfo result = owner;
         if ( !bLegacy )
         {
-            result.strName     = owner.strName + QStringLiteral ( " — " ) + Config.strTag;
+            result.strName     = owner.strName + QStringLiteral ( "\n" ) + Config.strTag;
             result.iInstrument = Config.iInstrument;
         }
         return result;
@@ -284,9 +284,15 @@ public:
     // GUI settings ------------------------------------------------------------
     int GetClientNumAudioChannels ( const int iChanNum )
     {
-        return MathUtils::InRange<int> ( iChanNum, 0, MAX_NUM_CHANNELS - 1 ) && vecSources[iChanNum].IsActive()
-                   ? vecSources[iChanNum].GetConfig().iNumChannels
-                   : 0;
+        if ( !MathUtils::InRange<int> ( iChanNum, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[iChanNum].IsActive() )
+            return 0;
+
+        const CServerSource& source = vecSources[iChanNum];
+        if ( !source.IsLegacy() )
+            return source.GetConfig().iNumChannels;
+
+        const int sessionID = source.ParentSessionID();
+        return MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ? vecSessions[sessionID].GetNumAudioChannels() : 0;
     }
     int GetNumberOfConnectedSessions();
 
@@ -402,11 +408,11 @@ protected:
     CChannel            vecSessions[MAX_NUM_CHANNELS];
     CServerSessionState vecSessionState[MAX_NUM_CHANNELS];
     CServerSource       vecSources[MAX_NUM_CHANNELS];
-    int                 iMaxNumChannels; // visible-source cap from server configuration
+    int                 iMaxNumSessions; // configured physical user-session cap
 
     int    iCurNumSessions;
     int    vecSessionOrder[MAX_NUM_CHANNELS]; // address-sorted active session slots
-    int    iCurNumSources;                    // active plus reserved, never exceeds iMaxNumChannels
+    int    iCurNumSources;                    // active plus reserved, never exceeds MAX_NUM_CHANNELS
     QMutex MutexChanOrder;
 
     CProtocol ConnLessProtocol;

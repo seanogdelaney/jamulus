@@ -1633,7 +1633,7 @@ void CProtocol::CreateReqMultiSourceCapsMes() { CreateAndSendMessage ( PROTMESSI
 bool CProtocol::EvaluateReqMultiSourceCapsMes()
 {
     emit ReqMultiSourceCaps();
-    return true;
+    return false; // no error
 }
 
 void CProtocol::CreateMultiSourceCapsMes()
@@ -1646,9 +1646,9 @@ void CProtocol::CreateMultiSourceCapsMes()
 bool CProtocol::EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData )
 {
     if ( !MultiSourceProtocol::DecodeCaps ( vecData ) )
-        return false;
+        return true; // return error code
     emit MultiSourceCapsReceived();
-    return true;
+    return false; // no error
 }
 
 void CProtocol::CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config )
@@ -1662,9 +1662,9 @@ bool CProtocol::EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData )
 {
     CVector<CMultiSourceSourceConfig> config;
     if ( !MultiSourceProtocol::DecodeConfig ( vecData, config ) )
-        return false;
+        return true; // return error code
     emit MultiSourceConfigReceived ( config );
-    return true;
+    return false; // no error
 }
 
 void CProtocol::CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept )
@@ -1678,9 +1678,9 @@ bool CProtocol::EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData )
 {
     CMultiSourceAcceptMap accept;
     if ( !MultiSourceProtocol::DecodeAccept ( vecData, accept ) )
-        return false;
+        return true; // return error code
     emit MultiSourceAcceptReceived ( accept );
-    return true;
+    return false; // no error
 }
 
 void CProtocol::CreateMultiSourceRejectMes ( const uint8_t reason )
@@ -1694,9 +1694,9 @@ bool CProtocol::EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData )
 {
     uint8_t reason = 0;
     if ( !MultiSourceProtocol::DecodeReject ( vecData, reason ) )
-        return false;
+        return true; // return error code
     emit MultiSourceRejected ( reason );
-    return true;
+    return false; // no error
 }
 
 void CProtocol::CreateMultiSourceActiveMes ( const uint16_t generation )
@@ -1710,9 +1710,9 @@ bool CProtocol::EvaluateMultiSourceActiveMes ( const CVector<uint8_t>& vecData )
 {
     uint16_t generation = 0;
     if ( !MultiSourceProtocol::DecodeActive ( vecData, generation ) )
-        return false;
+        return true; // return error code
     emit MultiSourceActive ( generation );
-    return true;
+    return false; // no error
 }
 
 void CProtocol::CreateLicenceRequiredMes ( const ELicenceType eLicenceType )

@@ -469,7 +469,7 @@ int main ( int argc, char** argv )
         if ( GetNumericArgument ( argc, argv, i, "-u", "--numchannels", 1, MAX_NUM_CHANNELS, rDbleArgument ) )
         {
             iNumServerChannels = static_cast<int> ( rDbleArgument );
-            qInfo() << qUtf8Printable ( QString ( "- maximum number of channels: %1" ).arg ( iNumServerChannels ) );
+            qInfo() << qUtf8Printable ( QString ( "- maximum number of user sessions: %1" ).arg ( iNumServerChannels ) );
             CommandLineOptions << "--numchannels";
             ServerOnlyOptions << "--numchannels";
             continue;
@@ -1151,7 +1151,7 @@ QString UsageArguments ( char** argv )
            "                          (only works if IPv6 is unavailable or disabled with --noipv6)\n"
            "  -T, --multithreading    use multithreading to make better use of\n"
            "                          multi-core CPUs and support more Clients\n"
-           "  -u, --numchannels       maximum number of channels\n"
+           "  -u, --numchannels       maximum number of user sessions\n"
            "  -w, --welcomemessage    welcome message to display on connect\n"
            "                          (string or filename, HTML supported)\n"
            "  -z, --startminimized    start minimized\n"
