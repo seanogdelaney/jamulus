@@ -50,6 +50,24 @@ constexpr int ReturnPacketsPerServerTick ( const bool serverUsesDoubleSystemFram
 // replay when a target is reduced after a backlog has accumulated.
 uint32_t ReanchorPlayoutSequence ( uint32_t currentNextSequence, uint32_t highestReceivedSequence, int targetFrames );
 
+// The ingress ring is indexed by sequence modulo its fixed capacity.  Once
+// either cursor is a full ring outside the other, normal equal-rate producer
+// and consumer progress can never make them meet again: every requested slot
+// has either been overwritten or will remain in the future forever.
+enum class EPlayoutDiscontinuity : uint8_t
+{
+    None,
+    ProducerAhead,
+    ConsumerAhead
+};
+
+EPlayoutDiscontinuity DetectPlayoutDiscontinuity ( uint32_t nextPlayoutSequence, uint32_t highestReceivedSequence, size_t ringFrames );
+
+// Unlike ReanchorPlayoutSequence(), recovery intentionally may move in either
+// direction.  It is used only after DetectPlayoutDiscontinuity() has proved
+// that the old cursor is unrecoverable.
+uint32_t RecoverPlayoutSequence ( uint32_t highestReceivedSequence, int targetFrames );
+
 struct SourceDescriptor
 {
     SourceDescriptor() = default;
@@ -162,12 +180,13 @@ public:
     // Returns true when at least one fragment of `sequence` was received. Missing sources have null data.
     bool Read ( uint32_t sequence, RecordView* records, size_t capacity ) const;
 
-    size_t   DescriptorCount() const { return sourceDescriptors.size(); }
-    uint16_t Generation() const { return configuredGeneration; }
-    bool     Raw() const { return rawSession; }
-    bool     HasHighestSequence() const { return haveHighestSequence; }
-    uint32_t HighestSequence() const { return highestSequence; }
-    size_t   RingFrames() const { return ringSlots.size(); }
+    size_t                DescriptorCount() const { return sourceDescriptors.size(); }
+    uint16_t              Generation() const { return configuredGeneration; }
+    bool                  Raw() const { return rawSession; }
+    bool                  HasHighestSequence() const { return haveHighestSequence; }
+    uint32_t              HighestSequence() const { return highestSequence; }
+    size_t                RingFrames() const { return ringSlots.size(); }
+    EPlayoutDiscontinuity GetPlayoutDiscontinuity ( uint32_t nextPlayoutSequence ) const;
 
 private:
     struct Slot

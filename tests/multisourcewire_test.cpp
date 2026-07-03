@@ -140,6 +140,39 @@ void TestIngressAutoJitterAndReanchor()
     assert ( ReanchorPlayoutSequence ( 99, 100, 3 ) == 99 );
 }
 
+void TestIngressDiscontinuityRecovery()
+{
+    // Once either sequence cursor lies at least a whole ring outside the
+    // other, equal-rate operation cannot recover by itself.  A server/timer
+    // stall makes the producer ahead; a capture-callback pause leaves the
+    // consumer ahead.
+    assert ( DetectPlayoutDiscontinuity ( 100, 103, 4 ) == EPlayoutDiscontinuity::None );
+    assert ( DetectPlayoutDiscontinuity ( 100, 104, 4 ) == EPlayoutDiscontinuity::ProducerAhead );
+    assert ( DetectPlayoutDiscontinuity ( 104, 100, 4 ) == EPlayoutDiscontinuity::ConsumerAhead );
+
+    // A producer-ahead recovery retains the newest complete target window.
+    assert ( RecoverPlayoutSequence ( 104, 2 ) == 103 );
+    assert ( RecoverPlayoutSequence ( 104, 4 ) == 101 );
+
+    // The ingress instance uses its real configured ring capacity, including
+    // across uint32_t wraparound.
+    SourceDescriptor descriptor{ 1, 1, 1, false };
+    SessionIngress   ingress;
+    assert ( ingress.Configure ( 1, false, &descriptor, 1, 4 ) );
+    std::vector<uint8_t>            payload ( 1, 7 );
+    const std::array<RecordView, 1> record{ MakeRecord ( 1, payload ) };
+    FramePacketizer                 packetizer;
+    const Datagram*                 datagrams = nullptr;
+    size_t                          count     = 0;
+    for ( uint32_t sequence = 0xfffffffdU; sequence != 2; ++sequence )
+    {
+        assert ( packetizer.Packetize ( 1, sequence, false, record.data(), record.size(), datagrams, count ) );
+        assert ( count == 1 && ingress.Put ( datagrams[0].bytes.data(), datagrams[0].length ) );
+    }
+    assert ( ingress.GetPlayoutDiscontinuity ( 0xfffffffdU ) == EPlayoutDiscontinuity::ProducerAhead );
+    assert ( ingress.GetPlayoutDiscontinuity ( 5 ) == EPlayoutDiscontinuity::ConsumerAhead );
+}
+
 void TestReturnPacketCadence()
 {
     // This is the four-way server/output-frame matrix.  In particular, a
@@ -167,6 +200,7 @@ int main()
     TestMalformedAndDuplicate();
     TestNegotiationFallback();
     TestIngressAutoJitterAndReanchor();
+    TestIngressDiscontinuityRecovery();
     TestReturnPacketCadence();
     TestRoutingValidation();
     std::cout << "multisourcewire tests: PASS\n";

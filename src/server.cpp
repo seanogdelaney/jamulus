@@ -875,6 +875,33 @@ bool CServer::ReadAdvancedFrame ( const int sessionID, const int blockIndex )
         return false;
 
     std::array<MultiSource::RecordView, MultiSource::kMaxSourceRows> records{};
+    // A sequence-indexed ring can recover ordinary loss and reordering, but a
+    // callback/scheduler hiatus longer than its capacity makes its old playout
+    // cursor permanently unreachable.  Treat producer and consumer pauses
+    // differently: a producer-ahead overrun still has a complete recent
+    // window, whereas a consumer-ahead underrun must refill rather than replay
+    // stale pre-pause slots.
+    const uint32_t expectedSequence = state.bIngressPrimed ? state.iNextSequence : state.iFirstSequence;
+    switch ( state.Ingress.GetPlayoutDiscontinuity ( expectedSequence ) )
+    {
+    case MultiSource::EPlayoutDiscontinuity::ProducerAhead:
+        state.iFirstSequence = MultiSource::RecoverPlayoutSequence ( state.Ingress.HighestSequence(), state.iIngressTargetFrames );
+        state.iNextSequence  = state.iFirstSequence;
+        state.bIngressPrimed = false;
+        break;
+
+    case MultiSource::EPlayoutDiscontinuity::ConsumerAhead:
+        // The newest sequence is the first trustworthy post-hiatus frame.
+        // Re-prime from it instead of rewinding into slots which may retain
+        // audio already played before the producer stopped.
+        state.iFirstSequence = state.Ingress.HighestSequence();
+        state.iNextSequence  = state.iFirstSequence;
+        state.bIngressPrimed = false;
+        break;
+
+    case MultiSource::EPlayoutDiscontinuity::None:
+        break;
+    }
     // Start playout only after the negotiated session-level window is present.
     // This is intentionally shared by all sources; individual missing records
     // remain null and are handled by source-local PLC below.
