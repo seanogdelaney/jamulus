@@ -1,3 +1,11 @@
+### 4.0.0sdel3 ###
+
+- Add independent server limits for physical clients (`--numclient`) and visible mixer channels (`--numchannels`).
+
+- Rename the Advanced audio mode to Poly-in/Stereo-out.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel2 ###
 
 - Restore Advanced-routing parity for local monitoring, upload-rate reporting, and audio-device reinitialization.
