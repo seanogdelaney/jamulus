@@ -547,8 +547,11 @@ void CClient::SetRemoteChanGain ( const int iId, const float fGain, const bool b
 
     CClientChannel* clientChan = &clientChannels[iId];
 
-    // if this gain is for my own channel, apply the value for the Mute Myself function
-    if ( bIsMyOwnFader )
+    // In Advanced mode, Mute Myself monitors each owned source directly. Keep
+    // its gain independent from every other owned fader. The legacy path has
+    // only one uplink, so it intentionally retains the shared gain.
+    const bool bAdvancedOwnFader = SetAdvancedLocalMonitorGain ( clientChan->iServerChannelID, fGain );
+    if ( bIsMyOwnFader && !bAdvancedOwnFader )
     {
         fMuteOutStreamGain = fGain;
     }
@@ -634,6 +637,10 @@ void CClient::SetRemoteChanPan ( const int iId, const float fPan )
 
     CClientChannel* clientChan = &clientChannels[iId];
 
+    // Pan does not identify an own fader explicitly, but only an Advanced
+    // source can match a configured owned server fader ID.
+    SetAdvancedLocalMonitorPan ( clientChan->iServerChannelID, fPan );
+
     if ( TimerGainOrPan.isActive() )
     {
         // just update the new value for sending later;
@@ -696,11 +703,29 @@ bool CClient::GetAndResetbJitterBufferOKFlag()
     return bSocketJitBufOKFlag;
 }
 
+int CClient::GetUploadRateKbps()
+{
+    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.CanSendAdvanced() || iAdvancedSourceCount == 0 )
+        return Channel.GetUploadRateKbps();
+
+    std::array<uint16_t, MultiSource::kMaxSourceRows> payloadLengths{};
+    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+        payloadLengths[static_cast<size_t> ( sourceIndex )] = AdvancedSources[sourceIndex].Config.iPayloadBytes;
+
+    const int estimatedRate = MultiSource::EstimateUploadRateKbps ( payloadLengths.data(),
+                                                                    static_cast<size_t> ( iAdvancedSourceCount ),
+                                                                    iOPUSFrameSizeSamples,
+                                                                    SYSTEM_SAMPLE_RATE_HZ );
+    return estimatedRate > 0 ? estimatedRate : Channel.GetUploadRateKbps();
+}
+
 void CClient::SetSndCrdPrefFrameSizeFactor ( const int iNewFactor )
 {
     // first check new input parameter
     if ( ( iNewFactor == FRAME_SIZE_FACTOR_PREFERRED ) || ( iNewFactor == FRAME_SIZE_FACTOR_DEFAULT ) || ( iNewFactor == FRAME_SIZE_FACTOR_SAFE ) )
     {
+        if ( iNewFactor != iSndCrdPrefFrameSizeFactor && RejectAdvancedAudioReinitialization ( tr ( "the audio buffer size" ) ) )
+            return;
         // init with new parameter, if client was running then first
         // stop it and restart again after new initialization
         const bool bWasRunning = Sound.IsRunning();
@@ -925,6 +950,7 @@ void CClient::ConfigureAdvancedSources()
         source.iInputChannel1             = route.iInputChannel1;
         source.iInputChannel2             = route.iInputChannel2;
         source.vecPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
+        source.vecMutedPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
         source.vecCoded.Init ( codedBytes, 0 );
         if ( !raw )
         {
@@ -985,8 +1011,6 @@ void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource&  source,
             if ( channels == 2 )
                 right = Float2Short ( static_cast<float> ( right ) * iInputBoost );
         }
-        if ( bMuteOutStream )
-            left = right = 0;
         if ( channels == 1 )
             source.vecPCM[frame] = left;
         else
@@ -1059,13 +1083,17 @@ bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int ca
     {
         CClientAdvancedSource& source = AdvancedSources[sourceIndex];
         FillAdvancedSourcePCM ( source, captured, captureChannels, frameOffset );
+        // Mute Myself replaces only the network payload. Leave vecPCM intact
+        // for direct local monitoring below, otherwise muted users cannot hear
+        // their own capture at all.
+        const CVector<int16_t>& encodedPCM = bMuteOutStream ? source.vecMutedPCM : source.vecPCM;
         if ( source.Config.bRaw )
         {
-            std::memcpy ( &source.vecCoded[0], &source.vecPCM[0], source.Config.iPayloadBytes );
+            std::memcpy ( &source.vecCoded[0], &encodedPCM[0], source.Config.iPayloadBytes );
         }
         else
         {
-            opus_custom_encode ( source.pEncoder, &source.vecPCM[0], iOPUSFrameSizeSamples, &source.vecCoded[0], source.Config.iPayloadBytes );
+            opus_custom_encode ( source.pEncoder, &encodedPCM[0], iOPUSFrameSizeSamples, &source.vecCoded[0], source.Config.iPayloadBytes );
         }
         records[sourceIndex] = { source.Config.iKey, &source.vecCoded[0], source.Config.iPayloadBytes };
     }
@@ -1097,7 +1125,7 @@ void CClient::BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, const 
     for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
     {
         const CClientAdvancedSource& source    = AdvancedSources[sourceIndex];
-        const float                  gain      = source.fLocalMonitorGain * fMuteOutStreamGain;
+        const float                  gain      = source.fLocalMonitorGain;
         const float                  gainLeft  = MathUtils::GetLeftPan ( source.fLocalMonitorPan, false ) * gain;
         const float                  gainRight = MathUtils::GetRightPan ( source.fLocalMonitorPan, false ) * gain;
         for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
@@ -1118,6 +1146,49 @@ void CClient::BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, const 
             }
         }
     }
+}
+
+bool CClient::SetAdvancedLocalMonitorGain ( const int serverFaderID, const float gain )
+{
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return false;
+
+    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+    {
+        CClientAdvancedSource& source = AdvancedSources[sourceIndex];
+        if ( source.Config.iFaderID == serverFaderID )
+        {
+            source.fLocalMonitorGain = gain;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CClient::SetAdvancedLocalMonitorPan ( const int serverFaderID, const float pan )
+{
+    if ( eAudioChannelConf != CC_ADVANCED )
+        return false;
+
+    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+    {
+        CClientAdvancedSource& source = AdvancedSources[sourceIndex];
+        if ( source.Config.iFaderID == serverFaderID )
+        {
+            source.fLocalMonitorPan = pan;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CClient::RejectAdvancedAudioReinitialization ( const QString& setting )
+{
+    if ( !IsAdvancedRoutingLocked() )
+        return false;
+
+    SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing %1." ).arg ( setting ) );
+    return true;
 }
 
 void CClient::SetAdvancedStatus ( const QString& status )
@@ -1407,8 +1478,18 @@ void CClient::OnAdvancedNegotiationTimeout()
     }
 }
 
+void CClient::OpenSndCrdDriverSetup()
+{
+    if ( RejectAdvancedAudioReinitialization ( tr ( "audio device settings" ) ) )
+        return;
+
+    Sound.OpenDriverSetup();
+}
+
 QString CClient::SetSndCrdDev ( const QString strNewDev )
 {
+    if ( strNewDev != Sound.GetDev() && RejectAdvancedAudioReinitialization ( tr ( "the audio device" ) ) )
+        return QString();
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -1440,6 +1521,9 @@ QString CClient::SetSndCrdDev ( const QString strNewDev )
 
 void CClient::SetSndCrdLeftInputChannel ( const int iNewChan )
 {
+    if ( RejectAdvancedAudioReinitialization ( tr ( "the input channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -1460,6 +1544,9 @@ void CClient::SetSndCrdLeftInputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdRightInputChannel ( const int iNewChan )
 {
+    if ( RejectAdvancedAudioReinitialization ( tr ( "the input channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -1480,6 +1567,9 @@ void CClient::SetSndCrdRightInputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdLeftOutputChannel ( const int iNewChan )
 {
+    if ( RejectAdvancedAudioReinitialization ( tr ( "the output channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -1500,6 +1590,9 @@ void CClient::SetSndCrdLeftOutputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 {
+    if ( RejectAdvancedAudioReinitialization ( tr ( "the output channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -1520,48 +1613,62 @@ void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 
 void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
 {
-    QString strError = "";
+    QString strError            = "";
+    bool    bAdvancedDisconnect = false;
 
-    // audio device notifications can come at any time and they are in a
-    // different thread, therefore we need a mutex here
+    // Audio device notifications can come at any time and they are in a
+    // different thread, therefore we need a mutex here.
     MutexDriverReinit.lock();
     {
-        // in older QT versions, enums cannot easily be used in signals without
-        // registering them -> workaroud: we use the int type and cast to the enum
-        const ESndCrdResetType eSndCrdResetType = static_cast<ESndCrdResetType> ( iSndCrdResetType );
-
-        // if client was running then first
-        // stop it and restart again after new initialization
-        const bool bWasRunning = Sound.IsRunning();
-        if ( bWasRunning )
+        // The source descriptors, encoders and sequence number are immutable
+        // for one Advanced session. A device/backend reset recreates those
+        // objects, so preserve the contract by ending the session rather than
+        // silently restarting it with a new encoder state.
+        if ( IsAdvancedRoutingLocked() )
         {
-            Sound.Stop();
+            Stop();
+            bAdvancedDisconnect = true;
         }
-
-        // perform reinit request as indicated by the request type parameter
-        if ( eSndCrdResetType != RS_ONLY_RESTART )
+        else
         {
-            if ( eSndCrdResetType != RS_ONLY_RESTART_AND_INIT )
+            // In older QT versions, enums cannot easily be used in signals
+            // without registering them -> use int and cast to the enum.
+            const ESndCrdResetType eSndCrdResetType = static_cast<ESndCrdResetType> ( iSndCrdResetType );
+
+            // If the client was running then first stop it and restart after
+            // the requested initialization.
+            const bool bWasRunning = Sound.IsRunning();
+            if ( bWasRunning )
             {
-                // reinit the driver if requested
-                // (we use the currently selected driver)
-                strError = Sound.SetDev ( Sound.GetDev() );
+                Sound.Stop();
             }
 
-            // init client object (must always be performed if the driver
-            // was changed)
-            Init();
-        }
+            if ( eSndCrdResetType != RS_ONLY_RESTART )
+            {
+                if ( eSndCrdResetType != RS_ONLY_RESTART_AND_INIT )
+                {
+                    // Reinitialize the currently selected driver if requested.
+                    strError = Sound.SetDev ( Sound.GetDev() );
+                }
 
-        if ( bWasRunning )
-        {
-            // restart client
-            Sound.Start();
+                Init();
+            }
+
+            if ( bWasRunning )
+            {
+                Sound.Start();
+            }
         }
     }
     MutexDriverReinit.unlock();
 
-    // inform GUI about the sound card device change
+    if ( bAdvancedDisconnect )
+    {
+        SetAdvancedStatus ( tr ( "Audio device reinitialized; Advanced routing was disconnected. Reconnect to resume." ) );
+        emit Disconnected();
+    }
+
+    // Inform GUI about the sound card device change.
     emit SoundDeviceChanged ( strError );
 }
 
@@ -1687,6 +1794,15 @@ void CClient::OnRawAudioSupported()
 {
     if ( !bRawAudioIsSupported )
     {
+        if ( IsAdvancedRoutingLocked() && AdvancedNegotiation.CanSendAdvanced() )
+        {
+            // Establish the changed capability on a fresh connection rather
+            // than resetting source encoders and frame sequence in place.
+            Stop();
+            SetAdvancedStatus ( tr ( "Server audio capability changed; Advanced routing was disconnected. Reconnect to resume." ) );
+            emit Disconnected();
+            return;
+        }
         const bool bWasRunning = Sound.IsRunning();
 
         if ( bWasRunning )
@@ -2297,9 +2413,13 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     // for muted stream we have to add our local data here
     if ( bMuteOutStream )
     {
+        // BuildAdvancedLocalMonitor() already applies one gain/pan pair per
+        // source. The legacy single-stream path still applies its shared own
+        // fader gain here.
+        const float localMonitorGain = advancedActive ? 1.0f : fMuteOutStreamGain;
         for ( i = 0; i < iStereoBlockSizeSam; i++ )
         {
-            vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * fMuteOutStreamGain );
+            vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * localMonitorGain );
         }
     }
 
