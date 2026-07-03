@@ -1,4 +1,6 @@
-### 4.0.0sdel1 ###
+### 4.0.0sdel2 ###
+
+- Restore Advanced-routing parity for local monitoring, upload-rate reporting, and audio-device reinitialization.
 
 - Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
 
