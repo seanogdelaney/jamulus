@@ -395,6 +395,7 @@ protected:
     void DestroyAdvancedSources();
     void BuildAdvancedSourceConfig();
     void FillAdvancedSourcePCM ( CClientAdvancedSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
+    void UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, int captureChannels );
     bool SendAdvancedFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
     void BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
     int  GetCodedBytesForAdvancedSource ( int audioChannels, bool& raw ) const;
