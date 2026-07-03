@@ -120,6 +120,8 @@ int main ( int argc, char** argv )
     bool         bCustomPortNumberGiven      = false;
     bool         bDisableIPv6                = false;
     int          iNumServerChannels          = DEFAULT_USED_NUM_CHANNELS;
+    int          iNumServerClients           = DEFAULT_USED_NUM_CHANNELS;
+    bool         bNumServerClientsGiven      = false;
     quint16      iPortNumber                 = DEFAULT_PORT_NUMBER;
     int          iJsonRpcPortNumber          = INVALID_PORT;
     QString      strJsonRpcBindIP            = DEFAULT_JSON_RPC_LISTEN_ADDRESS;
@@ -481,13 +483,24 @@ int main ( int argc, char** argv )
             continue;
         }
 
-        // Maximum number of channels ------------------------------------------
+        // Maximum number of visible mixer channels ---------------------------
         if ( GetNumericArgument ( argc, argv, i, "-u", "--numchannels", 1, MAX_NUM_CHANNELS, rDbleArgument ) )
         {
             iNumServerChannels = static_cast<int> ( rDbleArgument );
-            qInfo() << qUtf8Printable ( QString ( "- maximum number of user sessions: %1" ).arg ( iNumServerChannels ) );
+            qInfo() << qUtf8Printable ( QString ( "- maximum number of visible mixer channels: %1" ).arg ( iNumServerChannels ) );
             CommandLineOptions << "--numchannels";
             ServerOnlyOptions << "--numchannels";
+            continue;
+        }
+
+        // Maximum number of physical user sessions ----------------------------
+        if ( GetNumericArgument ( argc, argv, i, "--numclient", "--numclient", 1, MAX_NUM_CHANNELS, rDbleArgument ) )
+        {
+            iNumServerClients      = static_cast<int> ( rDbleArgument );
+            bNumServerClientsGiven = true;
+            qInfo() << qUtf8Printable ( QString ( "- maximum number of user sessions: %1" ).arg ( iNumServerClients ) );
+            CommandLineOptions << "--numclient";
+            ServerOnlyOptions << "--numclient";
             continue;
         }
 
@@ -640,7 +653,13 @@ int main ( int argc, char** argv )
 #endif
     }
 
-    // Dependencies ------------------------------------------------------------
+    // Keep the legacy one-user/one-channel default when only --numchannels is
+    // specified. Advanced deployments can opt into an explicit physical session
+    // cap with --numclient.
+    if ( !bNumServerClientsGiven )
+        iNumServerClients = iNumServerChannels;
+
+        // Dependencies ------------------------------------------------------------
 #ifdef HEADLESS
     if ( bUseGUI )
     {
@@ -1034,6 +1053,7 @@ int main ( int argc, char** argv )
             // Server:
             // actual server object
             CServer Server ( iNumServerChannels,
+                             iNumServerClients,
                              strLoggingFileName,
                              strServerBindIP4,
                              strServerBindIP6,
@@ -1181,7 +1201,8 @@ QString UsageArguments ( char** argv )
            "      --serverbindip6     IPv6 address the Server will bind to (rather than all)\n"
            "  -T, --multithreading    use multithreading to make better use of\n"
            "                          multi-core CPUs and support more Clients\n"
-           "  -u, --numchannels       maximum number of user sessions\n"
+           "  -u, --numchannels       maximum number of visible mixer channels\n"
+           "      --numclient         maximum number of physical user sessions\n"
            "  -w, --welcomemessage    welcome message to display on connect\n"
            "                          (string or filename, HTML supported)\n"
            "  -z, --startminimized    start minimized\n"
