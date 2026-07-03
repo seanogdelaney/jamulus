@@ -708,7 +708,7 @@ CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSet
     cbxAudioChannels->addItem ( tr ( "Mono" ), CC_MONO );
     cbxAudioChannels->addItem ( tr ( "Mono-in/Stereo-out" ), CC_MONO_IN_STEREO_OUT );
     cbxAudioChannels->addItem ( tr ( "Stereo" ), CC_STEREO );
-    cbxAudioChannels->addItem ( tr ( "Advanced" ), CC_ADVANCED );
+    cbxAudioChannels->addItem ( tr ( "Poly-in/Stereo-out" ), CC_ADVANCED );
     cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
 
     // Audio Quality combo box

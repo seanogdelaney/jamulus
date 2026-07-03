@@ -240,6 +240,7 @@ class CServer : public QObject, public CServerSlots<MAX_NUM_CHANNELS>
 
 public:
     CServer ( const int          iNewMaxNumChan,
+              const int          iNewMaxNumSessions,
               const QString&     strLoggingFileName,
               const QString&     strServerBindIP,
               const quint16      iPortNumber,
@@ -408,11 +409,12 @@ protected:
     CChannel            vecSessions[MAX_NUM_CHANNELS];
     CServerSessionState vecSessionState[MAX_NUM_CHANNELS];
     CServerSource       vecSources[MAX_NUM_CHANNELS];
+    int                 iMaxNumChannels; // configured visible source-fader cap
     int                 iMaxNumSessions; // configured physical user-session cap
 
     int    iCurNumSessions;
     int    vecSessionOrder[MAX_NUM_CHANNELS]; // address-sorted active session slots
-    int    iCurNumSources;                    // active plus reserved, never exceeds MAX_NUM_CHANNELS
+    int    iCurNumSources;                    // active plus temporary source-map reservations
     QMutex MutexChanOrder;
 
     CProtocol ConnLessProtocol;
