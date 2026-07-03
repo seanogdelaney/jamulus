@@ -91,6 +91,44 @@ uint32_t RecoverPlayoutSequence ( const uint32_t highestReceivedSequence, const 
     return targetFrames <= 1 ? highestReceivedSequence : highestReceivedSequence - static_cast<uint32_t> ( targetFrames - 1 );
 }
 
+int EstimateUploadRateKbps ( const uint16_t* const payloadLengths, const size_t recordCount, const int frameSamples, const int sampleRate )
+{
+    if ( payloadLengths == nullptr || recordCount == 0 || recordCount > kMaxSourceRows || frameSamples <= 0 || sampleRate <= 0 )
+        return 0;
+
+    uint64_t totalWireBytes = 0;
+    size_t   recordIndex    = 0;
+    while ( recordIndex < recordCount )
+    {
+        size_t used            = kHeaderBytes;
+        size_t recordsInPacket = 0;
+        while ( recordIndex < recordCount )
+        {
+            const uint16_t payloadBytes = payloadLengths[recordIndex];
+            if ( payloadBytes == 0 || payloadBytes > kMaxRawStereoPayloadBytes )
+                return 0;
+
+            const size_t required = kRecordHeaderBytes + payloadBytes;
+            if ( used + required > kMaxApplicationDatagram )
+            {
+                // A single permitted record always fits by construction; this
+                // branch merely starts the next packet at the same boundary as
+                // FramePacketizer.
+                if ( recordsInPacket == 0 )
+                    return 0;
+                break;
+            }
+            used += required;
+            ++recordsInPacket;
+            ++recordIndex;
+        }
+        totalWireBytes += used + kEstimatedTransportHeaderBytes;
+    }
+
+    const uint64_t bitsPerSecond = totalWireBytes * 8U * static_cast<uint64_t> ( sampleRate ) / static_cast<uint64_t> ( frameSamples );
+    return static_cast<int> ( bitsPerSecond / 1000U );
+}
+
 bool FramePacketizer::Packetize ( const uint16_t          generation,
                                   const uint32_t          sequence,
                                   const bool              raw,

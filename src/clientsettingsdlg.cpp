@@ -1306,10 +1306,17 @@ void CClientSettingsDlg::UpdateSoundCardFrame()
     rbtBufferDelaySafe->setChecked ( bSafeChecked );
     SndCrdBufferDelayButtonGroup.setExclusive ( true );
 
-    // disable radio buttons which are not supported by audio interface
-    rbtBufferDelayPreferred->setEnabled ( pClient->GetFraSiFactPrefSupported() );
-    rbtBufferDelayDefault->setEnabled ( pClient->GetFraSiFactDefSupported() );
-    rbtBufferDelaySafe->setEnabled ( pClient->GetFraSiFactSafeSupported() );
+    // A live Advanced session has an immutable source encoder/frame contract.
+    // Buffer changes reinitialize it, so require an explicit reconnect.
+    const bool    advancedRoutingLocked = pClient->IsAdvancedRoutingLocked();
+    const QString advancedLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Advanced routing." );
+    rbtBufferDelayPreferred->setEnabled ( pClient->GetFraSiFactPrefSupported() && !advancedRoutingLocked );
+    rbtBufferDelayDefault->setEnabled ( pClient->GetFraSiFactDefSupported() && !advancedRoutingLocked );
+    rbtBufferDelaySafe->setEnabled ( pClient->GetFraSiFactSafeSupported() && !advancedRoutingLocked );
+    grbSoundCrdBufDelay->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+    rbtBufferDelayPreferred->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+    rbtBufferDelayDefault->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+    rbtBufferDelaySafe->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
 
     // If any of our predefined sizes is chosen, use the regular group box
     // title text. If not, show the actual buffer size. Otherwise the user
@@ -1328,6 +1335,9 @@ void CClientSettingsDlg::UpdateSoundCardFrame()
 
 void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
 {
+    const bool    advancedRoutingLocked = pClient->IsAdvancedRoutingLocked();
+    const QString advancedLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Advanced routing." );
+
     // update combo box containing all available sound cards in the system
     QStringList slSndCrdDevNames = pClient->GetSndCrdDevNames();
     cbxSoundcard->clear();
@@ -1338,6 +1348,12 @@ void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
     }
 
     cbxSoundcard->setCurrentText ( pClient->GetSndCrdDev() );
+    cbxSoundcard->setEnabled ( !advancedRoutingLocked );
+    cbxSoundcard->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+
+#if defined( _WIN32 ) && !defined( WITH_JACK )
+    butDriverSetup->setEnabled ( !advancedRoutingLocked );
+#endif
 
     // update input/output channel selection
 #if defined( _WIN32 ) || defined( __APPLE__ ) || defined( __MACOSX )
@@ -1385,6 +1401,10 @@ void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
             cbxLOutChan->setCurrentIndex ( pClient->GetSndCrdLeftOutputChannel() );
             cbxROutChan->setCurrentIndex ( pClient->GetSndCrdRightOutputChannel() );
         }
+        cbxLOutChan->setEnabled ( !advancedRoutingLocked );
+        cbxROutChan->setEnabled ( !advancedRoutingLocked );
+        cbxLOutChan->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+        cbxROutChan->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
 
         // Advanced owns its physical capture map. Retain the selected legacy
         // pair for fallback/return configuration but do not let the normal
