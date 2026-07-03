@@ -196,9 +196,14 @@ support more Clients
 disable translations, use built-in English strings
 .It Fl u | Fl \-numchannels
 .Pq Server mode only
-set maximum number of user sessions
-.Pq legacy users have one channel each; an Advanced session may expose several source faders ;
+set maximum number of visible mixer channels
+.Pq source faders ;
 default is 10, maximum is 150
+.It Fl \-numclient
+.Pq Server mode only
+set maximum number of physical user sessions
+.Pq default is the value of Fl \-numchannels ;
+maximum is 150
 .It Fl v | Fl \-version
 display version information and exit immediately
 .It Fl w | Fl \-welcomemessage Ar message

@@ -57,6 +57,7 @@ constexpr int kServerEventAdvancedJitterReport = 2;
 
 // CServer implementation ******************************************************
 CServer::CServer ( const int          iNewMaxNumChan,
+                   const int          iNewMaxNumSessions,
                    const QString&     strLoggingFileName,
                    const QString&     strServerBindIP4,
                    const QString&     strServerBindIP6,
@@ -79,7 +80,8 @@ CServer::CServer ( const int          iNewMaxNumChan,
                    const ELicenceType eNLicenceType ) :
     bUseDoubleSystemFrameSize ( bNUseDoubleSystemFrameSize ),
     bUseMultithreading ( bNUseMultithreading ),
-    iMaxNumSessions ( iNewMaxNumChan ),
+    iMaxNumChannels ( iNewMaxNumChan ),
+    iMaxNumSessions ( iNewMaxNumSessions ),
     iCurNumSessions ( 0 ),
     iCurNumSources ( 0 ),
     bDisableRaw ( bNDisableRaw ),
@@ -95,7 +97,7 @@ CServer::CServer ( const int          iNewMaxNumChan,
                         strServerInfo,
                         strServerPublicIP,
                         strServerListFilter,
-                        iNewMaxNumChan,
+                        iNewMaxNumSessions,
                         &ConnLessProtocol ),
     JamController ( this ),
     bDisableRecording ( bDisableRecording ),
@@ -114,8 +116,8 @@ CServer::CServer ( const int          iNewMaxNumChan,
     for ( i = 0; i < MAX_NUM_CHANNELS; i++ )
     {
         // Allocate codec/transport primitives for the fixed session/source
-        // pools. The configured server limit caps physical user sessions;
-        // visible source faders use the fixed source pool.
+        // pools. The configured channel and client limits only govern admission;
+        // slots remain available for temporary source-map reservations.
         // init OPUS -----------------------------------------------------------
         OpusMode[i] = opus_custom_mode_create ( SYSTEM_SAMPLE_RATE_HZ, DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES, &iOpusError );
 
@@ -183,8 +185,9 @@ CServer::CServer ( const int          iNewMaxNumChan,
     // the worst case here:
 
     // Source-indexed scratch must cover the complete source pool. A single
-    // session may expose several source faders, so the configured session cap
-    // is not a valid bound for these arrays.
+    // session may expose several source faders, and reservations can briefly
+    // coexist with their legacy placeholder, so neither configured cap is a
+    // valid bound for these arrays.
     vecChanIDsCurConChan.Init ( MAX_NUM_CHANNELS );
     vecSessionIDsCurConSession.Init ( iMaxNumSessions );
     vecvecfGains.Init ( MAX_NUM_CHANNELS );
@@ -1315,10 +1318,10 @@ int CServer::FindChannel ( const CHostAddress& address, const bool allowNew )
             right = middle;
     }
 
-    // The configured server limit is a physical user/session limit, as it was
-    // before one session could own several visible source faders. A legacy
-    // source still needs one free slot in the fixed source pool.
-    if ( !allowNew || iCurNumSessions >= iMaxNumSessions || iCurNumSources >= MAX_NUM_CHANNELS )
+    // Each physical session starts with one visible legacy source. Enforce
+    // the independent session and visible-fader admission limits, while also
+    // retaining the fixed pool guard for implementation storage.
+    if ( !allowNew || iCurNumSessions >= iMaxNumSessions || iCurNumSources >= iMaxNumChannels || iCurNumSources >= MAX_NUM_CHANNELS )
         return INVALID_CHANNEL_ID;
     int       freeOrderIndex = iCurNumSessions++;
     const int sessionID      = vecSessionOrder[freeOrderIndex];
@@ -1592,11 +1595,13 @@ bool CServer::PrepareAdvancedSources ( const int sessionID, const CVector<CMulti
         return false;
     }
 
-    // The configured maximum limits physical sessions and was enforced when
-    // this endpoint was admitted. Keep the legacy fader alive until the first
-    // accepted Advanced frame promotes the map, so the temporary reservation
-    // still needs config.Size() free entries in the fixed source pool.
-    if ( config.Size() > MAX_NUM_CHANNELS - iCurNumSources )
+    // The configured channel limit applies to the visible fader map after
+    // promotion. The legacy fader remains active until the first accepted
+    // Advanced frame, so a prepared map temporarily needs one extra fixed-pool
+    // slot for that placeholder. Keep the logical configured limit and the
+    // implementation storage limit separate.
+    const int postPromotionSourceCount = iCurNumSources - 1 + config.Size();
+    if ( postPromotionSourceCount > iMaxNumChannels || config.Size() > MAX_NUM_CHANNELS - iCurNumSources )
     {
         rejectReason = MultiSourceProtocol::kRejectCapacity;
         return false;
