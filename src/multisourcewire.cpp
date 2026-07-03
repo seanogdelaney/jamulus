@@ -64,6 +64,33 @@ uint32_t ReanchorPlayoutSequence ( const uint32_t currentNextSequence, const uin
     return SequenceBefore ( currentNextSequence, desired ) ? desired : currentNextSequence;
 }
 
+EPlayoutDiscontinuity DetectPlayoutDiscontinuity ( const uint32_t nextPlayoutSequence,
+                                                   const uint32_t highestReceivedSequence,
+                                                   const size_t   ringFrames )
+{
+    if ( ringFrames == 0 )
+        return EPlayoutDiscontinuity::None;
+
+    if ( SequenceBefore ( nextPlayoutSequence, highestReceivedSequence ) &&
+         static_cast<uint32_t> ( highestReceivedSequence - nextPlayoutSequence ) >= ringFrames )
+    {
+        return EPlayoutDiscontinuity::ProducerAhead;
+    }
+
+    if ( SequenceBefore ( highestReceivedSequence, nextPlayoutSequence ) &&
+         static_cast<uint32_t> ( nextPlayoutSequence - highestReceivedSequence ) >= ringFrames )
+    {
+        return EPlayoutDiscontinuity::ConsumerAhead;
+    }
+
+    return EPlayoutDiscontinuity::None;
+}
+
+uint32_t RecoverPlayoutSequence ( const uint32_t highestReceivedSequence, const int targetFrames )
+{
+    return targetFrames <= 1 ? highestReceivedSequence : highestReceivedSequence - static_cast<uint32_t> ( targetFrames - 1 );
+}
+
 bool FramePacketizer::Packetize ( const uint16_t          generation,
                                   const uint32_t          sequence,
                                   const bool              raw,
@@ -263,6 +290,11 @@ bool SessionIngress::IsTooOld ( const uint32_t sequence ) const
 {
     return haveHighestSequence && SequenceBefore ( sequence, highestSequence ) &&
            static_cast<uint32_t> ( highestSequence - sequence ) >= ringSlots.size();
+}
+
+EPlayoutDiscontinuity SessionIngress::GetPlayoutDiscontinuity ( const uint32_t nextPlayoutSequence ) const
+{
+    return haveHighestSequence ? DetectPlayoutDiscontinuity ( nextPlayoutSequence, highestSequence, ringSlots.size() ) : EPlayoutDiscontinuity::None;
 }
 
 bool SessionIngress::Put ( const uint8_t* const data, const size_t length, bool* const firstFragmentForSequence )
