@@ -88,12 +88,18 @@ void CStereoSignalLevelMeter::Update ( const CVector<short>& vecsAudio, const in
         }
     }
 
-    // apply smoothing, if in stereo out mode, do this for two channels
-    dCurLevelLOrMono = UpdateCurLevel ( dCurLevelLOrMono, -sMinLOrMono );
+    UpdatePeakLevels ( -static_cast<double> ( sMinLOrMono ), -static_cast<double> ( sMinR ) );
+}
+
+void CStereoSignalLevelMeter::UpdatePeakLevels ( const double dMaxLOrMono, const double dMaxR )
+{
+    // Apply smoothing. In mono-output mode, preserve the legacy behaviour of
+    // updating only the left/mono meter.
+    dCurLevelLOrMono = UpdateCurLevel ( dCurLevelLOrMono, dMaxLOrMono );
 
     if ( bIsStereoOut )
     {
-        dCurLevelR = UpdateCurLevel ( dCurLevelR, -sMinR );
+        dCurLevelR = UpdateCurLevel ( dCurLevelR, dMaxR );
     }
 }
 

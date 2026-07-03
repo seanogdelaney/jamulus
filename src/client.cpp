@@ -48,6 +48,7 @@
 #include "settings.h"
 #include "util.h"
 
+#include <algorithm>
 #include <cstring>
 
 /* Implementation *************************************************************/
@@ -994,6 +995,59 @@ void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource&  source,
             source.vecPCM[2 * frame + 1] = right;
         }
     }
+}
+
+void CClient::UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, const int captureChannels )
+{
+    const int frameCount = captureChannels > 0 ? std::min ( iMonoBlockSizeSam, captured.Size() / captureChannels ) : 0;
+
+    const auto peakForInput = [this, &captured, captureChannels, frameCount] ( const int inputChannel ) {
+        short minSample = 0;
+        if ( inputChannel < 0 || inputChannel >= captureChannels )
+            return 0.0;
+
+        // Match CStereoSignalLevelMeter::Update(): sample every third frame
+        // and retain only negative samples for the inexpensive peak estimate.
+        for ( int frame = 0; frame < frameCount; frame += 3 )
+        {
+            const int inputOffset = frame * captureChannels + inputChannel;
+            short     sample      = captured[inputOffset];
+            if ( iInputBoost != 1 )
+                sample = Float2Short ( static_cast<float> ( sample ) * iInputBoost );
+            minSample = std::min ( minSample, sample );
+        }
+        return -static_cast<double> ( minSample );
+    };
+
+    double peakLeft  = 0.0;
+    double peakRight = 0.0;
+
+    if ( iAdvancedSourceCount == 2 && AdvancedSources[0].Config.iNumChannels == 1 && AdvancedSources[1].Config.iNumChannels == 1 )
+    {
+        // Two mono source rows are the natural analogue of ordinary stereo
+        // capture: row one drives left and row two drives right.
+        peakLeft  = peakForInput ( AdvancedSources[0].iInputChannel1 );
+        peakRight = peakForInput ( AdvancedSources[1].iInputChannel1 );
+    }
+    else
+    {
+        // In every other Poly-in/Stereo-out layout, collapse every physical
+        // input into one shared peak. Mono rows contribute one input and
+        // stereo rows contribute both split inputs. Show that peak on both
+        // meter bars, rather than implying a left/right source assignment.
+        double peak = 0.0;
+        for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+        {
+            const CClientAdvancedSource& source = AdvancedSources[sourceIndex];
+            peak                                = std::max ( peak, peakForInput ( source.iInputChannel1 ) );
+            if ( source.Config.iNumChannels == 2 )
+                peak = std::max ( peak, peakForInput ( source.iInputChannel2 ) );
+        }
+        peakLeft  = peak;
+        peakRight = peak;
+    }
+
+    SignalLevelMeter.UpdatePeakLevels ( peakLeft, peakRight );
 }
 
 bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
@@ -2117,10 +2171,7 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
                 BuildAdvancedLocalMonitor ( vecsStereoSndCrdMuteStream, frameOffset );
         }
 #ifndef HEADLESS
-        if ( iAdvancedSourceCount > 0 )
-        {
-            SignalLevelMeter.Update ( AdvancedSources[0].vecPCM, iOPUSFrameSizeSamples, AdvancedSources[0].Config.iNumChannels == 2 );
-        }
+        UpdateAdvancedInputLevelMeter ( captured, captureChannels );
 #endif
     }
     else
