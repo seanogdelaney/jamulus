@@ -1,4 +1,10 @@
-### 3.12.2dev <- NOTE: the release version number will be 4.0.0 ###
+### 4.0.0sdel1 ###
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
+- Add multi-source session routing and recover playout after sequence discontinuities.
+
+- Correct multi-source input level metering.
 
 - Optimize Images (#3539).
   (contributed by @ann0see)
