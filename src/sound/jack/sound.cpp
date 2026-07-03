@@ -128,7 +128,7 @@ void CSound::OpenJack ( const bool bNoAutoJackConnect, const char* jackClientNam
         input_ports.append ( pInputPort );
     }
 
-    output_port_left = jack_port_register ( pJackClient, "output left", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0 );
+    output_port_left  = jack_port_register ( pJackClient, "output left", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0 );
     output_port_right = jack_port_register ( pJackClient, "output right", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0 );
 
     if ( ( output_port_left == nullptr ) || ( output_port_right == nullptr ) )
@@ -415,7 +415,7 @@ int CSound::process ( jack_nframes_t nframes, void* arg )
         // Retain the original selected first stereo pair for non-Advanced mode.
         for ( i = 0; i < pSound->iJACKBufferSizeMono; ++i )
         {
-            pSound->vecsTmpAudioSndCrdStereo[2 * i] = pSound->vecInputAudio[i * pSound->iNumInputChannels];
+            pSound->vecsTmpAudioSndCrdStereo[2 * i]     = pSound->vecInputAudio[i * pSound->iNumInputChannels];
             pSound->vecsTmpAudioSndCrdStereo[2 * i + 1] = pSound->vecInputAudio[i * pSound->iNumInputChannels + 1];
         }
         pSound->SetCapturedInputAudio ( pSound->vecInputAudio, pSound->iNumInputChannels );

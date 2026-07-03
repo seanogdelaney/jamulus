@@ -222,7 +222,7 @@ public:
     void    SetDisplayPans ( const bool eNDP );
     void    SetPanIsSupported();
     void    SetRemoteFaderIsMute ( const int iChannelIdx, const bool bIsMute );
-    void SetMyChannelID ( const int iChannelIdx )
+    void    SetMyChannelID ( const int iChannelIdx )
     {
         bMyChannelIDs.fill ( false );
         vecMyChannelOrder.clear();
@@ -235,10 +235,7 @@ public:
     }
     void SetMyChannelIDs ( const CVector<int>& channelIndices );
     int  GetMyChannelID() const { return iMyChannelID; }
-    bool IsMyChannelID ( int iChannelIdx ) const
-    {
-        return iChannelIdx >= 0 && iChannelIdx < MAX_NUM_CHANNELS && bMyChannelIDs[iChannelIdx];
-    }
+    bool IsMyChannelID ( int iChannelIdx ) const { return iChannelIdx >= 0 && iChannelIdx < MAX_NUM_CHANNELS && bMyChannelIDs[iChannelIdx]; }
 
     void SetFaderLevel ( const int iChannelIdx, const int iValue );
 
@@ -297,23 +294,23 @@ protected:
     void UpdateSoloStates();
     void UpdateTitle();
 
-    CClientSettings*        pSettings;
-    CVector<CChannelFader*> vecpChanFader;
-    CMixerBoardScrollArea*  pScrollArea;
-    QGridLayout*            pMainLayout;
-    bool                    bDisplayPans;
-    bool                    bIsPanSupported;
-    bool                    bNoFaderVisible;
-    int                     iMyChannelID;         // first owned fader; retained for legacy callers
+    CClientSettings*                   pSettings;
+    CVector<CChannelFader*>            vecpChanFader;
+    CMixerBoardScrollArea*             pScrollArea;
+    QGridLayout*                       pMainLayout;
+    bool                               bDisplayPans;
+    bool                               bIsPanSupported;
+    bool                               bNoFaderVisible;
+    int                                iMyChannelID; // first owned fader; retained for legacy callers
     std::array<bool, MAX_NUM_CHANNELS> bMyChannelIDs;
-    CVector<int>               vecMyChannelOrder; // source-map order for Own Fader First
-    int                     iRunningNewClientCnt; // integer type is sufficient, will never overrun for its purpose
-    int                     iNumMixerPanelRows;
-    QString                 strServerName;
-    ERecorderState          eRecorderState;
-    QMutex                  Mutex;
-    EChSortType             eChSortType;
-    CVector<float>          vecAvgLevels;
+    CVector<int>                       vecMyChannelOrder;    // source-map order for Own Fader First
+    int                                iRunningNewClientCnt; // integer type is sufficient, will never overrun for its purpose
+    int                                iNumMixerPanelRows;
+    QString                            strServerName;
+    ERecorderState                     eRecorderState;
+    QMutex                             Mutex;
+    EChSortType                        eChSortType;
+    CVector<float>                     vecAvgLevels;
 
     virtual void UpdateGainValue ( const int    iChannelIdx,
                                    const float  fValue,

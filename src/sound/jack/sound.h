@@ -108,8 +108,8 @@ public:
     virtual void Start();
     virtual void Stop();
 
-    virtual float       GetInOutLatencyMs() { return fInOutLatencyMs; }
-    virtual bool        SupportsAdvancedCapture() const override { return true; }
+    virtual float GetInOutLatencyMs() { return fInOutLatencyMs; }
+    virtual bool  SupportsAdvancedCapture() const override { return true; }
 
     virtual int         GetNumInputChannels() override { return iNumInputChannels; }
     virtual QString     GetInputChannelName ( const int iChannel ) override { return QString ( "Input %1" ).arg ( iChannel + 1 ); }
@@ -127,9 +127,9 @@ public:
     bool           bJackWasShutDown;
 
     QVector<jack_port_t*> input_ports;
-    jack_port_t* output_port_left;
-    jack_port_t* output_port_right;
-    jack_port_t* input_port_midi;
+    jack_port_t*          output_port_left;
+    jack_port_t*          output_port_right;
+    jack_port_t*          input_port_midi;
 
 protected:
     void OpenJack ( const bool bNoAutoJackConnect, const char* jackClientName );

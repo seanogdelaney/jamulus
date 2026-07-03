@@ -1054,7 +1054,7 @@ OSStatus CSound::callbackIO ( AudioDeviceID inDevice,
 
             for ( int iLogicalChannel = 0; iLogicalChannel < pSound->iNumInChanPlusAddChan; ++iLogicalChannel )
             {
-                int iPhysicalChannel = INVALID_INDEX;
+                int iPhysicalChannel      = INVALID_INDEX;
                 int iAddedPhysicalChannel = INVALID_INDEX;
                 GetSelCHAndAddCH ( iLogicalChannel, pSound->iNumInChan, iPhysicalChannel, iAddedPhysicalChannel );
                 for ( int iFrame = 0; iFrame < iCoreAudioBufferSizeMono; ++iFrame )

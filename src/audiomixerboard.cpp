@@ -1156,10 +1156,10 @@ void CAudioMixerBoard::HideAll()
     }
 
     // initialize flags and other parameters
-    bIsPanSupported      = false;
-    bNoFaderVisible      = true;
-    eRecorderState       = RS_UNDEFINED;
-    iMyChannelID         = INVALID_INDEX;
+    bIsPanSupported = false;
+    bNoFaderVisible = true;
+    eRecorderState  = RS_UNDEFINED;
+    iMyChannelID    = INVALID_INDEX;
     bMyChannelIDs.fill ( false );
     vecMyChannelOrder.clear();
     iRunningNewClientCnt = 0; // reset running counter on new server connection
@@ -1272,7 +1272,8 @@ void CAudioMixerBoard::ChangeFaderOrder ( const EChSortType eChSortType )
         // been reconciled with the map ordering.
         for ( int i = targetIndex; i < PairList.size(); ++i )
         {
-            if ( vecpChanFader[PairList[i].second]->GetIsMyOwnFader() ) PairList.move ( i, targetIndex++ );
+            if ( vecpChanFader[PairList[i].second]->GetIsMyOwnFader() )
+                PairList.move ( i, targetIndex++ );
         }
     }
 
@@ -1406,8 +1407,7 @@ void CAudioMixerBoard::ApplyNewConClientList ( CVector<CChannelInfo>& vecChanInf
                 // we can adjust the level even if no fader was visible.
                 // The fader level of 100 % is the default in the
                 // server, in that case we do not have to do anything here.
-                if ( ( !bNoFaderVisible || ( !IsMyChannelID ( static_cast<int> ( iChanID ) ) ) ) &&
-                     ( pSettings->iNewClientFaderLevel != 100 ) )
+                if ( ( !bNoFaderVisible || ( !IsMyChannelID ( static_cast<int> ( iChanID ) ) ) ) && ( pSettings->iNewClientFaderLevel != 100 ) )
                 {
                     // the value is in percent -> convert range
                     vecpChanFader[iChanID]->SetFaderLevel ( pSettings->iNewClientFaderLevel / 100.0 * AUD_MIX_FADER_MAX );
@@ -1473,7 +1473,8 @@ void CAudioMixerBoard::SetMyChannelIDs ( const CVector<int>& channelIndices )
         {
             bMyChannelIDs[id] = true;
             vecMyChannelOrder.push_back ( id );
-            if ( iMyChannelID == INVALID_INDEX ) iMyChannelID = id;
+            if ( iMyChannelID == INVALID_INDEX )
+                iMyChannelID = id;
         }
     }
 }
@@ -2005,5 +2006,7 @@ void CAudioMixerBoard::SetChannelLevels ( const CVector<uint16_t>& vecChannelLev
 
 void CAudioMixerBoard::MuteMyChannel()
 {
-    for ( int i = 0; i < MAX_NUM_CHANNELS; ++i ) if ( IsMyChannelID ( i ) ) SetFaderIsMute ( i, true );
+    for ( int i = 0; i < MAX_NUM_CHANNELS; ++i )
+        if ( IsMyChannelID ( i ) )
+            SetFaderIsMute ( i, true );
 }

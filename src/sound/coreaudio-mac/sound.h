@@ -69,7 +69,7 @@ public:
     virtual void Stop() override;
 
     // channel selection
-    virtual bool    SupportsAdvancedCapture() const override { return true; }
+    virtual bool SupportsAdvancedCapture() const override { return true; }
 
     virtual int     GetNumInputChannels() override { return iNumInChanPlusAddChan; }
     virtual QString GetInputChannelName ( const int iDiD ) override { return sChannelNamesInput[iDiD]; }

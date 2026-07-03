@@ -411,12 +411,7 @@ void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, con
                                                     sizeof ( UdpSocketAddr.sa6 ),
                                                     (int) iQosNumber );
 #else
-                    status = sendto ( UdpSocket,
-                                      (const char*) pbySendBuf,
-                                      iVecSizeOut,
-                                      0,
-                                      &UdpSocketAddr.sa,
-                                      sizeof ( UdpSocketAddr.sa6 ) );
+                    status = sendto ( UdpSocket, (const char*) pbySendBuf, iVecSizeOut, 0, &UdpSocketAddr.sa, sizeof ( UdpSocketAddr.sa6 ) );
 #endif
                 }
                 else
@@ -425,12 +420,7 @@ void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, con
                     UdpSocketAddr.sa4.sin_port        = htons ( HostAddr.iPort );
                     UdpSocketAddr.sa4.sin_addr.s_addr = htonl ( HostAddr.InetAddr.toIPv4Address() );
 
-                    status = sendto ( UdpSocket,
-                                      (const char*) pbySendBuf,
-                                      iVecSizeOut,
-                                      0,
-                                      &UdpSocketAddr.sa,
-                                      sizeof ( UdpSocketAddr.sa4 ) );
+                    status = sendto ( UdpSocket, (const char*) pbySendBuf, iVecSizeOut, 0, &UdpSocketAddr.sa, sizeof ( UdpSocketAddr.sa4 ) );
                 }
             }
             else if ( bIPv6Available )
@@ -439,12 +429,7 @@ void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, con
                 UdpSocketAddr.sa6.sin6_port   = htons ( HostAddr.iPort );
                 inet_pton ( AF_INET6, HostAddr.InetAddr.toString().toLocal8Bit().constData(), &UdpSocketAddr.sa6.sin6_addr );
 
-                status = sendto ( UdpSocket,
-                                  (const char*) pbySendBuf,
-                                  iVecSizeOut,
-                                  0,
-                                  &UdpSocketAddr.sa,
-                                  sizeof ( UdpSocketAddr.sa6 ) );
+                status = sendto ( UdpSocket, (const char*) pbySendBuf, iVecSizeOut, 0, &UdpSocketAddr.sa, sizeof ( UdpSocketAddr.sa6 ) );
             }
 
             if ( status >= 0 )

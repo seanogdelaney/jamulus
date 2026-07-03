@@ -628,22 +628,25 @@ void CClientSettings::ReadSettingsFromXML ( const QDomDocument& IniXMLDocument, 
     GetNumericIniSet ( IniXMLDocument, "client", "legacyaudiochannels", 0, 2 /* CC_STEREO */, legacyAudioChannels );
     pClient->SetAudioChannels ( static_cast<EAudChanConf> ( legacyAudioChannels ) );
     QVector<CAdvancedAudioChannelConfig> advancedRows;
-    int advancedCount = 0;
+    int                                  advancedCount = 0;
     if ( GetNumericIniSet ( IniXMLDocument, "client", "advancedsourcecount", 0, MAX_NUM_IN_OUT_CHANNELS, advancedCount ) )
     {
         for ( int source = 0; source < advancedCount; ++source )
         {
             const QString prefix = QString ( "advancedsource%1" ).arg ( source );
-            const QString tag = GetIniSetting ( IniXMLDocument, "client", prefix + "tag" ).trimmed();
-            int icon = CInstPictures::GetNotUsedInstrument(), ch1 = 0, ch2 = INVALID_INDEX;
+            const QString tag    = GetIniSetting ( IniXMLDocument, "client", prefix + "tag" ).trimmed();
+            int           icon = CInstPictures::GetNotUsedInstrument(), ch1 = 0, ch2 = INVALID_INDEX;
             GetNumericIniSet ( IniXMLDocument, "client", prefix + "icon", 0, CInstPictures::GetNumAvailableInst() - 1, icon );
             GetNumericIniSet ( IniXMLDocument, "client", prefix + "ch1", 0, MAX_NUM_IN_OUT_CHANNELS - 1, ch1 );
             GetNumericIniSet ( IniXMLDocument, "client", prefix + "ch2", INVALID_INDEX, MAX_NUM_IN_OUT_CHANNELS - 1, ch2 );
-            if ( !tag.isEmpty() ) advancedRows.append ( CAdvancedAudioChannelConfig ( tag, icon, ch1, ch2 ) );
+            if ( !tag.isEmpty() )
+                advancedRows.append ( CAdvancedAudioChannelConfig ( tag, icon, ch1, ch2 ) );
         }
     }
-    if ( requestedAudioChannels == CC_ADVANCED ) pClient->SetAdvancedAudioChannels ( advancedRows );
-    else pClient->SetAudioChannels ( static_cast<EAudChanConf> ( requestedAudioChannels ) );
+    if ( requestedAudioChannels == CC_ADVANCED )
+        pClient->SetAdvancedAudioChannels ( advancedRows );
+    else
+        pClient->SetAudioChannels ( static_cast<EAudChanConf> ( requestedAudioChannels ) );
 
     // audio quality
     if ( GetNumericIniSet ( IniXMLDocument, "client", "audioquality", 0, 3 /* AQ_RAW */, iValue ) )
