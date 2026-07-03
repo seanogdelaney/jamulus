@@ -62,6 +62,7 @@
 #include "multisource.h"
 
 #include <array>
+#include <cstdint>
 #include "util.h"
 #include "plugins/audioreverb.h"
 #include "buffer.h"
@@ -172,10 +173,13 @@ public:
     int                      iInputChannel1 = INVALID_INDEX;
     int                      iInputChannel2 = INVALID_INDEX;
     OpusCustomEncoder*       pEncoder       = nullptr;
-    CVector<int16_t>         vecPCM;
-    CVector<uint8_t>         vecCoded;
-    float                    fLocalMonitorGain = 1.0f;
-    float                    fLocalMonitorPan  = 0.5f;
+    // Keep the captured PCM separate from the all-zero uplink payload used by
+    // Mute Myself. The local monitor must always consume the pre-mute signal.
+    CVector<int16_t> vecPCM;
+    CVector<int16_t> vecMutedPCM;
+    CVector<uint8_t> vecCoded;
+    float            fLocalMonitorGain = 1.0f;
+    float            fLocalMonitorPan  = 0.5f;
 };
 
 class CClientSettings;
@@ -263,14 +267,14 @@ public:
     }
     int GetServerSockBufNumFrames() { return iServerSockBufNumFrames; }
 
-    int GetUploadRateKbps() { return Channel.GetUploadRateKbps(); }
+    int GetUploadRateKbps();
 
     // sound card device selection
     QStringList GetSndCrdDevNames() { return Sound.GetDevNames(); }
 
     QString SetSndCrdDev ( const QString strNewDev );
     QString GetSndCrdDev() { return Sound.GetDev(); }
-    void    OpenSndCrdDriverSetup() { Sound.OpenDriverSetup(); }
+    void    OpenSndCrdDriverSetup();
 
     // sound card channel selection
     int     GetSndCrdNumInputChannels() { return Sound.GetNumInputChannels(); }
@@ -398,6 +402,9 @@ protected:
     void UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, int captureChannels );
     bool SendAdvancedFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
     void BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
+    bool SetAdvancedLocalMonitorGain ( int serverFaderID, float gain );
+    bool SetAdvancedLocalMonitorPan ( int serverFaderID, float pan );
+    bool RejectAdvancedAudioReinitialization ( const QString& setting );
     int  GetCodedBytesForAdvancedSource ( int audioChannels, bool& raw ) const;
     enum class EAdvancedDeadline : uint8_t
     {

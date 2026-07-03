@@ -183,6 +183,22 @@ void TestReturnPacketCadence()
     assert ( ReturnPacketsPerServerTick ( false, true ) == 1 );
 }
 
+void TestUploadRateEstimate()
+{
+    // One 22-byte Opus64 mono record: 14-byte app header, 3-byte record
+    // header and the conventional 77-byte transport allowance, 750 times/s.
+    const std::array<uint16_t, 1> monoOpus64{ 22 };
+    assert ( EstimateUploadRateKbps ( monoOpus64.data(), monoOpus64.size(), 64, 48000 ) == 696 );
+
+    // Four 512-byte raw stereo records form two 1044-byte application
+    // datagrams. At 128 samples/frame that is 375 frames/s, or 6726 kbps.
+    const std::array<uint16_t, 4> rawStereo{ 512, 512, 512, 512 };
+    assert ( EstimateUploadRateKbps ( rawStereo.data(), rawStereo.size(), 128, 48000 ) == 6726 );
+
+    const std::array<uint16_t, 1> invalid{ 0 };
+    assert ( EstimateUploadRateKbps ( invalid.data(), invalid.size(), 128, 48000 ) == 0 );
+}
+
 void TestRoutingValidation()
 {
     const std::array<RoutingRow, 3> valid{ RoutingRow{ "Vox", 1, 0, -1 }, RoutingRow{ "Guitar", 2, 1, -1 }, RoutingRow{ "Keys", 3, 2, 3 } };
@@ -202,6 +218,7 @@ int main()
     TestIngressAutoJitterAndReanchor();
     TestIngressDiscontinuityRecovery();
     TestReturnPacketCadence();
+    TestUploadRateEstimate();
     TestRoutingValidation();
     std::cout << "multisourcewire tests: PASS\n";
     return 0;

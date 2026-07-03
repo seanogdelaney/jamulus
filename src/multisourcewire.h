@@ -16,16 +16,18 @@
 
 namespace MultiSource
 {
-constexpr uint16_t kMagic                    = 0x4d53; // "MS", deliberately non-zero
-constexpr uint8_t  kVersion                  = 1;
-constexpr size_t   kHeaderBytes              = 14;
-constexpr size_t   kRecordHeaderBytes        = 3;
-constexpr size_t   kMaxApplicationDatagram   = 1200;
-constexpr size_t   kMaxSourceRows            = 64; // MAX_NUM_IN_OUT_CHANNELS in Jamulus
-constexpr size_t   kMaxRawStereoPayloadBytes = 2 * 128 * sizeof ( int16_t );
-constexpr size_t   kMaxRecordBytes           = kRecordHeaderBytes + kMaxRawStereoPayloadBytes;
-constexpr size_t   kMaxFragments             = ( kMaxSourceRows + 1 ) / 2; // 2 worst-case records/datagram
-constexpr size_t   kDefaultIngressFrames     = 32;
+constexpr uint16_t kMagic                  = 0x4d53; // "MS", deliberately non-zero
+constexpr uint8_t  kVersion                = 1;
+constexpr size_t   kHeaderBytes            = 14;
+constexpr size_t   kRecordHeaderBytes      = 3;
+constexpr size_t   kMaxApplicationDatagram = 1200;
+// Match CChannel::GetUploadRateKbps(): UDP/IP, PPPoE/MAC and ATM framing.
+constexpr size_t kEstimatedTransportHeaderBytes = 28 + 26 + 23;
+constexpr size_t kMaxSourceRows                 = 64; // MAX_NUM_IN_OUT_CHANNELS in Jamulus
+constexpr size_t kMaxRawStereoPayloadBytes      = 2 * 128 * sizeof ( int16_t );
+constexpr size_t kMaxRecordBytes                = kRecordHeaderBytes + kMaxRawStereoPayloadBytes;
+constexpr size_t kMaxFragments                  = ( kMaxSourceRows + 1 ) / 2; // 2 worst-case records/datagram
+constexpr size_t kDefaultIngressFrames          = 32;
 // Keep Advanced auto mode out of the legacy ten-frame startup default.  The
 // ordinary CNetBufWithStats simulation also treats two frames as its lowest
 // practical candidate; one frame has no useful sample-rate-offset margin.
@@ -149,6 +151,11 @@ private:
 };
 
 bool ParseFragment ( const uint8_t* data, size_t length, ParsedFragment& parsed );
+
+// Estimate the actual Advanced uplink wire rate for one logical source frame.
+// This mirrors FramePacketizer's fragment boundaries and adds the same
+// transport framing allowance as CChannel::GetUploadRateKbps().
+int EstimateUploadRateKbps ( const uint16_t* payloadLengths, size_t recordCount, int frameSamples, int sampleRate );
 
 class SessionIngress
 {
