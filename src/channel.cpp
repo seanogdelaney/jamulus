@@ -85,8 +85,8 @@ CChannel::CChannel ( const bool bNIsServer ) :
     // if we later do not fire vectors in the emits, we can remove this again
     qRegisterMetaType<CVector<uint8_t>> ( "CVector<uint8_t>" );
     qRegisterMetaType<CHostAddress> ( "CHostAddress" );
-    qRegisterMetaType<CVector<CMultiSourceSourceConfig>> ( "CVector<CMultiSourceSourceConfig>" );
-    qRegisterMetaType<CMultiSourceAcceptMap> ( "CMultiSourceAcceptMap" );
+    qRegisterMetaType<CVector<CPolyInSourceConfig>> ( "CVector<CPolyInSourceConfig>" );
+    qRegisterMetaType<CPolyInAcceptMap> ( "CPolyInAcceptMap" );
     //### TODO: END ###//
 
     QObject::connect ( &Protocol, &CProtocol::MessReadyForSending, this, &CChannel::OnSendProtMessage );
@@ -109,16 +109,16 @@ CChannel::CChannel ( const bool bNIsServer ) :
 
     QObject::connect ( &Protocol, &CProtocol::RawAudioSupported, this, &CChannel::RawAudioSupported );
 
-    QObject::connect ( &Protocol, &CProtocol::ReqMultiSourceCaps, this, &CChannel::ReqMultiSourceCaps );
+    QObject::connect ( &Protocol, &CProtocol::ReqPolyInCaps, this, &CChannel::ReqPolyInCaps );
 
-    QObject::connect ( &Protocol, &CProtocol::MultiSourceCapsReceived, this, &CChannel::MultiSourceCapsReceived );
+    QObject::connect ( &Protocol, &CProtocol::PolyInCapsReceived, this, &CChannel::PolyInCapsReceived );
 
-    QObject::connect ( &Protocol, &CProtocol::MultiSourceConfigReceived, this, &CChannel::MultiSourceConfigReceived );
+    QObject::connect ( &Protocol, &CProtocol::PolyInConfigReceived, this, &CChannel::PolyInConfigReceived );
 
-    QObject::connect ( &Protocol, &CProtocol::MultiSourceAcceptReceived, this, &CChannel::MultiSourceAcceptReceived );
+    QObject::connect ( &Protocol, &CProtocol::PolyInAcceptReceived, this, &CChannel::PolyInAcceptReceived );
 
-    QObject::connect ( &Protocol, &CProtocol::MultiSourceRejected, this, &CChannel::MultiSourceRejected );
-    QObject::connect ( &Protocol, &CProtocol::MultiSourceActive, this, &CChannel::MultiSourceActive );
+    QObject::connect ( &Protocol, &CProtocol::PolyInRejected, this, &CChannel::PolyInRejected );
+    QObject::connect ( &Protocol, &CProtocol::PolyInActive, this, &CChannel::PolyInActive );
     QObject::connect ( &Protocol, &CProtocol::ReliableMessageSent, this, &CChannel::ReliableMessageSent );
 
     QObject::connect ( &Protocol, &CProtocol::MuteStateHasChangedReceived, this, &CChannel::MuteStateHasChangedReceived );
@@ -566,7 +566,7 @@ bool CChannel::AdvanceTimeOutCounter ( const int iNumSamples )
 
     // Keep the timeout unit identical to GetData(): audio samples, rather
     // than timer callbacks. The caller supplies one server-frame duration,
-    // once per physical Advanced session.
+    // once per physical Poly-in session.
     iConTimeOut -= qMax ( 1, iNumSamples );
     if ( iConTimeOut > 0 )
         return false;
@@ -580,7 +580,7 @@ void CChannel::AdvanceFadeInCounter()
     QMutexLocker locker ( &MutexSocketBuf );
 
     // Keep the admission condition and rate identical to PutAudioData().
-    // Advanced receive is multiplexed, so the caller invokes this once per
+    // Poly-in receive is multiplexed, so the caller invokes this once per
     // accepted logical frame rather than once per UDP fragment.
     if ( iFadeInCnt < iFadeInCntMax && bIsIdentified )
         ++iFadeInCnt;

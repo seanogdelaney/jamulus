@@ -59,7 +59,7 @@
 #include "global.h"
 #include "socket.h"
 #include "channel.h"
-#include "multisource.h"
+#include "polyin.h"
 
 #include <array>
 #include <cstdint>
@@ -145,14 +145,14 @@ public:
     // can store here other information about an active channel
 };
 
-/** One configured physical input route in Advanced multi-source mode. */
-class CAdvancedAudioChannelConfig
+/** One configured physical input route in Poly-in mode. */
+class CPolyInAudioChannelConfig
 {
 public:
-    CAdvancedAudioChannelConfig ( const QString& strNTag         = QString(),
-                                  const int      iNInstrument    = CInstPictures::GetNotUsedInstrument(),
-                                  const int      iNInputChannel1 = 0,
-                                  const int      iNInputChannel2 = INVALID_INDEX ) :
+    CPolyInAudioChannelConfig ( const QString& strNTag         = QString(),
+                                const int      iNInstrument    = CInstPictures::GetNotUsedInstrument(),
+                                const int      iNInputChannel1 = 0,
+                                const int      iNInputChannel2 = INVALID_INDEX ) :
         strFaderTag ( strNTag ),
         iInstrument ( iNInstrument ),
         iInputChannel1 ( iNInputChannel1 ),
@@ -166,13 +166,13 @@ public:
 };
 
 /** Source-local codec and reusable PCM storage. It is configured outside the callback. */
-class CClientAdvancedSource
+class CClientPolyInSource
 {
 public:
-    CMultiSourceSourceConfig Config;
-    int                      iInputChannel1 = INVALID_INDEX;
-    int                      iInputChannel2 = INVALID_INDEX;
-    OpusCustomEncoder*       pEncoder       = nullptr;
+    CPolyInSourceConfig Config;
+    int                 iInputChannel1 = INVALID_INDEX;
+    int                 iInputChannel2 = INVALID_INDEX;
+    OpusCustomEncoder*  pEncoder       = nullptr;
     // Keep the captured PCM separate from the all-zero uplink payload used by
     // Mute Myself. The local monitor must always consume the pre-mute signal.
     CVector<int16_t> vecPCM;
@@ -226,15 +226,15 @@ public:
     EAudChanConf GetAudioChannels() const { return eAudioChannelConf; }
     void         SetAudioChannels ( const EAudChanConf eNAudChanConf );
 
-    const QVector<CAdvancedAudioChannelConfig>& GetAdvancedAudioChannels() const { return vecAdvancedAudioChannels; }
-    void                                        SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels );
-    EAudChanConf                                GetLegacyAudioChannels() const { return eLegacyAudioChannelConf; }
-    QString                                     GetAdvancedStatus() const { return strAdvancedStatus; }
-    bool                                        IsAdvancedCaptureSupported() const { return Sound.SupportsAdvancedCapture(); }
-    // Advanced source descriptors are negotiated once at connection startup.
+    const QVector<CPolyInAudioChannelConfig>& GetPolyInAudioChannels() const { return vecPolyInAudioChannels; }
+    void                                      SetPolyInAudioChannels ( const QVector<CPolyInAudioChannelConfig>& vecNewChannels );
+    EAudChanConf                              GetLegacyAudioChannels() const { return eLegacyAudioChannelConf; }
+    QString                                   GetPolyInStatus() const { return strPolyInStatus; }
+    bool                                      IsPolyInCaptureSupported() const { return Sound.SupportsPolyInCapture(); }
+    // Poly-in source descriptors are negotiated once at connection startup.
     // They remain immutable until disconnect so the audio callback and server
     // always agree on keys, codec state and source/fader mapping.
-    bool IsAdvancedRoutingLocked() const { return eAudioChannelConf == CC_ADVANCED && bAdvancedRoutingLocked; }
+    bool IsPolyInRoutingLocked() const { return eAudioChannelConf == CC_POLY_IN && bPolyInRoutingLocked; }
 
     int  GetAudioInFader() const { return iAudioInFader; }
     void SetAudioInFader ( const int iNV ) { iAudioInFader = iNV; }
@@ -395,18 +395,18 @@ protected:
     void Init();
     void ProcessSndCrdAudioData ( CVector<short>& vecsStereoSndCrd );
     void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd );
-    void ConfigureAdvancedSources();
-    void DestroyAdvancedSources();
-    void BuildAdvancedSourceConfig();
-    void FillAdvancedSourcePCM ( CClientAdvancedSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
-    void UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, int captureChannels );
-    bool SendAdvancedFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
-    void BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
-    bool SetAdvancedLocalMonitorGain ( int serverFaderID, float gain );
-    bool SetAdvancedLocalMonitorPan ( int serverFaderID, float pan );
-    bool RejectAdvancedAudioReinitialization ( const QString& setting );
-    int  GetCodedBytesForAdvancedSource ( int audioChannels, bool& raw ) const;
-    enum class EAdvancedDeadline : uint8_t
+    void ConfigurePolyInSources();
+    void DestroyPolyInSources();
+    void BuildPolyInSourceConfig();
+    void FillPolyInSourcePCM ( CClientPolyInSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
+    void UpdatePolyInInputLevelMeter ( const CVector<int16_t>& captured, int captureChannels );
+    bool SendPolyInFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
+    void BuildPolyInLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
+    bool SetPolyInLocalMonitorGain ( int serverFaderID, float gain );
+    bool SetPolyInLocalMonitorPan ( int serverFaderID, float pan );
+    bool RejectPolyInAudioReinitialization ( const QString& setting );
+    int  GetCodedBytesForPolyInSource ( int audioChannels, bool& raw ) const;
+    enum class EPolyInDeadline : uint8_t
     {
         None,
         SplitCapability,
@@ -415,13 +415,13 @@ protected:
         Activation
     };
 
-    void    BeginAdvancedNegotiation();
-    void    SendAdvancedConfigIfReady();
-    void    StartAdvancedDeadline ( EAdvancedDeadline deadline, int timeoutMs );
-    void    StopAdvancedDeadline();
-    void    SetAdvancedStatus ( const QString& status );
-    QString AdvancedRejectReason ( uint8_t reason ) const;
-    void    SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourceMap );
+    void    BeginPolyInNegotiation();
+    void    SendPolyInConfigIfReady();
+    void    StartPolyInDeadline ( EPolyInDeadline deadline, int timeoutMs );
+    void    StopPolyInDeadline();
+    void    SetPolyInStatus ( const QString& status );
+    QString PolyInRejectReason ( uint8_t reason ) const;
+    void    SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap );
     bool    IsOwnedServerFader ( int serverFaderID ) const;
 
     int  PreparePingMessage();
@@ -467,23 +467,23 @@ protected:
     int                iOPUSFrameSizeSamples;
     EAudioQuality      eAudioQuality;
     EAudChanConf       eAudioChannelConf;
-    // Advanced is an input mode; this remains the negotiated legacy return/fallback profile.
-    EAudChanConf                         eLegacyAudioChannelConf;
-    QVector<CAdvancedAudioChannelConfig> vecAdvancedAudioChannels;
-    CClientAdvancedSource                AdvancedSources[MultiSource::kMaxSourceRows];
-    int                                  iAdvancedSourceCount;
-    MultiSource::FramePacketizer         AdvancedPacketizer;
-    MultiSource::Negotiation             AdvancedNegotiation;
-    uint32_t                             iAdvancedFrameSequence;
-    std::array<bool, MAX_NUM_CHANNELS>   bOwnedServerFaderIDs;
-    QString                              strAdvancedStatus;
-    EAdvancedDeadline                    eAdvancedDeadline;
-    bool                                 bAdvancedRoutingLocked;
-    int                                  iNumAudioChannels;
-    bool                                 bIsInitializationPhase;
-    bool                                 bMuteOutStream;
-    float                                fMuteOutStreamGain;
-    CVector<unsigned char>               vecCeltData;
+    // Poly-in is an input mode; this remains the negotiated legacy return/fallback profile.
+    EAudChanConf                       eLegacyAudioChannelConf;
+    QVector<CPolyInAudioChannelConfig> vecPolyInAudioChannels;
+    CClientPolyInSource                PolyInSources[PolyIn::kMaxSourceRows];
+    int                                iPolyInSourceCount;
+    PolyIn::FramePacketizer            PolyInPacketizer;
+    PolyIn::Negotiation                PolyInNegotiation;
+    uint32_t                           iPolyInFrameSequence;
+    std::array<bool, MAX_NUM_CHANNELS> bOwnedServerFaderIDs;
+    QString                            strPolyInStatus;
+    EPolyInDeadline                    ePolyInDeadline;
+    bool                               bPolyInRoutingLocked;
+    int                                iNumAudioChannels;
+    bool                               bIsInitializationPhase;
+    bool                               bMuteOutStream;
+    float                              fMuteOutStreamGain;
+    CVector<unsigned char>             vecCeltData;
 
     bool            bIPv6Available; // must be before Socket - passed by reference to Socket
     CHighPrioSocket Socket;
@@ -541,7 +541,7 @@ protected:
     // for gain or pan rate limiting
     QMutex MutexGainOrPan;
     QTimer TimerGainOrPan;
-    QTimer TimerAdvancedNegotiation;
+    QTimer TimerPolyInNegotiation;
     int    minGainOrPanId;
     int    maxGainOrPanId;
     int    iCurPingTime;
@@ -577,13 +577,13 @@ protected slots:
     void OnControllerInFaderIsMute ( int iChannelIdx, bool bIsMute );
     void OnControllerInMuteMyself ( bool bMute );
     void OnClientIDReceived ( int iServerChanID );
-    void OnMultiSourceCaps();
-    void OnAdvancedSplitMessageSupported();
-    void OnAdvancedReliableMessageSent ( int logicalMessageID );
-    void OnMultiSourceAccept ( CMultiSourceAcceptMap accept );
-    void OnMultiSourceReject ( uint8_t reason );
-    void OnMultiSourceActive ( int generation );
-    void OnAdvancedNegotiationTimeout();
+    void OnPolyInCaps();
+    void OnPolyInSplitMessageSupported();
+    void OnPolyInReliableMessageSent ( int logicalMessageID );
+    void OnPolyInAccept ( CPolyInAcceptMap accept );
+    void OnPolyInReject ( uint8_t reason );
+    void OnPolyInActive ( int generation );
+    void OnPolyInNegotiationTimeout();
     void OnRawAudioSupported();
     void OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted );
     void OnCLChannelLevelListReceived ( CHostAddress InetAddr, CVector<uint16_t> vecLevelList );
@@ -594,7 +594,7 @@ signals:
     void ChatTextReceived ( QString strChatText );
     void ClientIDReceived ( int iChanID );
     void OwnedSourceIDsReceived ( CVector<int> vecClientChannelIDs );
-    void AdvancedStatusChanged ( QString strStatus );
+    void PolyInStatusChanged ( QString strStatus );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );

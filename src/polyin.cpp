@@ -5,7 +5,7 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
 \******************************************************************************/
-#include "multisource.h"
+#include "polyin.h"
 
 namespace
 {
@@ -51,7 +51,7 @@ bool ValidCompressedPayload ( const EAudComprType codec, const uint8_t channels,
     return false;
 }
 
-bool ValidPayload ( const CMultiSourceSourceConfig& source )
+bool ValidPayload ( const CPolyInSourceConfig& source )
 {
     if ( source.bRaw )
     {
@@ -62,41 +62,38 @@ bool ValidPayload ( const CMultiSourceSourceConfig& source )
 }
 } // namespace
 
-namespace MultiSourceProtocol
+namespace PolyInProtocol
 {
 bool EncodeCaps ( CVector<uint8_t>& out )
 {
     out.Init ( 2 );
     out[0] = kProtocolVersion;
-    out[1] = static_cast<uint8_t> ( MultiSource::kMaxSourceRows );
+    out[1] = static_cast<uint8_t> ( PolyIn::kMaxSourceRows );
     return true;
 }
 
-bool DecodeCaps ( const CVector<uint8_t>& in )
-{
-    return in.Size() == 2 && in[0] == kProtocolVersion && in[1] > 0 && in[1] <= MultiSource::kMaxSourceRows;
-}
+bool DecodeCaps ( const CVector<uint8_t>& in ) { return in.Size() == 2 && in[0] == kProtocolVersion && in[1] > 0 && in[1] <= PolyIn::kMaxSourceRows; }
 
-bool ValidateSourceConfig ( const CVector<CMultiSourceSourceConfig>& config, QString* const error )
+bool ValidateSourceConfig ( const CVector<CPolyInSourceConfig>& config, QString* const error )
 {
-    if ( config.empty() || config.Size() > static_cast<int> ( MultiSource::kMaxSourceRows ) )
+    if ( config.empty() || config.Size() > static_cast<int> ( PolyIn::kMaxSourceRows ) )
     {
         if ( error != nullptr )
-            *error = "invalid number of Advanced sources";
+            *error = "invalid number of Poly-in sources";
         return false;
     }
     const bool          bRaw  = config[0].bRaw;
     const EAudComprType codec = config[0].eCodec;
     for ( int i = 0; i < config.Size(); ++i )
     {
-        const CMultiSourceSourceConfig& source = config[i];
-        const QByteArray                tag    = source.strTag.trimmed().toUtf8();
+        const CPolyInSourceConfig& source = config[i];
+        const QByteArray           tag    = source.strTag.trimmed().toUtf8();
         if ( source.iKey == 0 || source.iNumChannels < 1 || source.iNumChannels > 2 || !ValidCodec ( source.eCodec ) || source.iPayloadBytes == 0 ||
-             source.iPayloadBytes > MultiSource::kMaxRawStereoPayloadBytes || !ValidPayload ( source ) || tag.isEmpty() || tag.size() > 63 ||
+             source.iPayloadBytes > PolyIn::kMaxRawStereoPayloadBytes || !ValidPayload ( source ) || tag.isEmpty() || tag.size() > 63 ||
              source.bRaw != bRaw || source.eCodec != codec )
         {
             if ( error != nullptr )
-                *error = "invalid Advanced source descriptor";
+                *error = "invalid Poly-in source descriptor";
             return false;
         }
         for ( int earlier = 0; earlier < i; ++earlier )
@@ -104,7 +101,7 @@ bool ValidateSourceConfig ( const CVector<CMultiSourceSourceConfig>& config, QSt
             if ( config[earlier].iKey == source.iKey || config[earlier].strTag.trimmed() == source.strTag.trimmed() )
             {
                 if ( error != nullptr )
-                    *error = "Advanced source keys and tags must be unique";
+                    *error = "Poly-in source keys and tags must be unique";
                 return false;
             }
         }
@@ -112,14 +109,14 @@ bool ValidateSourceConfig ( const CVector<CMultiSourceSourceConfig>& config, QSt
     return true;
 }
 
-bool EncodeConfig ( const CVector<CMultiSourceSourceConfig>& config, CVector<uint8_t>& out )
+bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, CVector<uint8_t>& out )
 {
     if ( !ValidateSourceConfig ( config ) )
     {
         return false;
     }
     int bytes = 3; // version, flags, count
-    for ( const CMultiSourceSourceConfig& source : config )
+    for ( const CPolyInSourceConfig& source : config )
     {
         bytes += 9 + source.strTag.trimmed().toUtf8().size();
     }
@@ -128,7 +125,7 @@ bool EncodeConfig ( const CVector<CMultiSourceSourceConfig>& config, CVector<uin
     out[position++] = kProtocolVersion;
     out[position++] = config[0].bRaw ? 1 : 0;
     out[position++] = static_cast<uint8_t> ( config.Size() );
-    for ( const CMultiSourceSourceConfig& source : config )
+    for ( const CPolyInSourceConfig& source : config )
     {
         const QByteArray tag = source.strTag.trimmed().toUtf8();
         out[position++]      = source.iKey;
@@ -144,10 +141,10 @@ bool EncodeConfig ( const CVector<CMultiSourceSourceConfig>& config, CVector<uin
     return true;
 }
 
-bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CMultiSourceSourceConfig>& config )
+bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CPolyInSourceConfig>& config )
 {
     config.clear();
-    if ( in.Size() < 3 || in[0] != kProtocolVersion || ( in[1] & ~uint8_t ( 1 ) ) != 0 || in[2] == 0 || in[2] > MultiSource::kMaxSourceRows )
+    if ( in.Size() < 3 || in[0] != kProtocolVersion || ( in[1] & ~uint8_t ( 1 ) ) != 0 || in[2] == 0 || in[2] > PolyIn::kMaxSourceRows )
     {
         return false;
     }
@@ -162,14 +159,14 @@ bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CMultiSourceSourceConfig
             config.clear();
             return false;
         }
-        CMultiSourceSourceConfig& source = config[i];
-        source.iKey                      = in[position++];
-        source.iNumChannels              = in[position++];
-        source.eCodec                    = static_cast<EAudComprType> ( in[position++] );
-        source.bRaw                      = in[position++] != 0;
-        source.iPayloadBytes             = Get16 ( in, position );
-        source.iInstrument               = Get16 ( in, position );
-        const int tagLength              = in[position++];
+        CPolyInSourceConfig& source = config[i];
+        source.iKey                 = in[position++];
+        source.iNumChannels         = in[position++];
+        source.eCodec               = static_cast<EAudComprType> ( in[position++] );
+        source.bRaw                 = in[position++] != 0;
+        source.iPayloadBytes        = Get16 ( in, position );
+        source.iInstrument          = Get16 ( in, position );
+        const int tagLength         = in[position++];
         if ( position + tagLength > in.Size() || tagLength == 0 )
         {
             config.clear();
@@ -191,7 +188,7 @@ bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CMultiSourceSourceConfig
     return true;
 }
 
-bool EncodeAccept ( const CMultiSourceAcceptMap& accept, CVector<uint8_t>& out )
+bool EncodeAccept ( const CPolyInAcceptMap& accept, CVector<uint8_t>& out )
 {
     if ( accept.iGeneration == 0 || !ValidateSourceConfig ( accept.vecSources ) )
     {
@@ -202,7 +199,7 @@ bool EncodeAccept ( const CMultiSourceAcceptMap& accept, CVector<uint8_t>& out )
     out[position++] = kProtocolVersion;
     Put16 ( out, position, accept.iGeneration );
     out[position++] = static_cast<uint8_t> ( accept.vecSources.Size() );
-    for ( const CMultiSourceSourceConfig& source : accept.vecSources )
+    for ( const CPolyInSourceConfig& source : accept.vecSources )
     {
         if ( source.iFaderID < 0 || source.iFaderID >= MAX_NUM_CHANNELS )
             return false;
@@ -212,15 +209,15 @@ bool EncodeAccept ( const CMultiSourceAcceptMap& accept, CVector<uint8_t>& out )
     return true;
 }
 
-bool DecodeAccept ( const CVector<uint8_t>& in, CMultiSourceAcceptMap& accept )
+bool DecodeAccept ( const CVector<uint8_t>& in, CPolyInAcceptMap& accept )
 {
-    accept = CMultiSourceAcceptMap();
+    accept = CPolyInAcceptMap();
     if ( in.Size() < 4 || in[0] != kProtocolVersion || in[3] == 0 || in.Size() != 4 + 3 * in[3] )
         return false;
     int position       = 1;
     accept.iGeneration = Get16 ( in, position );
     const int count    = in[position++];
-    if ( accept.iGeneration == 0 || count > static_cast<int> ( MultiSource::kMaxSourceRows ) )
+    if ( accept.iGeneration == 0 || count > static_cast<int> ( PolyIn::kMaxSourceRows ) )
         return false;
     accept.vecSources.Init ( count );
     for ( int i = 0; i < count; ++i )
@@ -271,4 +268,4 @@ bool DecodeActive ( const CVector<uint8_t>& in, uint16_t& generation )
     generation   = Get16 ( in, position );
     return generation != 0;
 }
-} // namespace MultiSourceProtocol
+} // namespace PolyInProtocol

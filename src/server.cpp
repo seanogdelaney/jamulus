@@ -51,8 +51,8 @@
 
 namespace
 {
-constexpr int kServerEventAdvancedPromotion    = 1;
-constexpr int kServerEventAdvancedJitterReport = 2;
+constexpr int kServerEventPolyInPromotion    = 1;
+constexpr int kServerEventPolyInJitterReport = 2;
 } // namespace
 
 // CServer implementation ******************************************************
@@ -225,11 +225,11 @@ CServer::CServer ( const int          iNewMaxNumChan,
         // allocate worst case memory for intermediate processing buffers in float precision
         vecvecfIntermediateProcBuf[i].Init ( 2 /* stereo */ * DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES /* worst case buffer size */ );
     }
-    // These arrays are indexed by actual session/source IDs. Advanced source
+    // These arrays are indexed by actual session/source IDs. Poly-in source
     // faders can outnumber configured user sessions.
     for ( i = 0; i < MAX_NUM_CHANNELS; ++i )
     {
-        vecSourceIngressPayload[i].Init ( 2 * MultiSource::kMaxRawStereoPayloadBytes );
+        vecSourceIngressPayload[i].Init ( 2 * PolyIn::kMaxRawStereoPayloadBytes );
         vecSources[i].Reset();
         vecSessionState[i].Reset();
     }
@@ -341,7 +341,7 @@ CServer::CServer ( const int          iNewMaxNumChan,
     QObject::connect ( this, &CServer::ClientDisconnected, &JamController, &recorder::CJamController::ClientDisconnected );
 
     qRegisterMetaType<CVector<int16_t>> ( "CVector<int16_t>" );
-    qRegisterMetaType<CVector<CMultiSourceSourceConfig>> ( "CVector<CMultiSourceSourceConfig>" );
+    qRegisterMetaType<CVector<CPolyInSourceConfig>> ( "CVector<CPolyInSourceConfig>" );
     QObject::connect ( this, &CServer::AudioFrame, &JamController, &recorder::CJamController::AudioFrame );
 
     QObject::connect ( QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &CServer::OnAboutToQuit );
@@ -394,11 +394,10 @@ inline void CServer::connectChannelSignalsToServerSlots()
     // These signals deliberately stay attached to the session slot. The fader
     // source map is negotiated once, while protocol, timeout and return audio
     // remain owned by this single CChannel.
-    QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReqMultiSourceCaps, this, [this, iCurChanID]() { OnReqMultiSourceCaps ( iCurChanID ); } );
-    QObject::connect ( &vecSessions[iCurChanID],
-                       &CChannel::MultiSourceConfigReceived,
-                       this,
-                       [this, iCurChanID] ( CVector<CMultiSourceSourceConfig> config ) { OnMultiSourceConfig ( iCurChanID, config ); } );
+    QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReqPolyInCaps, this, [this, iCurChanID]() { OnReqPolyInCaps ( iCurChanID ); } );
+    QObject::connect ( &vecSessions[iCurChanID], &CChannel::PolyInConfigReceived, this, [this, iCurChanID] ( CVector<CPolyInSourceConfig> config ) {
+        OnPolyInConfig ( iCurChanID, config );
+    } );
 
     connectChannelSignalsToServerSlots<slotId - 1>();
 }
@@ -609,7 +608,7 @@ void CServer::OnCLDisconnection ( CHostAddress InetAddr )
     //
     // CChannel::Disconnect() used to be sufficient because legacy playback
     // eventually calls GetData(), which consumes the one-sample timeout and
-    // releases the slot. An Advanced session reads SessionIngress instead, so
+    // releases the slot. A Poly-in session reads SessionIngress instead, so
     // it would retain its address, protocol queue, source map and return path
     // forever. Tear down the physical session immediately and atomically.
     const int sessionID = FindChannel ( InetAddr );
@@ -715,7 +714,7 @@ void CServer::OnTimer()
         QMutexLocker locker ( &Mutex );
 
         // Legacy sessions consume their timeout through CChannel::GetData().
-        // Advanced sessions bypass that legacy socket buffer, so consume the
+        // Poly-in sessions bypass that legacy socket buffer, so consume the
         // same sample-based timeout once per physical session here. This is a
         // recovery path for a lost connectionless disconnect packet; the normal
         // explicit disconnect path above is immediate.
@@ -742,7 +741,7 @@ void CServer::OnTimer()
                 vecSessionIDsCurConSession[iNumSessions++] = sessionID;
         }
 
-        // One advanced ingress ring feeds all source decoders.  The number of
+        // One Poly-in ingress ring feeds all source decoders.  The number of
         // logical frames consumed is determined by the codec/server frame pair,
         // never by the sound-card callback or source count.
         for ( int i = 0; i < iNumSessions; ++i )
@@ -756,16 +755,16 @@ void CServer::OnTimer()
             int                 framesToRead = 1;
             if ( !bUseDoubleSystemFrameSize && codec == CT_OPUS )
             {
-                framesToRead                    = state.bAdvancedHalfFramePending ? 0 : 1;
-                state.bAdvancedHalfFramePending = !state.bAdvancedHalfFramePending;
+                framesToRead                  = state.bPolyInHalfFramePending ? 0 : 1;
+                state.bPolyInHalfFramePending = !state.bPolyInHalfFramePending;
             }
             else if ( bUseDoubleSystemFrameSize && codec == CT_OPUS64 )
             {
                 framesToRead = 2;
             }
             for ( int block = 0; block < framesToRead; ++block )
-                ReadAdvancedFrame ( sessionID, block );
-            UpdateAdvancedIngressAutoPolicy ( sessionID );
+                ReadPolyInFrame ( sessionID, block );
+            UpdatePolyInIngressAutoPolicy ( sessionID );
         }
 
         bUseMT = bUseMultithreading && iNumSources > 0;
@@ -816,7 +815,7 @@ void CServer::OnTimer()
     for ( int sessionIndex = 0; sessionIndex < iNumSessions; ++sessionIndex )
     {
         const int sessionID = vecSessionIDsCurConSession[sessionIndex];
-        // For an Advanced session, the ingress ring is deliberately the one
+        // For a Poly-in session, the ingress ring is deliberately the one
         // server jitter policy; CChannel's legacy SockBuf is no longer read.
         if ( vecSessionState[sessionID].eState != CServerSessionState::ST_ACTIVE )
             vecSessions[sessionID].UpdateSocketBufferSize();
@@ -870,13 +869,13 @@ void CServer::MixEncodeTransmitDataBlocks ( CServer* pServer, const int startSes
         pServer->MixEncodeTransmitData ( sessionIndex, numSources );
 }
 
-bool CServer::ReadAdvancedFrame ( const int sessionID, const int blockIndex )
+bool CServer::ReadPolyInFrame ( const int sessionID, const int blockIndex )
 {
     CServerSessionState& state = vecSessionState[sessionID];
     if ( state.eState != CServerSessionState::ST_ACTIVE || blockIndex < 0 || blockIndex >= 2 )
         return false;
 
-    std::array<MultiSource::RecordView, MultiSource::kMaxSourceRows> records{};
+    std::array<PolyIn::RecordView, PolyIn::kMaxSourceRows> records{};
     // A sequence-indexed ring can recover ordinary loss and reordering, but a
     // callback/scheduler hiatus longer than its capacity makes its old playout
     // cursor permanently unreachable.  Treat producer and consumer pauses
@@ -886,13 +885,13 @@ bool CServer::ReadAdvancedFrame ( const int sessionID, const int blockIndex )
     const uint32_t expectedSequence = state.bIngressPrimed ? state.iNextSequence : state.iFirstSequence;
     switch ( state.Ingress.GetPlayoutDiscontinuity ( expectedSequence ) )
     {
-    case MultiSource::EPlayoutDiscontinuity::ProducerAhead:
-        state.iFirstSequence = MultiSource::RecoverPlayoutSequence ( state.Ingress.HighestSequence(), state.iIngressTargetFrames );
+    case PolyIn::EPlayoutDiscontinuity::ProducerAhead:
+        state.iFirstSequence = PolyIn::RecoverPlayoutSequence ( state.Ingress.HighestSequence(), state.iIngressTargetFrames );
         state.iNextSequence  = state.iFirstSequence;
         state.bIngressPrimed = false;
         break;
 
-    case MultiSource::EPlayoutDiscontinuity::ConsumerAhead:
+    case PolyIn::EPlayoutDiscontinuity::ConsumerAhead:
         // The newest sequence is the first trustworthy post-hiatus frame.
         // Re-prime from it instead of rewinding into slots which may retain
         // audio already played before the producer stopped.
@@ -901,7 +900,7 @@ bool CServer::ReadAdvancedFrame ( const int sessionID, const int blockIndex )
         state.bIngressPrimed = false;
         break;
 
-    case MultiSource::EPlayoutDiscontinuity::None:
+    case PolyIn::EPlayoutDiscontinuity::None:
         break;
     }
     // Start playout only after the negotiated session-level window is present.
@@ -910,7 +909,7 @@ bool CServer::ReadAdvancedFrame ( const int sessionID, const int blockIndex )
     if ( !state.bIngressPrimed )
     {
         const uint32_t needed = state.iFirstSequence + static_cast<uint32_t> ( qMax ( 1, state.iIngressTargetFrames ) - 1 );
-        if ( !state.Ingress.HasHighestSequence() || MultiSource::SequenceBefore ( state.Ingress.HighestSequence(), needed ) )
+        if ( !state.Ingress.HasHighestSequence() || PolyIn::SequenceBefore ( state.Ingress.HighestSequence(), needed ) )
         {
             for ( int sourceIndex = 0; sourceIndex < state.iNumSources; ++sourceIndex )
             {
@@ -932,7 +931,7 @@ bool CServer::ReadAdvancedFrame ( const int sessionID, const int blockIndex )
         if ( haveFrame && records[sourceIndex].data != nullptr )
         {
             CVector<uint8_t>& payload = vecSourceIngressPayload[sourceID];
-            const size_t      offset  = static_cast<size_t> ( blockIndex ) * MultiSource::kMaxRawStereoPayloadBytes;
+            const size_t      offset  = static_cast<size_t> ( blockIndex ) * PolyIn::kMaxRawStereoPayloadBytes;
             std::memcpy ( &payload[static_cast<int> ( offset )], records[sourceIndex].data, records[sourceIndex].length );
             vecSourceIngressPresent[presentIndex] = 1;
         }
@@ -1003,7 +1002,7 @@ void CServer::DecodeReceiveData ( const int sourceIndex, const int numSources )
             codedBytes                = source.GetConfig().iPayloadBytes;
             if ( vecSourceIngressPresent[presentIndex] != 0 )
             {
-                coded = &vecSourceIngressPayload[sourceID][static_cast<int> ( block * MultiSource::kMaxRawStereoPayloadBytes )];
+                coded = &vecSourceIngressPayload[sourceID][static_cast<int> ( block * PolyIn::kMaxRawStereoPayloadBytes )];
             }
             raw = source.GetConfig().bRaw;
         }
@@ -1124,7 +1123,7 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
     // client return jitter buffer at exactly half rate.  The inverse 64 -> 128
     // case remains handled by outputConversion above and emits one packet only
     // after it has accumulated the complete 128-sample frame.
-    const int packetsToSend = MultiSource::ReturnPacketsPerServerTick ( bUseDoubleSystemFrameSize, codec == CT_OPUS64 );
+    const int packetsToSend = PolyIn::ReturnPacketsPerServerTick ( bUseDoubleSystemFrameSize, codec == CT_OPUS64 );
     if ( !raw )
     {
         opus_custom_encoder_ctl ( encoder, OPUS_SET_BITRATE ( CalcBitRateBitsPerSecFromCodedBytes ( codedBytes, frameSamples ) ) );
@@ -1160,15 +1159,15 @@ int CServer::GetLegacySourceID ( const int sessionID ) const
     return MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ? vecSessionState[sessionID].iLegacySourceID : INVALID_INDEX;
 }
 
-int CServer::AllocateSource ( const int parentSessionID, const CMultiSourceSourceConfig& sourceConfig, const bool legacy, const bool active )
+int CServer::AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& sourceConfig, const bool legacy, const bool active )
 {
     for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
     {
         if ( !vecSources[sourceID].IsAllocated() )
         {
-            CMultiSourceSourceConfig config = sourceConfig;
-            config.iFaderID                 = sourceID;
-            const int fadeFrames            = config.eCodec == CT_OPUS64 ? FADE_IN_NUM_FRAMES : FADE_IN_NUM_FRAMES_DBLE_FRAMESIZE;
+            CPolyInSourceConfig config = sourceConfig;
+            config.iFaderID            = sourceID;
+            const int fadeFrames       = config.eCodec == CT_OPUS64 ? FADE_IN_NUM_FRAMES : FADE_IN_NUM_FRAMES_DBLE_FRAMESIZE;
             vecSources[sourceID].Reserve ( parentSessionID, config, legacy, fadeFrames );
             if ( active )
                 vecSources[sourceID].Activate();
@@ -1339,7 +1338,7 @@ void CServer::InitChannel ( const int sessionID, const CHostAddress& address )
     vecSessions[sessionID].SetAddress ( address );
     vecSessions[sessionID].ResetInfo();
     vecSessionState[sessionID].Reset();
-    CMultiSourceSourceConfig legacy;
+    CPolyInSourceConfig legacy;
     legacy.iKey                                = 1;
     legacy.iNumChannels                        = 1;
     legacy.eCodec                              = CT_OPUS;
@@ -1356,7 +1355,7 @@ void CServer::FreeChannel ( const int sessionID )
 
     // Keep endpoint teardown coupled to visible-source retirement. The fixed
     // slot can then be immediately reused by the same UDP address on reconnect
-    // without inheriting an Advanced ingress generation or reliable protocol
+    // without inheriting a Poly-in ingress generation or reliable protocol
     // queue from the previous session.
     vecSessions[sessionID].ResetForServerReuse();
     FreeAllSourcesForSession ( sessionID );
@@ -1404,7 +1403,7 @@ void CServer::OnProtocolMessageReceived ( int counter, int id, CVector<uint8_t> 
         vecSessions[sessionID].PutProtocolData ( counter, id, data, address );
 }
 
-bool CServer::PutAdvancedAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID )
+bool CServer::PutPolyInAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID )
 {
     sessionID = FindChannel ( address, false );
     if ( sessionID == INVALID_CHANNEL_ID )
@@ -1412,8 +1411,8 @@ bool CServer::PutAdvancedAudioData ( const CVector<uint8_t>& packet, const int p
     CServerSessionState& state = vecSessionState[sessionID];
     if ( state.eState != CServerSessionState::ST_PREPARED && state.eState != CServerSessionState::ST_ACTIVE )
         return false;
-    MultiSource::ParsedFragment fragment;
-    if ( !MultiSource::ParseFragment ( &packet[0], static_cast<size_t> ( packetBytes ), fragment ) || fragment.generation != state.iGeneration )
+    PolyIn::ParsedFragment fragment;
+    if ( !PolyIn::ParseFragment ( &packet[0], static_cast<size_t> ( packetBytes ), fragment ) || fragment.generation != state.iGeneration )
         return false;
     bool firstFragmentForSequence = false;
     if ( !state.Ingress.Put ( &packet[0], static_cast<size_t> ( packetBytes ), &firstFragmentForSequence ) )
@@ -1431,18 +1430,18 @@ bool CServer::PutAdvancedAudioData ( const CVector<uint8_t>& packet, const int p
         // activate faders or enqueue protocol messages here: CProtocol owns a
         // QTimer in CServer's QObject thread.  The preallocated ingress ring
         // already owns this first frame, so a queued promotion cannot lose it.
-        QueueAdvancedPromotion ( sessionID, fragment.sequence );
+        QueuePolyInPromotion ( sessionID, fragment.sequence );
     }
-    return false; // an advanced packet never creates a legacy connection
+    return false; // a Poly-in packet never creates a legacy connection
 }
 
 bool CServer::PutAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID )
 {
     QMutexLocker locker ( &Mutex );
-    if ( packetBytes >= 2 && packet[0] == static_cast<uint8_t> ( MultiSource::kMagic >> 8 ) &&
-         packet[1] == static_cast<uint8_t> ( MultiSource::kMagic & 0xff ) )
+    if ( packetBytes >= 2 && packet[0] == static_cast<uint8_t> ( PolyIn::kMagic >> 8 ) &&
+         packet[1] == static_cast<uint8_t> ( PolyIn::kMagic & 0xff ) )
     {
-        return PutAdvancedAudioData ( packet, packetBytes, address, sessionID );
+        return PutPolyInAudioData ( packet, packetBytes, address, sessionID );
     }
     sessionID = FindChannel ( address, true );
     if ( sessionID == INVALID_CHANNEL_ID )
@@ -1477,7 +1476,7 @@ void CServer::GetConCliParam ( CVector<CHostAddress>&     addresses,
     }
 }
 
-bool CServer::SetAdvancedIngressTarget ( const int sessionID, const int numFrames )
+bool CServer::SetPolyInIngressTarget ( const int sessionID, const int numFrames )
 {
     if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) || numFrames < MIN_NET_BUF_SIZE_NUM_BL ||
          numFrames > MAX_NET_BUF_SIZE_NUM_BL )
@@ -1499,7 +1498,7 @@ bool CServer::SetAdvancedIngressTarget ( const int sessionID, const int numFrame
         // Do not merely report a smaller value: drop only already-buffered,
         // unplayed frames so the physical playout distance becomes the new
         // target immediately.  This never rewinds/replays an old frame.
-        state.iNextSequence  = MultiSource::ReanchorPlayoutSequence ( state.iNextSequence, state.Ingress.HighestSequence(), numFrames );
+        state.iNextSequence  = PolyIn::ReanchorPlayoutSequence ( state.iNextSequence, state.Ingress.HighestSequence(), numFrames );
         state.iFirstSequence = state.iNextSequence;
     }
     else if ( numFrames > oldTarget )
@@ -1512,7 +1511,7 @@ bool CServer::SetAdvancedIngressTarget ( const int sessionID, const int numFrame
     return true;
 }
 
-void CServer::UpdateAdvancedIngressAutoPolicy ( const int sessionID )
+void CServer::UpdatePolyInIngressAutoPolicy ( const int sessionID )
 {
     if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
         return;
@@ -1521,11 +1520,11 @@ void CServer::UpdateAdvancedIngressAutoPolicy ( const int sessionID )
         return;
 
     const int autoTarget = state.Ingress.AutoTargetFrames();
-    if ( SetAdvancedIngressTarget ( sessionID, autoTarget ) )
+    if ( SetPolyInIngressTarget ( sessionID, autoTarget ) )
     {
         // The audio timer may not own CProtocol's QTimer.  Report through the
         // server event loop rather than directly from this timing path.
-        QueueAdvancedJitterReport ( sessionID, autoTarget );
+        QueuePolyInJitterReport ( sessionID, autoTarget );
     }
 }
 
@@ -1539,9 +1538,9 @@ void CServer::OnSessionJitterPolicyChanged ( const int sessionID, const int numF
     CServerSessionState& state = vecSessionState[sessionID];
     state.bIngressAuto         = bAuto;
     const int target           = bAuto ? state.Ingress.AutoTargetFrames() : numFrames;
-    if ( state.eState == CServerSessionState::ST_ACTIVE && SetAdvancedIngressTarget ( sessionID, target ) && bAuto )
+    if ( state.eState == CServerSessionState::ST_ACTIVE && SetPolyInIngressTarget ( sessionID, target ) && bAuto )
     {
-        QueueAdvancedJitterReport ( sessionID, target );
+        QueuePolyInJitterReport ( sessionID, target );
     }
     else if ( state.eState != CServerSessionState::ST_ACTIVE )
     {
@@ -1549,7 +1548,7 @@ void CServer::OnSessionJitterPolicyChanged ( const int sessionID, const int numF
     }
 }
 
-void CServer::QueueAdvancedPromotion ( const int sessionID, const uint32_t firstSequence )
+void CServer::QueuePolyInPromotion ( const int sessionID, const uint32_t firstSequence )
 {
     if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
         return;
@@ -1560,54 +1559,54 @@ void CServer::QueueAdvancedPromotion ( const int sessionID, const uint32_t first
 
     state.bPromotionQueued        = true;
     state.iPromotionFirstSequence = firstSequence;
-    QCoreApplication::postEvent ( this, new CCustomEvent ( kServerEventAdvancedPromotion, 0, sessionID ) );
+    QCoreApplication::postEvent ( this, new CCustomEvent ( kServerEventPolyInPromotion, 0, sessionID ) );
 }
 
-void CServer::QueueAdvancedJitterReport ( const int sessionID, const int numFrames )
+void CServer::QueuePolyInJitterReport ( const int sessionID, const int numFrames )
 {
     if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
         return;
-    QCoreApplication::postEvent ( this, new CCustomEvent ( kServerEventAdvancedJitterReport, numFrames, sessionID ) );
+    QCoreApplication::postEvent ( this, new CCustomEvent ( kServerEventPolyInJitterReport, numFrames, sessionID ) );
 }
 
-bool CServer::PrepareAdvancedSources ( const int sessionID, const CVector<CMultiSourceSourceConfig>& config, uint8_t& rejectReason )
+bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason )
 {
-    rejectReason = MultiSourceProtocol::kRejectMalformed;
+    rejectReason = PolyInProtocol::kRejectMalformed;
     if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) || !vecSessions[sessionID].IsConnected() ||
-         !MultiSourceProtocol::ValidateSourceConfig ( config ) )
+         !PolyInProtocol::ValidateSourceConfig ( config ) )
     {
         return false;
     }
     if ( !vecSessions[sessionID].IsSplitMessageSupported() )
     {
-        rejectReason = MultiSourceProtocol::kRejectSplitMessageNotReady;
+        rejectReason = PolyInProtocol::kRejectSplitMessageNotReady;
         return false;
     }
     if ( vecSessionState[sessionID].eState != CServerSessionState::ST_LEGACY )
     {
-        rejectReason = MultiSourceProtocol::kRejectInvalidSessionState;
+        rejectReason = PolyInProtocol::kRejectInvalidSessionState;
         return false;
     }
     if ( bDisableRaw && config[0].bRaw )
     {
-        rejectReason = MultiSourceProtocol::kRejectUnsupported;
+        rejectReason = PolyInProtocol::kRejectUnsupported;
         return false;
     }
 
     // The configured channel limit applies to the visible fader map after
     // promotion. The legacy fader remains active until the first accepted
-    // Advanced frame, so a prepared map temporarily needs one extra fixed-pool
+    // Poly-in frame, so a prepared map temporarily needs one extra fixed-pool
     // slot for that placeholder. Keep the logical configured limit and the
     // implementation storage limit separate.
     const int postPromotionSourceCount = iCurNumSources - 1 + config.Size();
     if ( postPromotionSourceCount > iMaxNumChannels || config.Size() > MAX_NUM_CHANNELS - iCurNumSources )
     {
-        rejectReason = MultiSourceProtocol::kRejectCapacity;
+        rejectReason = PolyInProtocol::kRejectCapacity;
         return false;
     }
 
-    CServerSessionState&                                                   state = vecSessionState[sessionID];
-    std::array<MultiSource::SourceDescriptor, MultiSource::kMaxSourceRows> descriptors{};
+    CServerSessionState&                                         state = vecSessionState[sessionID];
+    std::array<PolyIn::SourceDescriptor, PolyIn::kMaxSourceRows> descriptors{};
     state.iNumSources = 0;
     for ( int index = 0; index < config.Size(); ++index )
     {
@@ -1617,12 +1616,12 @@ bool CServer::PrepareAdvancedSources ( const int sessionID, const CVector<CMulti
             for ( int rollback = 0; rollback < state.iNumSources; ++rollback )
                 FreeSource ( state.vecSourceIDs[rollback] );
             state.Reset();
-            rejectReason = MultiSourceProtocol::kRejectCapacity;
+            rejectReason = PolyInProtocol::kRejectCapacity;
             return false;
         }
         state.vecSourceIDs[state.iNumSources] = sourceID;
         descriptors[state.iNumSources] =
-            MultiSource::SourceDescriptor{ config[index].iKey, config[index].iNumChannels, config[index].iPayloadBytes, config[index].bRaw };
+            PolyIn::SourceDescriptor{ config[index].iKey, config[index].iNumChannels, config[index].iPayloadBytes, config[index].bRaw };
         ++state.iNumSources;
     }
 
@@ -1636,7 +1635,7 @@ bool CServer::PrepareAdvancedSources ( const int sessionID, const CVector<CMulti
     // Auto starts at the smallest practical session frame window rather than
     // inheriting the legacy ten-frame bootstrap value.  Manual operation keeps
     // the explicitly selected legacy/server value.
-    state.iIngressTargetFrames = state.bIngressAuto ? MultiSource::kMinAutoIngressFrames : vecSessions[sessionID].GetSockBufNumFrames();
+    state.iIngressTargetFrames = state.bIngressAuto ? PolyIn::kMinAutoIngressFrames : vecSessions[sessionID].GetSockBufNumFrames();
     // Preallocate the largest policy window once at negotiation.  Later
     // manual/automatic policy changes only alter playout state, never resize
     // audio-thread storage.
@@ -1671,48 +1670,48 @@ bool CServer::ActivatePreparedSources ( const int sessionID, const uint16_t gene
     }
     if ( legacySourceID != INVALID_CHANNEL_ID )
         FreeSource ( legacySourceID );
-    state.iLegacySourceID           = INVALID_INDEX;
-    state.eState                    = CServerSessionState::ST_ACTIVE;
-    state.iNextSequence             = firstSequence;
-    state.iFirstSequence            = firstSequence;
-    state.bHaveNextSequence         = true;
-    state.bIngressPrimed            = false;
-    state.bAdvancedHalfFramePending = false;
+    state.iLegacySourceID         = INVALID_INDEX;
+    state.eState                  = CServerSessionState::ST_ACTIVE;
+    state.iNextSequence           = firstSequence;
+    state.iFirstSequence          = firstSequence;
+    state.bHaveNextSequence       = true;
+    state.bIngressPrimed          = false;
+    state.bPolyInHalfFramePending = false;
     // Protocol/UI notifications are deliberately emitted by customEvent(),
     // which runs in CServer's QObject thread.  This routine is also invoked
     // only from that event after the socket worker staged promotion.
     return true;
 }
 
-void CServer::OnReqMultiSourceCaps ( const int sessionID )
+void CServer::OnReqPolyInCaps ( const int sessionID )
 {
-    // MULTISOURCE_CAPS is intentionally stronger than a feature bit: receiving
+    // POLY_IN_CAPS is intentionally stronger than a feature bit: receiving
     // it tells the client that this server has already completed the split
     // prerequisite and is ready to accept a split-capable source map.
     if ( MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) && vecSessions[sessionID].IsConnected() &&
          vecSessions[sessionID].IsSplitMessageSupported() )
     {
-        vecSessions[sessionID].CreateMultiSourceCapsMes();
+        vecSessions[sessionID].CreatePolyInCapsMes();
     }
 }
 
-void CServer::OnMultiSourceConfig ( const int sessionID, CVector<CMultiSourceSourceConfig> config )
+void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config )
 {
-    uint8_t rejectReason = MultiSourceProtocol::kRejectMalformed;
-    if ( !PrepareAdvancedSources ( sessionID, config, rejectReason ) )
+    uint8_t rejectReason = PolyInProtocol::kRejectMalformed;
+    if ( !PreparePolyInSources ( sessionID, config, rejectReason ) )
     {
-        vecSessions[sessionID].CreateMultiSourceRejectMes ( rejectReason );
+        vecSessions[sessionID].CreatePolyInRejectMes ( rejectReason );
         return;
     }
 
-    CMultiSourceAcceptMap accept;
+    CPolyInAcceptMap accept;
     accept.iGeneration = vecSessionState[sessionID].iGeneration;
     accept.vecSources.Init ( vecSessionState[sessionID].iNumSources );
     for ( int index = 0; index < vecSessionState[sessionID].iNumSources; ++index )
     {
         accept.vecSources[index] = vecSources[vecSessionState[sessionID].vecSourceIDs[index]].GetConfig();
     }
-    vecSessions[sessionID].CreateMultiSourceAcceptMes ( accept );
+    vecSessions[sessionID].CreatePolyInAcceptMes ( accept );
 }
 
 void CServer::SetEnableRecording ( bool bNewEnableRecording )
@@ -1751,7 +1750,7 @@ void CServer::customEvent ( QEvent* pEvent )
         Start();
         break;
 
-    case kServerEventAdvancedPromotion:
+    case kServerEventPolyInPromotion:
     {
         QMutexLocker locker ( &Mutex );
         const int    sessionID = event->iChanNum;
@@ -1776,11 +1775,11 @@ void CServer::customEvent ( QEvent* pEvent )
         // This is sent from CServer's QObject thread, after activation—not the
         // socket worker. It is a precise user-visible confirmation that the
         // temporary legacy source has been replaced by the visible source map.
-        vecSessions[sessionID].CreateMultiSourceActiveMes ( state.iGeneration );
+        vecSessions[sessionID].CreatePolyInActiveMes ( state.iGeneration );
         break;
     }
 
-    case kServerEventAdvancedJitterReport:
+    case kServerEventPolyInJitterReport:
     {
         QMutexLocker locker ( &Mutex );
         const int    sessionID = event->iChanNum;

@@ -638,7 +638,7 @@ int main ( int argc, char** argv )
     }
 
     // Keep the legacy one-user/one-channel default when only --numchannels is
-    // specified. Advanced deployments can opt into an explicit physical session
+    // specified. Poly-in deployments can opt into an explicit physical session
     // cap with --numclient.
     if ( !bNumServerClientsGiven )
         iNumServerClients = iNumServerChannels;

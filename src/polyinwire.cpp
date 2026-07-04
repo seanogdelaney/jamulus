@@ -5,12 +5,12 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
 \******************************************************************************/
-#include "multisourcewire.h"
+#include "polyinwire.h"
 
 #include <algorithm>
 #include <cstring>
 
-namespace MultiSource
+namespace PolyIn
 {
 namespace
 {
@@ -567,7 +567,7 @@ bool Negotiation::OnActivation ( const uint16_t activatedGeneration )
     return Transition ( NegotiationState::Prepared, NegotiationState::Active );
 }
 
-bool Negotiation::CanSendAdvanced() const
+bool Negotiation::CanSendPolyIn() const
 {
     const NegotiationState current = State();
     return current == NegotiationState::Prepared || current == NegotiationState::AwaitingActivation || current == NegotiationState::Active;
@@ -616,4 +616,4 @@ bool ValidateRoutingRows ( const RoutingRow* const rows, const size_t count, con
     return true;
 }
 
-} // namespace MultiSource
+} // namespace PolyIn

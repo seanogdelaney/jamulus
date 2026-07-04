@@ -1,5 +1,5 @@
-/* Deterministic non-Qt tests for MultiSource wire/reassembly/state code. */
-#include "../src/multisourcewire.h"
+/* Deterministic non-Qt tests for Poly-in wire/reassembly/state code. */
+#include "../src/polyinwire.h"
 
 #include <array>
 #include <cassert>
@@ -7,7 +7,7 @@
 #include <iostream>
 #include <vector>
 
-using namespace MultiSource;
+using namespace PolyIn;
 
 namespace
 {
@@ -93,7 +93,7 @@ void TestNegotiationFallback()
     // An old server's generic ACK is deliberately invisible to this state
     // machine. Only the semantic split/capability replies can advance it.
     client.OnTimeout();
-    assert ( client.State() == NegotiationState::Legacy && !client.CanSendAdvanced() );
+    assert ( client.State() == NegotiationState::Legacy && !client.CanSendPolyIn() );
 
     assert ( client.Begin() );
     assert ( client.OnSplitCapabilityReceived() );
@@ -104,12 +104,12 @@ void TestNegotiationFallback()
     assert ( client.State() == NegotiationState::ConfigurationQueued );
     assert ( client.OnConfigurationRequestSent() );
     assert ( client.OnAccept ( 7 ) );
-    assert ( client.CanSendAdvanced() );
+    assert ( client.CanSendPolyIn() );
     assert ( !client.OnFirstAcceptedFrame ( 6 ) );
     assert ( client.OnFirstAcceptedFrame ( 7 ) );
     assert ( client.State() == NegotiationState::AwaitingActivation );
     client.OnTimeout(); // confirmation timeout must not revert a live uplink
-    assert ( client.State() == NegotiationState::AwaitingActivation && client.CanSendAdvanced() );
+    assert ( client.State() == NegotiationState::AwaitingActivation && client.CanSendPolyIn() );
     assert ( !client.OnActivation ( 6 ) );
     assert ( client.OnActivation ( 7 ) );
     assert ( client.State() == NegotiationState::Active );
@@ -220,6 +220,6 @@ int main()
     TestReturnPacketCadence();
     TestUploadRateEstimate();
     TestRoutingValidation();
-    std::cout << "multisourcewire tests: PASS\n";
+    std::cout << "polyinwire tests: PASS\n";
     return 0;
 }

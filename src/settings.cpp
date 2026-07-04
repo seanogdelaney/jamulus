@@ -621,30 +621,30 @@ void CClientSettings::ReadSettingsFromXML ( const QDomDocument& IniXMLDocument, 
     }
 
     // Audio routing. Keep the ordinary return/fallback profile separate from
-    // the Advanced capture table so an old/refusing server remains usable.
+    // the Poly-in capture table so an old/refusing server remains usable.
     int requestedAudioChannels = CC_MONO;
-    GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 3 /* CC_ADVANCED */, requestedAudioChannels );
+    GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 3 /* CC_POLY_IN */, requestedAudioChannels );
     int legacyAudioChannels = CC_MONO;
     GetNumericIniSet ( IniXMLDocument, "client", "legacyaudiochannels", 0, 2 /* CC_STEREO */, legacyAudioChannels );
     pClient->SetAudioChannels ( static_cast<EAudChanConf> ( legacyAudioChannels ) );
-    QVector<CAdvancedAudioChannelConfig> advancedRows;
-    int                                  advancedCount = 0;
-    if ( GetNumericIniSet ( IniXMLDocument, "client", "advancedsourcecount", 0, MAX_NUM_IN_OUT_CHANNELS, advancedCount ) )
+    QVector<CPolyInAudioChannelConfig> polyInRows;
+    int                                polyInCount = 0;
+    if ( GetNumericIniSet ( IniXMLDocument, "client", "polyinsourcecount", 0, MAX_NUM_IN_OUT_CHANNELS, polyInCount ) )
     {
-        for ( int source = 0; source < advancedCount; ++source )
+        for ( int source = 0; source < polyInCount; ++source )
         {
-            const QString prefix = QString ( "advancedsource%1" ).arg ( source );
+            const QString prefix = QString ( "polyinsource%1" ).arg ( source );
             const QString tag    = GetIniSetting ( IniXMLDocument, "client", prefix + "tag" ).trimmed();
             int           icon = CInstPictures::GetNotUsedInstrument(), ch1 = 0, ch2 = INVALID_INDEX;
             GetNumericIniSet ( IniXMLDocument, "client", prefix + "icon", 0, CInstPictures::GetNumAvailableInst() - 1, icon );
             GetNumericIniSet ( IniXMLDocument, "client", prefix + "ch1", 0, MAX_NUM_IN_OUT_CHANNELS - 1, ch1 );
             GetNumericIniSet ( IniXMLDocument, "client", prefix + "ch2", INVALID_INDEX, MAX_NUM_IN_OUT_CHANNELS - 1, ch2 );
             if ( !tag.isEmpty() )
-                advancedRows.append ( CAdvancedAudioChannelConfig ( tag, icon, ch1, ch2 ) );
+                polyInRows.append ( CPolyInAudioChannelConfig ( tag, icon, ch1, ch2 ) );
         }
     }
-    if ( requestedAudioChannels == CC_ADVANCED )
-        pClient->SetAdvancedAudioChannels ( advancedRows );
+    if ( requestedAudioChannels == CC_POLY_IN )
+        pClient->SetPolyInAudioChannels ( polyInRows );
     else
         pClient->SetAudioChannels ( static_cast<EAudChanConf> ( requestedAudioChannels ) );
 
@@ -1009,18 +1009,18 @@ void CClientSettings::WriteSettingsToXML ( QDomDocument& IniXMLDocument, bool is
     // MeterStyle
     SetNumericIniSet ( IniXMLDocument, "client", "meterstyle", static_cast<int> ( pClient->GetMeterStyle() ) );
 
-    // audio channels and Advanced capture table
+    // audio channels and Poly-in capture table
     SetNumericIniSet ( IniXMLDocument, "client", "audiochannels", static_cast<int> ( pClient->GetAudioChannels() ) );
     SetNumericIniSet ( IniXMLDocument, "client", "legacyaudiochannels", static_cast<int> ( pClient->GetLegacyAudioChannels() ) );
-    const QVector<CAdvancedAudioChannelConfig>& advancedRows = pClient->GetAdvancedAudioChannels();
-    SetNumericIniSet ( IniXMLDocument, "client", "advancedsourcecount", advancedRows.size() );
-    for ( int source = 0; source < advancedRows.size(); ++source )
+    const QVector<CPolyInAudioChannelConfig>& polyInRows = pClient->GetPolyInAudioChannels();
+    SetNumericIniSet ( IniXMLDocument, "client", "polyinsourcecount", polyInRows.size() );
+    for ( int source = 0; source < polyInRows.size(); ++source )
     {
-        const QString prefix = QString ( "advancedsource%1" ).arg ( source );
-        PutIniSetting ( IniXMLDocument, "client", prefix + "tag", advancedRows[source].strFaderTag );
-        SetNumericIniSet ( IniXMLDocument, "client", prefix + "icon", advancedRows[source].iInstrument );
-        SetNumericIniSet ( IniXMLDocument, "client", prefix + "ch1", advancedRows[source].iInputChannel1 );
-        SetNumericIniSet ( IniXMLDocument, "client", prefix + "ch2", advancedRows[source].iInputChannel2 );
+        const QString prefix = QString ( "polyinsource%1" ).arg ( source );
+        PutIniSetting ( IniXMLDocument, "client", prefix + "tag", polyInRows[source].strFaderTag );
+        SetNumericIniSet ( IniXMLDocument, "client", prefix + "icon", polyInRows[source].iInstrument );
+        SetNumericIniSet ( IniXMLDocument, "client", prefix + "ch1", polyInRows[source].iInputChannel1 );
+        SetNumericIniSet ( IniXMLDocument, "client", prefix + "ch2", polyInRows[source].iInputChannel2 );
     }
 
     // audio quality

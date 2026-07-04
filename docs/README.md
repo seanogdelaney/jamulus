@@ -51,3 +51,10 @@ Mostly documentation can be found on the Jamulus Website: https://jamulus.io
 1. Release process: https://jamulus.io/contribute/Release-Process
 2. Style and tone guide: https://jamulus.io/contribute/Style-and-Tone
 3. Administration (i.e. how we work) of the Jamulus project: https://jamulus.io/contribute/Administration
+
+## In-repository technical documentation
+
+- [Poly-in](POLY_IN.md): problem statement,
+  architecture, compatibility model, review constraints and verification guide.
+- [Jamulus protocol](JAMULUS_PROTOCOL.md): normative protocol definitions,
+  including the Poly-in control and UDP transport extension.

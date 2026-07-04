@@ -505,8 +505,8 @@ enum EAudChanConf
     CC_MONO               = 0,
     CC_MONO_IN_STEREO_OUT = 1,
     CC_STEREO             = 2,
-    // advanced source routing; legacy values above remain persistent ABI
-    CC_ADVANCED = 3
+    // Poly-in source routing; legacy values above remain persistent ABI
+    CC_POLY_IN = 3
 };
 
 // Audio compression type enum -------------------------------------------------

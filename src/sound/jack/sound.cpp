@@ -90,7 +90,7 @@ void CSound::OpenJack ( const bool bNoAutoJackConnect, const char* jackClientNam
     }
 
     // Register one capture port per physical JACK capture source. The legacy
-    // stereo callback remains unchanged; Advanced routing consumes all ports.
+    // stereo callback remains unchanged; Poly-in consumes all ports.
     int iPhysicalInputChannels = 0;
     if ( const char** pPhysicalInputs = jack_get_ports ( pJackClient, nullptr, nullptr, JackPortIsPhysical | JackPortIsOutput ) )
     {
@@ -412,7 +412,7 @@ int CSound::process ( jack_nframes_t nframes, void* arg )
             }
         }
 
-        // Retain the original selected first stereo pair for non-Advanced mode.
+        // Retain the original selected first stereo pair for non-Poly-in mode.
         for ( i = 0; i < pSound->iJACKBufferSizeMono; ++i )
         {
             pSound->vecsTmpAudioSndCrdStereo[2 * i]     = pSound->vecInputAudio[i * pSound->iNumInputChannels];
