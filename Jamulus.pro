@@ -404,8 +404,8 @@ HEADERS += src/plugins/audioreverb.h \
     src/buffer.h \
     src/channel.h \
     src/global.h \
-    src/multisource.h \
-    src/multisourcewire.h \
+    src/polyin.h \
+    src/polyinwire.h \
     src/protocol.h \
     src/recorder/jamcontroller.h \
     src/threadpool.h \
@@ -514,8 +514,8 @@ SOURCES += src/plugins/audioreverb.cpp \
     src/buffer.cpp \
     src/channel.cpp \
     src/main.cpp \
-    src/multisource.cpp \
-    src/multisourcewire.cpp \
+    src/polyin.cpp \
+    src/polyinwire.cpp \
     src/protocol.cpp \
     src/recorder/jamcontroller.cpp \
     src/server.cpp \

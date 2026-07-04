@@ -14,9 +14,9 @@
 #include <string>
 #include <vector>
 
-namespace MultiSource
+namespace PolyIn
 {
-constexpr uint16_t kMagic                  = 0x4d53; // "MS", deliberately non-zero
+constexpr uint16_t kMagic                  = 0x5049; // "PI", deliberately non-zero
 constexpr uint8_t  kVersion                = 1;
 constexpr size_t   kHeaderBytes            = 14;
 constexpr size_t   kRecordHeaderBytes      = 3;
@@ -28,7 +28,7 @@ constexpr size_t kMaxRawStereoPayloadBytes      = 2 * 128 * sizeof ( int16_t );
 constexpr size_t kMaxRecordBytes                = kRecordHeaderBytes + kMaxRawStereoPayloadBytes;
 constexpr size_t kMaxFragments                  = ( kMaxSourceRows + 1 ) / 2; // 2 worst-case records/datagram
 constexpr size_t kDefaultIngressFrames          = 32;
-// Keep Advanced auto mode out of the legacy ten-frame startup default.  The
+// Keep Poly-in automatic mode out of the legacy ten-frame startup default.  The
 // ordinary CNetBufWithStats simulation also treats two frames as its lowest
 // practical candidate; one frame has no useful sample-rate-offset margin.
 constexpr int kMinAutoIngressFrames = 2;
@@ -152,7 +152,7 @@ private:
 
 bool ParseFragment ( const uint8_t* data, size_t length, ParsedFragment& parsed );
 
-// Estimate the actual Advanced uplink wire rate for one logical source frame.
+// Estimate the actual Poly-in uplink wire rate for one logical source frame.
 // This mirrors FramePacketizer's fragment boundaries and adds the same
 // transport framing allowance as CChannel::GetUploadRateKbps().
 int EstimateUploadRateKbps ( const uint16_t* payloadLengths, size_t recordCount, int frameSamples, int sampleRate );
@@ -232,7 +232,7 @@ private:
 // observed.  "Queued" means present in CProtocol's ACK-gated FIFO; "Awaiting"
 // means the first physical datagram for that logical request has actually been
 // handed to the socket.  This distinction prevents startup traffic from
-// consuming the Advanced timeout before the request itself has left the queue.
+// consuming the Poly-in timeout before the request itself has left the queue.
 enum class NegotiationState : uint8_t
 {
     Legacy,
@@ -262,7 +262,7 @@ public:
     bool OnFirstAcceptedFrame ( uint16_t packetGeneration );
     bool OnActivation ( uint16_t activatedGeneration );
 
-    bool             CanSendAdvanced() const;
+    bool             CanSendPolyIn() const;
     bool             IsPreAcceptance() const;
     bool             IsAwaitingActivation() const;
     NegotiationState State() const { return state.load ( std::memory_order_acquire ); }
@@ -277,4 +277,4 @@ private:
 
 bool ValidateRoutingRows ( const RoutingRow* rows, size_t count, int physicalInputChannels, std::string* error = nullptr );
 
-} // namespace MultiSource
+} // namespace PolyIn

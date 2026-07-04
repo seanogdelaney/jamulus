@@ -62,14 +62,14 @@
 
 namespace
 {
-class CAdvancedAudioChannelsDlg : public QDialog
+class CPolyInAudioChannelsDlg : public QDialog
 {
 public:
-    CAdvancedAudioChannelsDlg ( CClient* client, QWidget* parent ) : QDialog ( parent ), pClient ( client )
+    CPolyInAudioChannelsDlg ( CClient* client, QWidget* parent ) : QDialog ( parent ), pClient ( client )
     {
-        setWindowTitle ( tr ( "Advanced Audio Routing" ) );
+        setWindowTitle ( tr ( "Poly-in" ) );
         QVBoxLayout* layout = new QVBoxLayout ( this );
-        layout->addWidget ( new QLabel ( tr ( "Each row becomes a separate remote mixer fader. Configure this table before connecting: Advanced "
+        layout->addWidget ( new QLabel ( tr ( "Each row becomes a separate remote mixer fader. Configure this table before connecting: PolyIn "
                                               "routing is fixed until disconnect." ),
                                          this ) );
         pTable = new QTableWidget ( this );
@@ -101,26 +101,26 @@ public:
             QString error;
             if ( !Validate ( &error ) )
             {
-                QMessageBox::warning ( this, tr ( "Advanced Audio Routing" ), error );
+                QMessageBox::warning ( this, tr ( "Poly-in" ), error );
                 return;
             }
             accept();
         } );
         connect ( buttons, &QDialogButtonBox::rejected, this, &QDialog::reject );
-        const QVector<CAdvancedAudioChannelConfig>& rows = pClient->GetAdvancedAudioChannels();
+        const QVector<CPolyInAudioChannelConfig>& rows = pClient->GetPolyInAudioChannels();
         if ( rows.isEmpty() )
         {
-            AddRow ( CAdvancedAudioChannelConfig ( tr ( "Vox" ), pClient->ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
-            AddRow ( CAdvancedAudioChannelConfig ( tr ( "Guitar" ), pClient->ChannelInfo.iInstrument, 1, INVALID_INDEX ) );
+            AddRow ( CPolyInAudioChannelConfig ( tr ( "Vox" ), pClient->ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
+            AddRow ( CPolyInAudioChannelConfig ( tr ( "Guitar" ), pClient->ChannelInfo.iInstrument, 1, INVALID_INDEX ) );
         }
         else
-            for ( const CAdvancedAudioChannelConfig& row : rows )
+            for ( const CPolyInAudioChannelConfig& row : rows )
                 AddRow ( row );
     }
 
-    QVector<CAdvancedAudioChannelConfig> GetChannels() const
+    QVector<CPolyInAudioChannelConfig> GetChannels() const
     {
-        QVector<CAdvancedAudioChannelConfig> rows;
+        QVector<CPolyInAudioChannelConfig> rows;
         for ( int row = 0; row < pTable->rowCount(); ++row )
         {
             const auto*             icon = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 0 ) );
@@ -129,10 +129,10 @@ public:
             const QTableWidgetItem* tag  = pTable->item ( row, 1 );
             if ( icon == nullptr || ch1 == nullptr || ch2 == nullptr )
                 continue;
-            rows.append ( CAdvancedAudioChannelConfig ( tag == nullptr ? QString() : tag->text(),
-                                                        icon->currentData().toInt(),
-                                                        ch1->currentData().toInt(),
-                                                        ch2->currentData().toInt() ) );
+            rows.append ( CPolyInAudioChannelConfig ( tag == nullptr ? QString() : tag->text(),
+                                                      icon->currentData().toInt(),
+                                                      ch1->currentData().toInt(),
+                                                      ch2->currentData().toInt() ) );
         }
         return rows;
     }
@@ -160,7 +160,7 @@ private:
         combo->setCurrentIndex ( index >= 0 ? index : 0 );
         return combo;
     }
-    void AddRow ( const CAdvancedAudioChannelConfig& source = CAdvancedAudioChannelConfig() )
+    void AddRow ( const CPolyInAudioChannelConfig& source = CPolyInAudioChannelConfig() )
     {
         if ( pTable->rowCount() >= MAX_NUM_IN_OUT_CHANNELS )
             return;
@@ -708,7 +708,7 @@ CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSet
     cbxAudioChannels->addItem ( tr ( "Mono" ), CC_MONO );
     cbxAudioChannels->addItem ( tr ( "Mono-in/Stereo-out" ), CC_MONO_IN_STEREO_OUT );
     cbxAudioChannels->addItem ( tr ( "Stereo" ), CC_STEREO );
-    cbxAudioChannels->addItem ( tr ( "Poly-in/Stereo-out" ), CC_ADVANCED );
+    cbxAudioChannels->addItem ( tr ( "Poly-in/Stereo-out" ), CC_POLY_IN );
     cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
 
     // Audio Quality combo box
@@ -1306,17 +1306,17 @@ void CClientSettingsDlg::UpdateSoundCardFrame()
     rbtBufferDelaySafe->setChecked ( bSafeChecked );
     SndCrdBufferDelayButtonGroup.setExclusive ( true );
 
-    // A live Advanced session has an immutable source encoder/frame contract.
+    // A live Poly-in session has an immutable source encoder/frame contract.
     // Buffer changes reinitialize it, so require an explicit reconnect.
-    const bool    advancedRoutingLocked = pClient->IsAdvancedRoutingLocked();
-    const QString advancedLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Advanced routing." );
-    rbtBufferDelayPreferred->setEnabled ( pClient->GetFraSiFactPrefSupported() && !advancedRoutingLocked );
-    rbtBufferDelayDefault->setEnabled ( pClient->GetFraSiFactDefSupported() && !advancedRoutingLocked );
-    rbtBufferDelaySafe->setEnabled ( pClient->GetFraSiFactSafeSupported() && !advancedRoutingLocked );
-    grbSoundCrdBufDelay->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
-    rbtBufferDelayPreferred->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
-    rbtBufferDelayDefault->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
-    rbtBufferDelaySafe->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+    const bool    polyInRoutingLocked = pClient->IsPolyInRoutingLocked();
+    const QString polyInLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Poly-in." );
+    rbtBufferDelayPreferred->setEnabled ( pClient->GetFraSiFactPrefSupported() && !polyInRoutingLocked );
+    rbtBufferDelayDefault->setEnabled ( pClient->GetFraSiFactDefSupported() && !polyInRoutingLocked );
+    rbtBufferDelaySafe->setEnabled ( pClient->GetFraSiFactSafeSupported() && !polyInRoutingLocked );
+    grbSoundCrdBufDelay->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+    rbtBufferDelayPreferred->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+    rbtBufferDelayDefault->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+    rbtBufferDelaySafe->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
 
     // If any of our predefined sizes is chosen, use the regular group box
     // title text. If not, show the actual buffer size. Otherwise the user
@@ -1335,8 +1335,8 @@ void CClientSettingsDlg::UpdateSoundCardFrame()
 
 void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
 {
-    const bool    advancedRoutingLocked = pClient->IsAdvancedRoutingLocked();
-    const QString advancedLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Advanced routing." );
+    const bool    polyInRoutingLocked = pClient->IsPolyInRoutingLocked();
+    const QString polyInLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Poly-in." );
 
     // update combo box containing all available sound cards in the system
     QStringList slSndCrdDevNames = pClient->GetSndCrdDevNames();
@@ -1348,11 +1348,11 @@ void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
     }
 
     cbxSoundcard->setCurrentText ( pClient->GetSndCrdDev() );
-    cbxSoundcard->setEnabled ( !advancedRoutingLocked );
-    cbxSoundcard->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+    cbxSoundcard->setEnabled ( !polyInRoutingLocked );
+    cbxSoundcard->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
 
 #if defined( _WIN32 ) && !defined( WITH_JACK )
-    butDriverSetup->setEnabled ( !advancedRoutingLocked );
+    butDriverSetup->setEnabled ( !polyInRoutingLocked );
 #endif
 
     // update input/output channel selection
@@ -1401,21 +1401,21 @@ void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
             cbxLOutChan->setCurrentIndex ( pClient->GetSndCrdLeftOutputChannel() );
             cbxROutChan->setCurrentIndex ( pClient->GetSndCrdRightOutputChannel() );
         }
-        cbxLOutChan->setEnabled ( !advancedRoutingLocked );
-        cbxROutChan->setEnabled ( !advancedRoutingLocked );
-        cbxLOutChan->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
-        cbxROutChan->setToolTip ( advancedRoutingLocked ? advancedLockToolTip : QString() );
+        cbxLOutChan->setEnabled ( !polyInRoutingLocked );
+        cbxROutChan->setEnabled ( !polyInRoutingLocked );
+        cbxLOutChan->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+        cbxROutChan->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
 
-        // Advanced owns its physical capture map. Retain the selected legacy
+        // Poly-in owns its physical capture map. Retain the selected legacy
         // pair for fallback/return configuration but do not let the normal
         // stereo transformations suggest that they apply to one source row.
-        const bool advanced = pClient->GetAudioChannels() == CC_ADVANCED;
-        cbxLInChan->setEnabled ( !advanced );
-        cbxRInChan->setEnabled ( !advanced );
-        lblInChannelMapping->setEnabled ( !advanced );
-        if ( advanced )
+        const bool polyIn = pClient->GetAudioChannels() == CC_POLY_IN;
+        cbxLInChan->setEnabled ( !polyIn );
+        cbxRInChan->setEnabled ( !polyIn );
+        lblInChannelMapping->setEnabled ( !polyIn );
+        if ( polyIn )
         {
-            cbxLInChan->setToolTip ( tr ( "Advanced routing uses the source table; legacy input mapping is retained for fallback." ) );
+            cbxLInChan->setToolTip ( tr ( "Poly-in uses the source table; legacy input mapping is retained for fallback." ) );
             cbxRInChan->setToolTip ( cbxLInChan->toolTip() );
         }
     }
@@ -1482,35 +1482,32 @@ void CClientSettingsDlg::OnROutChanActivated ( int iChanIdx )
 void CClientSettingsDlg::OnAudioChannelsActivated ( int iChanIdx )
 {
     const EAudChanConf mode = static_cast<EAudChanConf> ( cbxAudioChannels->itemData ( iChanIdx ).toInt() );
-    if ( ( pClient->IsConnected() || pClient->IsAdvancedRoutingLocked() ) && ( mode == CC_ADVANCED || pClient->GetAudioChannels() == CC_ADVANCED ) )
+    if ( ( pClient->IsConnected() || pClient->IsPolyInRoutingLocked() ) && ( mode == CC_POLY_IN || pClient->GetAudioChannels() == CC_POLY_IN ) )
     {
-        QMessageBox::information (
-            this,
-            tr ( "Advanced Audio Routing" ),
-            tr ( "Advanced routing is fixed for this connection. Disconnect before changing the source table or audio input mode." ) );
+        QMessageBox::information ( this,
+                                   tr ( "Poly-in" ),
+                                   tr ( "Poly-in is fixed for this connection. Disconnect before changing the source table or audio input mode." ) );
         QSignalBlocker blocker ( cbxAudioChannels );
         cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
         return;
     }
-    if ( mode == CC_ADVANCED )
+    if ( mode == CC_POLY_IN )
     {
-        if ( !pClient->IsAdvancedCaptureSupported() )
+        if ( !pClient->IsPolyInCaptureSupported() )
         {
-            QMessageBox::information ( this,
-                                       tr ( "Advanced Audio Routing" ),
-                                       tr ( "Advanced routing is currently available with ASIO, CoreAudio macOS, and JACK." ) );
+            QMessageBox::information ( this, tr ( "Poly-in" ), tr ( "Poly-in is currently available with ASIO, CoreAudio macOS, and JACK." ) );
             QSignalBlocker blocker ( cbxAudioChannels );
             cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
             return;
         }
-        CAdvancedAudioChannelsDlg dialog ( pClient, this );
+        CPolyInAudioChannelsDlg dialog ( pClient, this );
         if ( dialog.exec() != QDialog::Accepted )
         {
             QSignalBlocker blocker ( cbxAudioChannels );
             cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
             return;
         }
-        pClient->SetAdvancedAudioChannels ( dialog.GetChannels() );
+        pClient->SetPolyInAudioChannels ( dialog.GetChannels() );
     }
     else
         pClient->SetAudioChannels ( mode );
@@ -1520,11 +1517,11 @@ void CClientSettingsDlg::OnAudioChannelsActivated ( int iChanIdx )
 
 void CClientSettingsDlg::OnAudioQualityActivated ( int iQualityIdx )
 {
-    if ( pClient->IsAdvancedRoutingLocked() && iQualityIdx != static_cast<int> ( pClient->GetAudioQuality() ) )
+    if ( pClient->IsPolyInRoutingLocked() && iQualityIdx != static_cast<int> ( pClient->GetAudioQuality() ) )
     {
         QMessageBox::information ( this,
-                                   tr ( "Advanced Audio Routing" ),
-                                   tr ( "Advanced routing is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
+                                   tr ( "Poly-in" ),
+                                   tr ( "Poly-in is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
         QSignalBlocker blocker ( cbxAudioQuality );
         cbxAudioQuality->setCurrentIndex ( static_cast<int> ( pClient->GetAudioQuality() ) );
         return;
@@ -1558,11 +1555,11 @@ void CClientSettingsDlg::OnAutoJitBufStateChanged ( int value )
 void CClientSettingsDlg::OnEnableOPUS64StateChanged ( int value )
 {
     const bool enabled = value == Qt::Checked;
-    if ( pClient->IsAdvancedRoutingLocked() && enabled != pClient->GetEnableOPUS64() )
+    if ( pClient->IsPolyInRoutingLocked() && enabled != pClient->GetEnableOPUS64() )
     {
         QMessageBox::information ( this,
-                                   tr ( "Advanced Audio Routing" ),
-                                   tr ( "Advanced routing is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
+                                   tr ( "Poly-in" ),
+                                   tr ( "Poly-in is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
         QSignalBlocker blocker ( chbSmallNetworkBuffers );
         chbSmallNetworkBuffers->setCheckState ( pClient->GetEnableOPUS64() ? Qt::Checked : Qt::Unchecked );
         return;

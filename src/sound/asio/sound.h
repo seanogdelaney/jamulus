@@ -88,7 +88,7 @@ public:
     virtual void OpenDriverSetup() { ASIOControlPanel(); }
 
     // channel selection
-    virtual bool    SupportsAdvancedCapture() const override { return true; }
+    virtual bool SupportsPolyInCapture() const override { return true; }
 
     virtual int     GetNumInputChannels() { return static_cast<int> ( lNumInChanPlusAddChan ); }
     virtual QString GetInputChannelName ( const int iDiD ) { return channelInputName[iDiD]; }

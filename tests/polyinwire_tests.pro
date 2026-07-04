@@ -1,5 +1,5 @@
 TEMPLATE = app
 CONFIG += console c++11
 QT -= gui
-SOURCES += multisourcewire_test.cpp ../src/multisourcewire.cpp
+SOURCES += polyinwire_test.cpp ../src/polyinwire.cpp
 INCLUDEPATH += ../src

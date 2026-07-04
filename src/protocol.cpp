@@ -879,28 +879,28 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                     EvaluateRawAudioSupportedMes();
                     break;
 
-                case PROTMESSID_REQ_MULTISOURCE_CAPS:
-                    EvaluateReqMultiSourceCapsMes();
+                case PROTMESSID_REQ_POLY_IN_CAPS:
+                    EvaluateReqPolyInCapsMes();
                     break;
 
-                case PROTMESSID_MULTISOURCE_CAPS:
-                    EvaluateMultiSourceCapsMes ( vecbyMesBodyDataRef );
+                case PROTMESSID_POLY_IN_CAPS:
+                    EvaluatePolyInCapsMes ( vecbyMesBodyDataRef );
                     break;
 
-                case PROTMESSID_MULTISOURCE_CONFIG:
-                    EvaluateMultiSourceConfigMes ( vecbyMesBodyDataRef );
+                case PROTMESSID_POLY_IN_CONFIG:
+                    EvaluatePolyInConfigMes ( vecbyMesBodyDataRef );
                     break;
 
-                case PROTMESSID_MULTISOURCE_ACCEPT:
-                    EvaluateMultiSourceAcceptMes ( vecbyMesBodyDataRef );
+                case PROTMESSID_POLY_IN_ACCEPT:
+                    EvaluatePolyInAcceptMes ( vecbyMesBodyDataRef );
                     break;
 
-                case PROTMESSID_MULTISOURCE_REJECT:
-                    EvaluateMultiSourceRejectMes ( vecbyMesBodyDataRef );
+                case PROTMESSID_POLY_IN_REJECT:
+                    EvaluatePolyInRejectMes ( vecbyMesBodyDataRef );
                     break;
 
-                case PROTMESSID_MULTISOURCE_ACTIVE:
-                    EvaluateMultiSourceActiveMes ( vecbyMesBodyDataRef );
+                case PROTMESSID_POLY_IN_ACTIVE:
+                    EvaluatePolyInActiveMes ( vecbyMesBodyDataRef );
                     break;
 
                 case PROTMESSID_LICENCE_REQUIRED:
@@ -1628,90 +1628,90 @@ bool CProtocol::EvaluateRawAudioSupportedMes()
     return false; // no error
 }
 
-void CProtocol::CreateReqMultiSourceCapsMes() { CreateAndSendMessage ( PROTMESSID_REQ_MULTISOURCE_CAPS, CVector<uint8_t> ( 0 ) ); }
+void CProtocol::CreateReqPolyInCapsMes() { CreateAndSendMessage ( PROTMESSID_REQ_POLY_IN_CAPS, CVector<uint8_t> ( 0 ) ); }
 
-bool CProtocol::EvaluateReqMultiSourceCapsMes()
+bool CProtocol::EvaluateReqPolyInCapsMes()
 {
-    emit ReqMultiSourceCaps();
+    emit ReqPolyInCaps();
     return false; // no error
 }
 
-void CProtocol::CreateMultiSourceCapsMes()
+void CProtocol::CreatePolyInCapsMes()
 {
     CVector<uint8_t> data;
-    MultiSourceProtocol::EncodeCaps ( data );
-    CreateAndSendMessage ( PROTMESSID_MULTISOURCE_CAPS, data );
+    PolyInProtocol::EncodeCaps ( data );
+    CreateAndSendMessage ( PROTMESSID_POLY_IN_CAPS, data );
 }
 
-bool CProtocol::EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData )
+bool CProtocol::EvaluatePolyInCapsMes ( const CVector<uint8_t>& vecData )
 {
-    if ( !MultiSourceProtocol::DecodeCaps ( vecData ) )
+    if ( !PolyInProtocol::DecodeCaps ( vecData ) )
         return true; // return error code
-    emit MultiSourceCapsReceived();
+    emit PolyInCapsReceived();
     return false; // no error
 }
 
-void CProtocol::CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config )
+void CProtocol::CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config )
 {
     CVector<uint8_t> data;
-    if ( MultiSourceProtocol::EncodeConfig ( config, data ) )
-        CreateAndSendMessage ( PROTMESSID_MULTISOURCE_CONFIG, data );
+    if ( PolyInProtocol::EncodeConfig ( config, data ) )
+        CreateAndSendMessage ( PROTMESSID_POLY_IN_CONFIG, data );
 }
 
-bool CProtocol::EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData )
+bool CProtocol::EvaluatePolyInConfigMes ( const CVector<uint8_t>& vecData )
 {
-    CVector<CMultiSourceSourceConfig> config;
-    if ( !MultiSourceProtocol::DecodeConfig ( vecData, config ) )
+    CVector<CPolyInSourceConfig> config;
+    if ( !PolyInProtocol::DecodeConfig ( vecData, config ) )
         return true; // return error code
-    emit MultiSourceConfigReceived ( config );
+    emit PolyInConfigReceived ( config );
     return false; // no error
 }
 
-void CProtocol::CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept )
+void CProtocol::CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept )
 {
     CVector<uint8_t> data;
-    if ( MultiSourceProtocol::EncodeAccept ( accept, data ) )
-        CreateAndSendMessage ( PROTMESSID_MULTISOURCE_ACCEPT, data );
+    if ( PolyInProtocol::EncodeAccept ( accept, data ) )
+        CreateAndSendMessage ( PROTMESSID_POLY_IN_ACCEPT, data );
 }
 
-bool CProtocol::EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData )
+bool CProtocol::EvaluatePolyInAcceptMes ( const CVector<uint8_t>& vecData )
 {
-    CMultiSourceAcceptMap accept;
-    if ( !MultiSourceProtocol::DecodeAccept ( vecData, accept ) )
+    CPolyInAcceptMap accept;
+    if ( !PolyInProtocol::DecodeAccept ( vecData, accept ) )
         return true; // return error code
-    emit MultiSourceAcceptReceived ( accept );
+    emit PolyInAcceptReceived ( accept );
     return false; // no error
 }
 
-void CProtocol::CreateMultiSourceRejectMes ( const uint8_t reason )
+void CProtocol::CreatePolyInRejectMes ( const uint8_t reason )
 {
     CVector<uint8_t> data;
-    MultiSourceProtocol::EncodeReject ( reason, data );
-    CreateAndSendMessage ( PROTMESSID_MULTISOURCE_REJECT, data );
+    PolyInProtocol::EncodeReject ( reason, data );
+    CreateAndSendMessage ( PROTMESSID_POLY_IN_REJECT, data );
 }
 
-bool CProtocol::EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData )
+bool CProtocol::EvaluatePolyInRejectMes ( const CVector<uint8_t>& vecData )
 {
     uint8_t reason = 0;
-    if ( !MultiSourceProtocol::DecodeReject ( vecData, reason ) )
+    if ( !PolyInProtocol::DecodeReject ( vecData, reason ) )
         return true; // return error code
-    emit MultiSourceRejected ( reason );
+    emit PolyInRejected ( reason );
     return false; // no error
 }
 
-void CProtocol::CreateMultiSourceActiveMes ( const uint16_t generation )
+void CProtocol::CreatePolyInActiveMes ( const uint16_t generation )
 {
     CVector<uint8_t> data;
-    if ( MultiSourceProtocol::EncodeActive ( generation, data ) )
-        CreateAndSendMessage ( PROTMESSID_MULTISOURCE_ACTIVE, data );
+    if ( PolyInProtocol::EncodeActive ( generation, data ) )
+        CreateAndSendMessage ( PROTMESSID_POLY_IN_ACTIVE, data );
 }
 
-bool CProtocol::EvaluateMultiSourceActiveMes ( const CVector<uint8_t>& vecData )
+bool CProtocol::EvaluatePolyInActiveMes ( const CVector<uint8_t>& vecData )
 {
     uint16_t generation = 0;
-    if ( !MultiSourceProtocol::DecodeActive ( vecData, generation ) )
+    if ( !PolyInProtocol::DecodeActive ( vecData, generation ) )
         return true; // return error code
-    emit MultiSourceActive ( generation );
+    emit PolyInActive ( generation );
     return false; // no error
 }
 
