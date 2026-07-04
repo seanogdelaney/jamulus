@@ -61,7 +61,7 @@
 #include "signalhandler.h"
 #include "socket.h"
 #include "channel.h"
-#include "multisource.h"
+#include "polyin.h"
 #include "util.h"
 #include "serverlogging.h"
 #include "serverlist.h"
@@ -122,13 +122,13 @@ public:
         eState           = SS_FREE;
         iParentSessionID = INVALID_INDEX;
         bLegacy          = false;
-        Config           = CMultiSourceSourceConfig();
+        Config           = CPolyInSourceConfig();
         iFadeInCnt       = 0;
         iFadeInCntMax    = 1;
         SignalLevelMeter.Reset();
     }
 
-    void Reserve ( const int parentSessionID, const CMultiSourceSourceConfig& config, const bool legacy, const int fadeInCntMax )
+    void Reserve ( const int parentSessionID, const CPolyInSourceConfig& config, const bool legacy, const int fadeInCntMax )
     {
         eState           = SS_RESERVED;
         iParentSessionID = parentSessionID;
@@ -143,13 +143,13 @@ public:
         eState     = SS_ACTIVE;
         iFadeInCnt = 0;
     }
-    bool                            IsAllocated() const { return eState != SS_FREE; }
-    bool                            IsActive() const { return eState == SS_ACTIVE; }
-    bool                            IsReserved() const { return eState == SS_RESERVED; }
-    bool                            IsLegacy() const { return bLegacy; }
-    int                             ParentSessionID() const { return iParentSessionID; }
-    const CMultiSourceSourceConfig& GetConfig() const { return Config; }
-    CMultiSourceSourceConfig&       GetConfig() { return Config; }
+    bool                       IsAllocated() const { return eState != SS_FREE; }
+    bool                       IsActive() const { return eState == SS_ACTIVE; }
+    bool                       IsReserved() const { return eState == SS_RESERVED; }
+    bool                       IsLegacy() const { return bLegacy; }
+    int                        ParentSessionID() const { return iParentSessionID; }
+    const CPolyInSourceConfig& GetConfig() const { return Config; }
+    CPolyInSourceConfig&       GetConfig() { return Config; }
 
     float FadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
     void  AdvanceFade()
@@ -175,13 +175,13 @@ public:
     }
 
 private:
-    EState                   eState           = SS_FREE;
-    int                      iParentSessionID = INVALID_INDEX;
-    bool                     bLegacy          = false;
-    CMultiSourceSourceConfig Config;
-    int                      iFadeInCnt    = 0;
-    int                      iFadeInCntMax = 1;
-    CStereoSignalLevelMeter  SignalLevelMeter;
+    EState                  eState           = SS_FREE;
+    int                     iParentSessionID = INVALID_INDEX;
+    bool                    bLegacy          = false;
+    CPolyInSourceConfig     Config;
+    int                     iFadeInCnt    = 0;
+    int                     iFadeInCntMax = 1;
+    CStereoSignalLevelMeter SignalLevelMeter;
 };
 
 class CServerSessionState
@@ -198,40 +198,40 @@ public:
 
     void Reset()
     {
-        eState                    = ST_LEGACY;
-        iLegacySourceID           = INVALID_INDEX;
-        iNumSources               = 0;
-        iGeneration               = 0;
-        bHaveNextSequence         = false;
-        iNextSequence             = 0;
-        iFirstSequence            = 0;
-        bIngressPrimed            = false;
-        iIngressTargetFrames      = DEF_NET_BUF_SIZE_NUM_BL;
-        bIngressAuto              = false;
-        bAdvancedHalfFramePending = false;
-        bPromotionQueued          = false;
-        iPromotionFirstSequence   = 0;
+        eState                  = ST_LEGACY;
+        iLegacySourceID         = INVALID_INDEX;
+        iNumSources             = 0;
+        iGeneration             = 0;
+        bHaveNextSequence       = false;
+        iNextSequence           = 0;
+        iFirstSequence          = 0;
+        bIngressPrimed          = false;
+        iIngressTargetFrames    = DEF_NET_BUF_SIZE_NUM_BL;
+        bIngressAuto            = false;
+        bPolyInHalfFramePending = false;
+        bPromotionQueued        = false;
+        iPromotionFirstSequence = 0;
         Ingress.Reset();
     }
 
     EState       eState          = ST_LEGACY;
     int          iLegacySourceID = INVALID_INDEX;
     CVector<int> vecSourceIDs; // reserved while prepared; active after first frame
-    int          iNumSources               = 0;
-    uint16_t     iGeneration               = 0;
-    bool         bHaveNextSequence         = false;
-    uint32_t     iNextSequence             = 0;
-    uint32_t     iFirstSequence            = 0;
-    bool         bIngressPrimed            = false;
-    int          iIngressTargetFrames      = DEF_NET_BUF_SIZE_NUM_BL;
-    bool         bIngressAuto              = false;
-    bool         bAdvancedHalfFramePending = false;
+    int          iNumSources             = 0;
+    uint16_t     iGeneration             = 0;
+    bool         bHaveNextSequence       = false;
+    uint32_t     iNextSequence           = 0;
+    uint32_t     iFirstSequence          = 0;
+    bool         bIngressPrimed          = false;
+    int          iIngressTargetFrames    = DEF_NET_BUF_SIZE_NUM_BL;
+    bool         bIngressAuto            = false;
+    bool         bPolyInHalfFramePending = false;
     // The first multiplexed packet is received in the high-priority socket
     // thread.  Promotion, protocol messages and recorder/UI signals must be
     // deferred to CServer's QObject thread.
-    bool                        bPromotionQueued        = false;
-    uint32_t                    iPromotionFirstSequence = 0;
-    MultiSource::SessionIngress Ingress;
+    bool                   bPromotionQueued        = false;
+    uint32_t               iPromotionFirstSequence = 0;
+    PolyIn::SessionIngress Ingress;
 };
 
 class CServer : public QObject, public CServerSlots<MAX_NUM_CHANNELS>
@@ -347,16 +347,16 @@ protected:
     int                   FindChannel ( const CHostAddress& checkAddr, const bool bAllowNew = false );
     void                  InitChannel ( const int iNewSessionID, const CHostAddress& inetAddr );
     void                  FreeChannel ( const int iCurSessionID );
-    int                   AllocateSource ( const int parentSessionID, const CMultiSourceSourceConfig& config, const bool legacy, const bool active );
+    int                   AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& config, const bool legacy, const bool active );
     void                  FreeSource ( const int sourceID );
     void                  FreeAllSourcesForSession ( const int sessionID );
     CChannelCoreInfo      GetSourceInfo ( const int sourceID ) const;
     int                   GetLegacySourceID ( const int sessionID ) const;
-    bool                  PrepareAdvancedSources ( const int sessionID, const CVector<CMultiSourceSourceConfig>& config, uint8_t& rejectReason );
-    bool                  PutAdvancedAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );
+    bool                  PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason );
+    bool                  PutPolyInAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );
     bool                  ActivatePreparedSources ( const int sessionID, const uint16_t generation, const uint32_t firstSequence );
-    void                  OnReqMultiSourceCaps ( const int sessionID );
-    void                  OnMultiSourceConfig ( const int sessionID, CVector<CMultiSourceSourceConfig> config );
+    void                  OnReqPolyInCaps ( const int sessionID );
+    void                  OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config );
     void                  DumpChannels ( const QString& title );
     CVector<CChannelInfo> CreateChannelList();
 
@@ -381,12 +381,12 @@ protected:
     void DecodeReceiveData ( const int sourceIndex, const int numSources );
 
     void MixEncodeTransmitData ( const int sessionIndex, const int numSources );
-    bool ReadAdvancedFrame ( const int sessionID, const int blockIndex );
-    bool SetAdvancedIngressTarget ( int sessionID, int numFrames );
-    void UpdateAdvancedIngressAutoPolicy ( int sessionID );
+    bool ReadPolyInFrame ( const int sessionID, const int blockIndex );
+    bool SetPolyInIngressTarget ( int sessionID, int numFrames );
+    void UpdatePolyInIngressAutoPolicy ( int sessionID );
     void OnSessionJitterPolicyChanged ( int sessionID, int numFrames, bool bAuto );
-    void QueueAdvancedPromotion ( int sessionID, uint32_t firstSequence );
-    void QueueAdvancedJitterReport ( int sessionID, int numFrames );
+    void QueuePolyInPromotion ( int sessionID, uint32_t firstSequence );
+    void QueuePolyInJitterReport ( int sessionID, int numFrames );
 
     virtual void customEvent ( QEvent* pEvent );
 
@@ -452,7 +452,7 @@ protected:
     CVector<CVector<int16_t>> vecvecsSendData;
     CVector<CVector<float>>   vecvecfIntermediateProcBuf;
     CVector<CVector<uint8_t>> vecvecbyCodedData;
-    // Advanced ingress is stored by actual visible source ID so a session frame
+    // Poly-in ingress is stored by actual visible source ID so a session frame
     // can be decoded once and consumed by several faders without a second jitter buffer.
     CVector<CVector<uint8_t>> vecSourceIngressPayload;
     CVector<uint8_t>          vecSourceIngressPresent; // [source id * 2 + codec-frame block]

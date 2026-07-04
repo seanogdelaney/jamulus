@@ -52,7 +52,7 @@
 #include <list>
 #include <cmath>
 #include "global.h"
-#include "multisource.h"
+#include "polyin.h"
 #include "util.h"
 
 /* Definitions ****************************************************************/
@@ -86,12 +86,12 @@
 #define PROTMESSID_REQ_SPLIT_MESS_SUPPORT   34 // request support for split messages
 #define PROTMESSID_SPLIT_MESS_SUPPORTED     35 // split messages are supported
 #define PROTMESSID_RAWAUDIO_SUPPORTED       36 // raw (uncompressed) audio is supported
-#define PROTMESSID_REQ_MULTISOURCE_CAPS     37 // request Advanced multi-source capability
-#define PROTMESSID_MULTISOURCE_CAPS         38 // Advanced multi-source capability response
-#define PROTMESSID_MULTISOURCE_CONFIG       39 // Advanced source descriptors (split-capable)
-#define PROTMESSID_MULTISOURCE_ACCEPT       40 // accepted source/fader map and generation
-#define PROTMESSID_MULTISOURCE_REJECT       41 // rejected Advanced configuration
-#define PROTMESSID_MULTISOURCE_ACTIVE       42 // Advanced source map committed after first audio frame
+#define PROTMESSID_REQ_POLY_IN_CAPS         37 // request Poly-in capability
+#define PROTMESSID_POLY_IN_CAPS             38 // Poly-in capability response
+#define PROTMESSID_POLY_IN_CONFIG           39 // Poly-in source descriptors (split-capable)
+#define PROTMESSID_POLY_IN_ACCEPT           40 // accepted source/fader map and generation
+#define PROTMESSID_POLY_IN_REJECT           41 // rejected Poly-in configuration
+#define PROTMESSID_POLY_IN_ACTIVE           42 // Poly-in source map committed after first audio frame
 
 // message IDs of connection less messages (CLM)
 // DEFINITION -> start at 1000, end at 1999, see IsConnectionLessMessageID
@@ -160,12 +160,12 @@ public:
     void CreateReqSplitMessSupportMes();
     void CreateSplitMessSupportedMes();
     void CreateRawAudioSupportedMes();
-    void CreateReqMultiSourceCapsMes();
-    void CreateMultiSourceCapsMes();
-    void CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config );
-    void CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept );
-    void CreateMultiSourceRejectMes ( uint8_t reason );
-    void CreateMultiSourceActiveMes ( uint16_t generation );
+    void CreateReqPolyInCapsMes();
+    void CreatePolyInCapsMes();
+    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config );
+    void CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept );
+    void CreatePolyInRejectMes ( uint8_t reason );
+    void CreatePolyInActiveMes ( uint16_t generation );
     void CreateLicenceRequiredMes ( const ELicenceType eLicenceType );
     void CreateOpusSupportedMes();
 
@@ -310,12 +310,12 @@ protected:
     bool EvaluateReqSplitMessSupportMes();
     bool EvaluateSplitMessSupportedMes();
     bool EvaluateRawAudioSupportedMes();
-    bool EvaluateReqMultiSourceCapsMes();
-    bool EvaluateMultiSourceCapsMes ( const CVector<uint8_t>& vecData );
-    bool EvaluateMultiSourceConfigMes ( const CVector<uint8_t>& vecData );
-    bool EvaluateMultiSourceAcceptMes ( const CVector<uint8_t>& vecData );
-    bool EvaluateMultiSourceRejectMes ( const CVector<uint8_t>& vecData );
-    bool EvaluateMultiSourceActiveMes ( const CVector<uint8_t>& vecData );
+    bool EvaluateReqPolyInCapsMes();
+    bool EvaluatePolyInCapsMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInConfigMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInAcceptMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInRejectMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInActiveMes ( const CVector<uint8_t>& vecData );
     bool EvaluateLicenceRequiredMes ( const CVector<uint8_t>& vecData );
     bool EvaluateVersionAndOSMes ( const CVector<uint8_t>& vecData );
     bool EvaluateRecorderStateMes ( const CVector<uint8_t>& vecData );
@@ -382,12 +382,12 @@ signals:
     void ReqSplitMessSupport();
     void SplitMessSupported();
     void RawAudioSupported();
-    void ReqMultiSourceCaps();
-    void MultiSourceCapsReceived();
-    void MultiSourceConfigReceived ( CVector<CMultiSourceSourceConfig> config );
-    void MultiSourceAcceptReceived ( CMultiSourceAcceptMap accept );
-    void MultiSourceRejected ( uint8_t reason );
-    void MultiSourceActive ( int generation );
+    void ReqPolyInCaps();
+    void PolyInCapsReceived();
+    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config );
+    void PolyInAcceptReceived ( CPolyInAcceptMap accept );
+    void PolyInRejected ( uint8_t reason );
+    void PolyInActive ( int generation );
     // Emitted after a queued reliable protocol frame has actually been handed
     // to the socket. Split fragments retain their original logical message ID.
     void ReliableMessageSent ( int logicalMessageID );

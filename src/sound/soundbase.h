@@ -110,7 +110,7 @@ public:
     }
 
     virtual int     GetNumInputChannels() { return 2; }
-    virtual bool    SupportsAdvancedCapture() const { return false; }
+    virtual bool    SupportsPolyInCapture() const { return false; }
     virtual QString GetInputChannelName ( const int ) { return "Default"; }
     virtual void    SetLeftInputChannel ( const int ) {}
     virtual void    SetRightInputChannel ( const int ) {}
@@ -137,7 +137,7 @@ public:
 
     /**
      * Complete input capture for the current callback.  The legacy callback
-     * buffer remains stereo because it is also the output buffer; advanced
+     * buffer remains stereo because it is also the output buffer; Poly-in
      * routing reads this capture before that buffer is overwritten by the
      * return mix.
      */

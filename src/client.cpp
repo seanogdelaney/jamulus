@@ -71,12 +71,12 @@ CClient::CClient ( const quint16  iPortNumber,
     eAudioQuality ( AQ_NORMAL ),
     eAudioChannelConf ( CC_MONO ),
     eLegacyAudioChannelConf ( CC_MONO ),
-    iAdvancedSourceCount ( 0 ),
-    iAdvancedFrameSequence ( 0 ),
+    iPolyInSourceCount ( 0 ),
+    iPolyInFrameSequence ( 0 ),
     bOwnedServerFaderIDs(),
-    strAdvancedStatus ( "Advanced inactive" ),
-    eAdvancedDeadline ( EAdvancedDeadline::None ),
-    bAdvancedRoutingLocked ( false ),
+    strPolyInStatus ( "Poly-in inactive" ),
+    ePolyInDeadline ( EPolyInDeadline::None ),
+    bPolyInRoutingLocked ( false ),
     iNumAudioChannels ( 1 ),
     bIsInitializationPhase ( true ),
     bMuteOutStream ( false ),
@@ -166,12 +166,12 @@ CClient::CClient ( const quint16  iPortNumber,
 
     QObject::connect ( &Channel, &CChannel::ClientIDReceived, this, &CClient::OnClientIDReceived );
 
-    QObject::connect ( &Channel, &CChannel::MultiSourceCapsReceived, this, &CClient::OnMultiSourceCaps );
-    QObject::connect ( &Channel, &CChannel::SplitMessageSupported, this, &CClient::OnAdvancedSplitMessageSupported );
-    QObject::connect ( &Channel, &CChannel::MultiSourceAcceptReceived, this, &CClient::OnMultiSourceAccept );
-    QObject::connect ( &Channel, &CChannel::MultiSourceRejected, this, &CClient::OnMultiSourceReject );
-    QObject::connect ( &Channel, &CChannel::MultiSourceActive, this, &CClient::OnMultiSourceActive );
-    QObject::connect ( &Channel, &CChannel::ReliableMessageSent, this, &CClient::OnAdvancedReliableMessageSent );
+    QObject::connect ( &Channel, &CChannel::PolyInCapsReceived, this, &CClient::OnPolyInCaps );
+    QObject::connect ( &Channel, &CChannel::SplitMessageSupported, this, &CClient::OnPolyInSplitMessageSupported );
+    QObject::connect ( &Channel, &CChannel::PolyInAcceptReceived, this, &CClient::OnPolyInAccept );
+    QObject::connect ( &Channel, &CChannel::PolyInRejected, this, &CClient::OnPolyInReject );
+    QObject::connect ( &Channel, &CChannel::PolyInActive, this, &CClient::OnPolyInActive );
+    QObject::connect ( &Channel, &CChannel::ReliableMessageSent, this, &CClient::OnPolyInReliableMessageSent );
 
     QObject::connect ( &Channel, &CChannel::RawAudioSupported, this, &CClient::OnRawAudioSupported );
 
@@ -227,8 +227,8 @@ CClient::CClient ( const quint16  iPortNumber,
     TimerGainOrPan.setSingleShot ( true );
 
     QObject::connect ( &TimerGainOrPan, &QTimer::timeout, this, &CClient::OnTimerRemoteChanGainOrPan );
-    TimerAdvancedNegotiation.setSingleShot ( true );
-    QObject::connect ( &TimerAdvancedNegotiation, &QTimer::timeout, this, &CClient::OnAdvancedNegotiationTimeout );
+    TimerPolyInNegotiation.setSingleShot ( true );
+    QObject::connect ( &TimerPolyInNegotiation, &QTimer::timeout, this, &CClient::OnPolyInNegotiationTimeout );
 
     // start the socket (it is important to start the socket after all
     // initializations and connections)
@@ -266,7 +266,7 @@ CClient::~CClient()
         Sound.Stop();
     }
 
-    DestroyAdvancedSources();
+    DestroyPolyInSources();
 
     // free audio encoders and decoders
     opus_custom_encoder_destroy ( OpusEncoderMono );
@@ -348,9 +348,9 @@ void CClient::OnNewConnection()
     Channel.CreateReqChannelLevelListMes();
     //### TODO: END ###//
 
-    // Advanced owns the split handshake and only requests its semantic
+    // Poly-in owns the split handshake and only requests its semantic
     // capability after the split response has actually arrived.
-    BeginAdvancedNegotiation();
+    BeginPolyInNegotiation();
 }
 
 void CClient::OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted )
@@ -547,11 +547,11 @@ void CClient::SetRemoteChanGain ( const int iId, const float fGain, const bool b
 
     CClientChannel* clientChan = &clientChannels[iId];
 
-    // In Advanced mode, Mute Myself monitors each owned source directly. Keep
+    // In Poly-in mode, Mute Myself monitors each owned source directly. Keep
     // its gain independent from every other owned fader. The legacy path has
     // only one uplink, so it intentionally retains the shared gain.
-    const bool bAdvancedOwnFader = SetAdvancedLocalMonitorGain ( clientChan->iServerChannelID, fGain );
-    if ( bIsMyOwnFader && !bAdvancedOwnFader )
+    const bool bPolyInOwnFader = SetPolyInLocalMonitorGain ( clientChan->iServerChannelID, fGain );
+    if ( bIsMyOwnFader && !bPolyInOwnFader )
     {
         fMuteOutStreamGain = fGain;
     }
@@ -637,9 +637,9 @@ void CClient::SetRemoteChanPan ( const int iId, const float fPan )
 
     CClientChannel* clientChan = &clientChannels[iId];
 
-    // Pan does not identify an own fader explicitly, but only an Advanced
+    // Pan does not identify an own fader explicitly, but only a Poly-in
     // source can match a configured owned server fader ID.
-    SetAdvancedLocalMonitorPan ( clientChan->iServerChannelID, fPan );
+    SetPolyInLocalMonitorPan ( clientChan->iServerChannelID, fPan );
 
     if ( TimerGainOrPan.isActive() )
     {
@@ -705,17 +705,17 @@ bool CClient::GetAndResetbJitterBufferOKFlag()
 
 int CClient::GetUploadRateKbps()
 {
-    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.CanSendAdvanced() || iAdvancedSourceCount == 0 )
+    if ( eAudioChannelConf != CC_POLY_IN || !PolyInNegotiation.CanSendPolyIn() || iPolyInSourceCount == 0 )
         return Channel.GetUploadRateKbps();
 
-    std::array<uint16_t, MultiSource::kMaxSourceRows> payloadLengths{};
-    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
-        payloadLengths[static_cast<size_t> ( sourceIndex )] = AdvancedSources[sourceIndex].Config.iPayloadBytes;
+    std::array<uint16_t, PolyIn::kMaxSourceRows> payloadLengths{};
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+        payloadLengths[static_cast<size_t> ( sourceIndex )] = PolyInSources[sourceIndex].Config.iPayloadBytes;
 
-    const int estimatedRate = MultiSource::EstimateUploadRateKbps ( payloadLengths.data(),
-                                                                    static_cast<size_t> ( iAdvancedSourceCount ),
-                                                                    iOPUSFrameSizeSamples,
-                                                                    SYSTEM_SAMPLE_RATE_HZ );
+    const int estimatedRate = PolyIn::EstimateUploadRateKbps ( payloadLengths.data(),
+                                                               static_cast<size_t> ( iPolyInSourceCount ),
+                                                               iOPUSFrameSizeSamples,
+                                                               SYSTEM_SAMPLE_RATE_HZ );
     return estimatedRate > 0 ? estimatedRate : Channel.GetUploadRateKbps();
 }
 
@@ -724,7 +724,7 @@ void CClient::SetSndCrdPrefFrameSizeFactor ( const int iNewFactor )
     // first check new input parameter
     if ( ( iNewFactor == FRAME_SIZE_FACTOR_PREFERRED ) || ( iNewFactor == FRAME_SIZE_FACTOR_DEFAULT ) || ( iNewFactor == FRAME_SIZE_FACTOR_SAFE ) )
     {
-        if ( iNewFactor != iSndCrdPrefFrameSizeFactor && RejectAdvancedAudioReinitialization ( tr ( "the audio buffer size" ) ) )
+        if ( iNewFactor != iSndCrdPrefFrameSizeFactor && RejectPolyInAudioReinitialization ( tr ( "the audio buffer size" ) ) )
             return;
         // init with new parameter, if client was running then first
         // stop it and restart again after new initialization
@@ -750,9 +750,9 @@ void CClient::SetSndCrdPrefFrameSizeFactor ( const int iNewFactor )
 
 void CClient::SetEnableOPUS64 ( const bool eNEnableOPUS64 )
 {
-    if ( IsAdvancedRoutingLocked() && eNEnableOPUS64 != bEnableOPUS64 )
+    if ( IsPolyInRoutingLocked() && eNEnableOPUS64 != bEnableOPUS64 )
     {
-        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
         return;
     }
 
@@ -776,9 +776,9 @@ void CClient::SetEnableOPUS64 ( const bool eNEnableOPUS64 )
 
 void CClient::SetAudioQuality ( const EAudioQuality eNAudioQuality )
 {
-    if ( IsAdvancedRoutingLocked() && eNAudioQuality != eAudioQuality )
+    if ( IsPolyInRoutingLocked() && eNAudioQuality != eAudioQuality )
     {
-        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
         return;
     }
 
@@ -802,10 +802,10 @@ void CClient::SetAudioQuality ( const EAudioQuality eNAudioQuality )
 
 void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
 {
-    if ( ( Channel.IsConnected() || bAdvancedRoutingLocked ) && eNAudChanConf != eAudioChannelConf &&
-         ( eAudioChannelConf == CC_ADVANCED || eNAudChanConf == CC_ADVANCED ) )
+    if ( ( Channel.IsConnected() || bPolyInRoutingLocked ) && eNAudChanConf != eAudioChannelConf &&
+         ( eAudioChannelConf == CC_POLY_IN || eNAudChanConf == CC_POLY_IN ) )
     {
-        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing the audio input mode." ) );
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing the audio input mode." ) );
         return;
     }
 
@@ -817,9 +817,9 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
         Sound.Stop();
     }
 
-    // Preserve the last normal input profile. Advanced is an uplink routing
+    // Preserve the last normal input profile. Poly-in is an uplink routing
     // mode and must not overwrite the established return/fallback profile.
-    if ( eNAudChanConf != CC_ADVANCED )
+    if ( eNAudChanConf != CC_POLY_IN )
         eLegacyAudioChannelConf = eNAudChanConf;
     eAudioChannelConf = eNAudChanConf;
     Init();
@@ -830,21 +830,21 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
     }
 }
 
-void CClient::SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConfig>& vecNewChannels )
+void CClient::SetPolyInAudioChannels ( const QVector<CPolyInAudioChannelConfig>& vecNewChannels )
 {
-    if ( Channel.IsConnected() || bAdvancedRoutingLocked )
+    if ( Channel.IsConnected() || bPolyInRoutingLocked )
     {
-        SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before editing source rows." ) );
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before editing source rows." ) );
         return;
     }
 
-    QVector<CAdvancedAudioChannelConfig>      checked;
+    QVector<CPolyInAudioChannelConfig>        checked;
     std::array<bool, MAX_NUM_IN_OUT_CHANNELS> usedInputs{};
 
-    for ( const CAdvancedAudioChannelConfig& route : vecNewChannels )
+    for ( const CPolyInAudioChannelConfig& route : vecNewChannels )
     {
         const QString tag = route.strFaderTag.trimmed();
-        if ( checked.size() >= static_cast<int> ( MultiSource::kMaxSourceRows ) || tag.isEmpty() || route.iInputChannel1 < 0 ||
+        if ( checked.size() >= static_cast<int> ( PolyIn::kMaxSourceRows ) || tag.isEmpty() || route.iInputChannel1 < 0 ||
              route.iInputChannel1 >= Sound.GetNumInputChannels() || route.iInputChannel1 >= MAX_NUM_IN_OUT_CHANNELS ||
              ( route.iInputChannel2 != INVALID_INDEX && ( route.iInputChannel2 < 0 || route.iInputChannel2 >= Sound.GetNumInputChannels() ||
                                                           route.iInputChannel2 >= MAX_NUM_IN_OUT_CHANNELS ) ) ||
@@ -854,11 +854,11 @@ void CClient::SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConf
             continue;
         }
         bool duplicateTag = false;
-        for ( const CAdvancedAudioChannelConfig& earlier : checked )
+        for ( const CPolyInAudioChannelConfig& earlier : checked )
             duplicateTag |= earlier.strFaderTag.trimmed() == tag;
         if ( duplicateTag )
             continue;
-        CAdvancedAudioChannelConfig normalised ( tag, route.iInstrument, route.iInputChannel1, route.iInputChannel2 );
+        CPolyInAudioChannelConfig normalised ( tag, route.iInstrument, route.iInputChannel1, route.iInputChannel2 );
         checked.append ( normalised );
         usedInputs[route.iInputChannel1] = true;
         if ( route.iInputChannel2 != INVALID_INDEX )
@@ -867,13 +867,13 @@ void CClient::SetAdvancedAudioChannels ( const QVector<CAdvancedAudioChannelConf
 
     if ( checked.isEmpty() )
     {
-        checked.append ( CAdvancedAudioChannelConfig ( tr ( "Vox" ), ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
+        checked.append ( CPolyInAudioChannelConfig ( tr ( "Vox" ), ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
     }
-    vecAdvancedAudioChannels = checked;
-    SetAudioChannels ( CC_ADVANCED );
+    vecPolyInAudioChannels = checked;
+    SetAudioChannels ( CC_POLY_IN );
 }
 
-int CClient::GetCodedBytesForAdvancedSource ( const int audioChannels, bool& raw ) const
+int CClient::GetCodedBytesForPolyInSource ( const int audioChannels, bool& raw ) const
 {
     raw = eAudioQuality == AQ_RAW && bRawAudioIsSupported;
     if ( raw )
@@ -910,45 +910,45 @@ int CClient::GetCodedBytesForAdvancedSource ( const int audioChannels, bool& raw
     return OPUS_NUM_BYTES_STEREO_HIGH_QUALITY;
 }
 
-void CClient::DestroyAdvancedSources()
+void CClient::DestroyPolyInSources()
 {
-    for ( size_t i = 0; i < MultiSource::kMaxSourceRows; ++i )
+    for ( size_t i = 0; i < PolyIn::kMaxSourceRows; ++i )
     {
-        if ( AdvancedSources[i].pEncoder != nullptr )
-            opus_custom_encoder_destroy ( AdvancedSources[i].pEncoder );
-        AdvancedSources[i] = CClientAdvancedSource();
+        if ( PolyInSources[i].pEncoder != nullptr )
+            opus_custom_encoder_destroy ( PolyInSources[i].pEncoder );
+        PolyInSources[i] = CClientPolyInSource();
     }
-    iAdvancedSourceCount = 0;
+    iPolyInSourceCount = 0;
 }
 
-void CClient::ConfigureAdvancedSources()
+void CClient::ConfigurePolyInSources()
 {
-    DestroyAdvancedSources();
-    if ( eAudioChannelConf != CC_ADVANCED )
+    DestroyPolyInSources();
+    if ( eAudioChannelConf != CC_POLY_IN )
         return;
 
     const int inputChannels = Sound.GetNumInputChannels();
-    for ( int i = 0; i < vecAdvancedAudioChannels.size() && i < static_cast<int> ( MultiSource::kMaxSourceRows ); ++i )
+    for ( int i = 0; i < vecPolyInAudioChannels.size() && i < static_cast<int> ( PolyIn::kMaxSourceRows ); ++i )
     {
-        const CAdvancedAudioChannelConfig& route = vecAdvancedAudioChannels[i];
+        const CPolyInAudioChannelConfig& route = vecPolyInAudioChannels[i];
         if ( route.strFaderTag.trimmed().isEmpty() || route.iInputChannel1 < 0 || route.iInputChannel1 >= inputChannels ||
              route.iInputChannel2 >= inputChannels || route.iInputChannel1 == route.iInputChannel2 )
         {
             continue;
         }
-        CClientAdvancedSource& source     = AdvancedSources[iAdvancedSourceCount];
-        const int              channels   = route.iInputChannel2 == INVALID_INDEX ? 1 : 2;
-        bool                   raw        = false;
-        const int              codedBytes = GetCodedBytesForAdvancedSource ( channels, raw );
-        source.Config.iKey                = static_cast<uint8_t> ( iAdvancedSourceCount + 1 );
-        source.Config.iNumChannels        = static_cast<uint8_t> ( channels );
-        source.Config.eCodec              = eAudioCompressionType;
-        source.Config.bRaw                = raw;
-        source.Config.iPayloadBytes       = static_cast<uint16_t> ( codedBytes );
-        source.Config.iInstrument         = route.iInstrument;
-        source.Config.strTag              = route.strFaderTag.trimmed();
-        source.iInputChannel1             = route.iInputChannel1;
-        source.iInputChannel2             = route.iInputChannel2;
+        CClientPolyInSource& source     = PolyInSources[iPolyInSourceCount];
+        const int            channels   = route.iInputChannel2 == INVALID_INDEX ? 1 : 2;
+        bool                 raw        = false;
+        const int            codedBytes = GetCodedBytesForPolyInSource ( channels, raw );
+        source.Config.iKey              = static_cast<uint8_t> ( iPolyInSourceCount + 1 );
+        source.Config.iNumChannels      = static_cast<uint8_t> ( channels );
+        source.Config.eCodec            = eAudioCompressionType;
+        source.Config.bRaw              = raw;
+        source.Config.iPayloadBytes     = static_cast<uint16_t> ( codedBytes );
+        source.Config.iInstrument       = route.iInstrument;
+        source.Config.strTag            = route.strFaderTag.trimmed();
+        source.iInputChannel1           = route.iInputChannel1;
+        source.iInputChannel2           = route.iInputChannel2;
         source.vecPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
         source.vecMutedPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
         source.vecCoded.Init ( codedBytes, 0 );
@@ -959,9 +959,9 @@ void CClient::ConfigureAdvancedSources()
             source.pEncoder                 = opus_custom_encoder_create ( mode, channels, &opusError );
             if ( opusError != OPUS_OK || source.pEncoder == nullptr )
             {
-                DestroyAdvancedSources();
-                strAdvancedStatus = tr ( "Advanced routing unavailable: cannot create source encoder." );
-                emit AdvancedStatusChanged ( strAdvancedStatus );
+                DestroyPolyInSources();
+                strPolyInStatus = tr ( "Poly-in unavailable: cannot create source encoder." );
+                emit PolyInStatusChanged ( strPolyInStatus );
                 return;
             }
             opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_VBR ( 0 ) );
@@ -973,26 +973,23 @@ void CClient::ConfigureAdvancedSources()
             else
                 opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
         }
-        ++iAdvancedSourceCount;
+        ++iPolyInSourceCount;
     }
-    iAdvancedFrameSequence = 0;
-    if ( iAdvancedSourceCount == 0 )
-        SetAdvancedStatus ( tr ( "Advanced routing unavailable: no valid source rows." ) );
+    iPolyInFrameSequence = 0;
+    if ( iPolyInSourceCount == 0 )
+        SetPolyInStatus ( tr ( "Poly-in unavailable: no valid source rows." ) );
     else
-        SetAdvancedStatus ( tr ( "Advanced routing will be used on the next connection." ) );
+        SetPolyInStatus ( tr ( "Poly-in will be used on the next connection." ) );
 }
 
-void CClient::BuildAdvancedSourceConfig()
+void CClient::BuildPolyInSourceConfig()
 {
-    // Kept as a named boundary for settings/device changes: ConfigureAdvancedSources
+    // Kept as a named boundary for settings/device changes: ConfigurePolyInSources
     // owns all allocation and codec creation outside the audio callback.
-    ConfigureAdvancedSources();
+    ConfigurePolyInSources();
 }
 
-void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource&  source,
-                                      const CVector<int16_t>& captured,
-                                      const int               captureChannels,
-                                      const int               frameOffset )
+void CClient::FillPolyInSourcePCM ( CClientPolyInSource& source, const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
 {
     const int channels = source.Config.iNumChannels;
     for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
@@ -1021,7 +1018,7 @@ void CClient::FillAdvancedSourcePCM ( CClientAdvancedSource&  source,
     }
 }
 
-void CClient::UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, const int captureChannels )
+void CClient::UpdatePolyInInputLevelMeter ( const CVector<int16_t>& captured, const int captureChannels )
 {
     const int frameCount = captureChannels > 0 ? std::min ( iMonoBlockSizeSam, captured.Size() / captureChannels ) : 0;
 
@@ -1046,12 +1043,12 @@ void CClient::UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, 
     double peakLeft  = 0.0;
     double peakRight = 0.0;
 
-    if ( iAdvancedSourceCount == 2 && AdvancedSources[0].Config.iNumChannels == 1 && AdvancedSources[1].Config.iNumChannels == 1 )
+    if ( iPolyInSourceCount == 2 && PolyInSources[0].Config.iNumChannels == 1 && PolyInSources[1].Config.iNumChannels == 1 )
     {
         // Two mono source rows are the natural analogue of ordinary stereo
         // capture: row one drives left and row two drives right.
-        peakLeft  = peakForInput ( AdvancedSources[0].iInputChannel1 );
-        peakRight = peakForInput ( AdvancedSources[1].iInputChannel1 );
+        peakLeft  = peakForInput ( PolyInSources[0].iInputChannel1 );
+        peakRight = peakForInput ( PolyInSources[1].iInputChannel1 );
     }
     else
     {
@@ -1060,10 +1057,10 @@ void CClient::UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, 
         // stereo rows contribute both split inputs. Show that peak on both
         // meter bars, rather than implying a left/right source assignment.
         double peak = 0.0;
-        for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+        for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
         {
-            const CClientAdvancedSource& source = AdvancedSources[sourceIndex];
-            peak                                = std::max ( peak, peakForInput ( source.iInputChannel1 ) );
+            const CClientPolyInSource& source = PolyInSources[sourceIndex];
+            peak                              = std::max ( peak, peakForInput ( source.iInputChannel1 ) );
             if ( source.Config.iNumChannels == 2 )
                 peak = std::max ( peak, peakForInput ( source.iInputChannel2 ) );
         }
@@ -1074,15 +1071,15 @@ void CClient::UpdateAdvancedInputLevelMeter ( const CVector<int16_t>& captured, 
     SignalLevelMeter.UpdatePeakLevels ( peakLeft, peakRight );
 }
 
-bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
+bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
 {
-    if ( !AdvancedNegotiation.CanSendAdvanced() || iAdvancedSourceCount == 0 || captureChannels <= 0 )
+    if ( !PolyInNegotiation.CanSendPolyIn() || iPolyInSourceCount == 0 || captureChannels <= 0 )
         return false;
-    std::array<MultiSource::RecordView, MultiSource::kMaxSourceRows> records{};
-    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+    std::array<PolyIn::RecordView, PolyIn::kMaxSourceRows> records{};
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
     {
-        CClientAdvancedSource& source = AdvancedSources[sourceIndex];
-        FillAdvancedSourcePCM ( source, captured, captureChannels, frameOffset );
+        CClientPolyInSource& source = PolyInSources[sourceIndex];
+        FillPolyInSourcePCM ( source, captured, captureChannels, frameOffset );
         // Mute Myself replaces only the network payload. Leave vecPCM intact
         // for direct local monitoring below, otherwise muted users cannot hear
         // their own capture at all.
@@ -1097,15 +1094,15 @@ bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int ca
         }
         records[sourceIndex] = { source.Config.iKey, &source.vecCoded[0], source.Config.iPayloadBytes };
     }
-    const MultiSource::Datagram* datagrams     = nullptr;
-    size_t                       datagramCount = 0;
-    if ( !AdvancedPacketizer.Packetize ( AdvancedNegotiation.Generation(),
-                                         iAdvancedFrameSequence++,
-                                         AdvancedSources[0].Config.bRaw,
-                                         records.data(),
-                                         static_cast<size_t> ( iAdvancedSourceCount ),
-                                         datagrams,
-                                         datagramCount ) )
+    const PolyIn::Datagram* datagrams     = nullptr;
+    size_t                  datagramCount = 0;
+    if ( !PolyInPacketizer.Packetize ( PolyInNegotiation.Generation(),
+                                       iPolyInFrameSequence++,
+                                       PolyInSources[0].Config.bRaw,
+                                       records.data(),
+                                       static_cast<size_t> ( iPolyInSourceCount ),
+                                       datagrams,
+                                       datagramCount ) )
     {
         return false;
     }
@@ -1116,18 +1113,18 @@ bool CClient::SendAdvancedFrame ( const CVector<int16_t>& captured, const int ca
         // resizes a CVector nor copies packet data.
         Socket.SendPacket ( datagrams[i].bytes.data(), static_cast<int> ( datagrams[i].length ), Channel.GetAddress() );
     }
-    AdvancedNegotiation.OnFirstAcceptedFrame ( AdvancedNegotiation.Generation() );
+    PolyInNegotiation.OnFirstAcceptedFrame ( PolyInNegotiation.Generation() );
     return true;
 }
 
-void CClient::BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, const int frameOffset )
+void CClient::BuildPolyInLocalMonitor ( CVector<int16_t>& localMonitor, const int frameOffset )
 {
-    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
     {
-        const CClientAdvancedSource& source    = AdvancedSources[sourceIndex];
-        const float                  gain      = source.fLocalMonitorGain;
-        const float                  gainLeft  = MathUtils::GetLeftPan ( source.fLocalMonitorPan, false ) * gain;
-        const float                  gainRight = MathUtils::GetRightPan ( source.fLocalMonitorPan, false ) * gain;
+        const CClientPolyInSource& source    = PolyInSources[sourceIndex];
+        const float                gain      = source.fLocalMonitorGain;
+        const float                gainLeft  = MathUtils::GetLeftPan ( source.fLocalMonitorPan, false ) * gain;
+        const float                gainRight = MathUtils::GetRightPan ( source.fLocalMonitorPan, false ) * gain;
         for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
         {
             const int out = 2 * ( frameOffset + frame );
@@ -1148,14 +1145,14 @@ void CClient::BuildAdvancedLocalMonitor ( CVector<int16_t>& localMonitor, const 
     }
 }
 
-bool CClient::SetAdvancedLocalMonitorGain ( const int serverFaderID, const float gain )
+bool CClient::SetPolyInLocalMonitorGain ( const int serverFaderID, const float gain )
 {
-    if ( eAudioChannelConf != CC_ADVANCED )
+    if ( eAudioChannelConf != CC_POLY_IN )
         return false;
 
-    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
     {
-        CClientAdvancedSource& source = AdvancedSources[sourceIndex];
+        CClientPolyInSource& source = PolyInSources[sourceIndex];
         if ( source.Config.iFaderID == serverFaderID )
         {
             source.fLocalMonitorGain = gain;
@@ -1165,14 +1162,14 @@ bool CClient::SetAdvancedLocalMonitorGain ( const int serverFaderID, const float
     return false;
 }
 
-bool CClient::SetAdvancedLocalMonitorPan ( const int serverFaderID, const float pan )
+bool CClient::SetPolyInLocalMonitorPan ( const int serverFaderID, const float pan )
 {
-    if ( eAudioChannelConf != CC_ADVANCED )
+    if ( eAudioChannelConf != CC_POLY_IN )
         return false;
 
-    for ( int sourceIndex = 0; sourceIndex < iAdvancedSourceCount; ++sourceIndex )
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
     {
-        CClientAdvancedSource& source = AdvancedSources[sourceIndex];
+        CClientPolyInSource& source = PolyInSources[sourceIndex];
         if ( source.Config.iFaderID == serverFaderID )
         {
             source.fLocalMonitorPan = pan;
@@ -1182,120 +1179,120 @@ bool CClient::SetAdvancedLocalMonitorPan ( const int serverFaderID, const float 
     return false;
 }
 
-bool CClient::RejectAdvancedAudioReinitialization ( const QString& setting )
+bool CClient::RejectPolyInAudioReinitialization ( const QString& setting )
 {
-    if ( !IsAdvancedRoutingLocked() )
+    if ( !IsPolyInRoutingLocked() )
         return false;
 
-    SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection. Disconnect before changing %1." ).arg ( setting ) );
+    SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing %1." ).arg ( setting ) );
     return true;
 }
 
-void CClient::SetAdvancedStatus ( const QString& status )
+void CClient::SetPolyInStatus ( const QString& status )
 {
-    strAdvancedStatus = status;
-    emit AdvancedStatusChanged ( strAdvancedStatus );
+    strPolyInStatus = status;
+    emit PolyInStatusChanged ( strPolyInStatus );
 }
 
-void CClient::StartAdvancedDeadline ( const EAdvancedDeadline deadline, const int timeoutMs )
+void CClient::StartPolyInDeadline ( const EPolyInDeadline deadline, const int timeoutMs )
 {
-    eAdvancedDeadline = deadline;
-    TimerAdvancedNegotiation.start ( timeoutMs );
+    ePolyInDeadline = deadline;
+    TimerPolyInNegotiation.start ( timeoutMs );
 }
 
-void CClient::StopAdvancedDeadline()
+void CClient::StopPolyInDeadline()
 {
-    TimerAdvancedNegotiation.stop();
-    eAdvancedDeadline = EAdvancedDeadline::None;
+    TimerPolyInNegotiation.stop();
+    ePolyInDeadline = EPolyInDeadline::None;
 }
 
-QString CClient::AdvancedRejectReason ( const uint8_t reason ) const
+QString CClient::PolyInRejectReason ( const uint8_t reason ) const
 {
     switch ( reason )
     {
-    case MultiSourceProtocol::kRejectMalformed:
+    case PolyInProtocol::kRejectMalformed:
         return tr ( "invalid source map" );
-    case MultiSourceProtocol::kRejectCapacity:
+    case PolyInProtocol::kRejectCapacity:
         return tr ( "server source capacity is exhausted" );
-    case MultiSourceProtocol::kRejectUnsupported:
+    case PolyInProtocol::kRejectUnsupported:
         return tr ( "the requested codec or Raw mode is unsupported" );
-    case MultiSourceProtocol::kRejectSplitMessageNotReady:
+    case PolyInProtocol::kRejectSplitMessageNotReady:
         return tr ( "split-message setup was incomplete" );
-    case MultiSourceProtocol::kRejectInvalidSessionState:
+    case PolyInProtocol::kRejectInvalidSessionState:
         return tr ( "the session was no longer in legacy startup" );
     default:
         return tr ( "an unspecified server policy rejected it" );
     }
 }
 
-void CClient::BeginAdvancedNegotiation()
+void CClient::BeginPolyInNegotiation()
 {
-    StopAdvancedDeadline();
-    AdvancedNegotiation.Reset();
+    StopPolyInDeadline();
+    PolyInNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
 
-    if ( eAudioChannelConf != CC_ADVANCED )
+    if ( eAudioChannelConf != CC_POLY_IN )
         return;
-    if ( !Sound.SupportsAdvancedCapture() )
+    if ( !Sound.SupportsPolyInCapture() )
     {
-        SetAdvancedStatus ( tr ( "Advanced routing is unavailable on this audio backend; using the saved legacy input mode." ) );
+        SetPolyInStatus ( tr ( "Poly-in is unavailable on this audio backend; using the saved legacy input mode." ) );
         return;
     }
-    if ( iAdvancedSourceCount == 0 )
+    if ( iPolyInSourceCount == 0 )
     {
-        SetAdvancedStatus ( tr ( "Advanced routing has no valid source rows; using the saved legacy input mode." ) );
+        SetPolyInStatus ( tr ( "Poly-in has no valid source rows; using the saved legacy input mode." ) );
         return;
     }
-    if ( !AdvancedNegotiation.Begin() )
+    if ( !PolyInNegotiation.Begin() )
         return;
 
     if ( Channel.IsSplitMessageSupported() )
     {
         // This normally cannot occur on a fresh connection because protocol
         // reset clears the bit. Keeping the branch makes reconnect/reuse safe.
-        if ( AdvancedNegotiation.OnSplitCapabilityReceived() )
+        if ( PolyInNegotiation.OnSplitCapabilityReceived() )
         {
-            SetAdvancedStatus ( tr ( "Advanced split-message capability is ready; requesting server support." ) );
-            Channel.CreateReqMultiSourceCapsMes();
+            SetPolyInStatus ( tr ( "Poly-in split-message capability is ready; requesting server support." ) );
+            Channel.CreateReqPolyInCapsMes();
         }
         return;
     }
 
-    SetAdvancedStatus ( tr ( "Advanced routing is fixed for this connection; preparing split-message capability." ) );
+    SetPolyInStatus ( tr ( "Poly-in is fixed for this connection; preparing split-message capability." ) );
     Channel.CreateReqSplitMessSupportMes();
 }
 
-void CClient::OnAdvancedReliableMessageSent ( const int logicalMessageID )
+void CClient::OnPolyInReliableMessageSent ( const int logicalMessageID )
 {
-    if ( eAudioChannelConf != CC_ADVANCED )
+    if ( eAudioChannelConf != CC_POLY_IN )
         return;
 
     switch ( logicalMessageID )
     {
     case PROTMESSID_REQ_SPLIT_MESS_SUPPORT:
-        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingSplitCapability && eAdvancedDeadline == EAdvancedDeadline::None )
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingSplitCapability && ePolyInDeadline == EPolyInDeadline::None )
         {
-            SetAdvancedStatus ( tr ( "Waiting for split-message capability before Advanced negotiation." ) );
-            StartAdvancedDeadline ( EAdvancedDeadline::SplitCapability, 3000 );
+            SetPolyInStatus ( tr ( "Waiting for split-message capability before Poly-in negotiation." ) );
+            StartPolyInDeadline ( EPolyInDeadline::SplitCapability, 3000 );
         }
         break;
 
-    case PROTMESSID_REQ_MULTISOURCE_CAPS:
-        if ( AdvancedNegotiation.OnCapabilityRequestSent() )
+    case PROTMESSID_REQ_POLY_IN_CAPS:
+        if ( PolyInNegotiation.OnCapabilityRequestSent() )
         {
-            SetAdvancedStatus ( tr ( "Advanced capability request sent; waiting for the server's semantic response." ) );
-            StartAdvancedDeadline ( EAdvancedDeadline::CapabilityResponse, 3000 );
+            SetPolyInStatus ( tr ( "Poly-in capability request sent; waiting for the server's semantic response." ) );
+            StartPolyInDeadline ( EPolyInDeadline::CapabilityResponse, 3000 );
         }
         break;
 
-    case PROTMESSID_MULTISOURCE_CONFIG:
-        if ( AdvancedNegotiation.OnConfigurationRequestSent() )
+    case PROTMESSID_POLY_IN_CONFIG:
+        if ( PolyInNegotiation.OnConfigurationRequestSent() )
         {
             // A full 64-row map can comprise several ACK-gated split packets.
             // This begins at the first packet actually sent, not when the map
             // was merely appended behind ordinary connection traffic.
-            SetAdvancedStatus ( tr ( "Advanced source configuration sent; waiting for server acceptance." ) );
-            StartAdvancedDeadline ( EAdvancedDeadline::ConfigurationResponse, 8000 );
+            SetPolyInStatus ( tr ( "Poly-in source configuration sent; waiting for server acceptance." ) );
+            StartPolyInDeadline ( EPolyInDeadline::ConfigurationResponse, 8000 );
         }
         break;
 
@@ -1304,45 +1301,45 @@ void CClient::OnAdvancedReliableMessageSent ( const int logicalMessageID )
     }
 }
 
-void CClient::OnMultiSourceCaps()
+void CClient::OnPolyInCaps()
 {
-    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.OnCapabilityResponse ( MultiSource::kVersion ) )
+    if ( eAudioChannelConf != CC_POLY_IN || !PolyInNegotiation.OnCapabilityResponse ( PolyIn::kVersion ) )
         return;
 
-    StopAdvancedDeadline();
-    SetAdvancedStatus ( tr ( "Advanced server capability confirmed; queuing the fixed source map." ) );
-    SendAdvancedConfigIfReady();
+    StopPolyInDeadline();
+    SetPolyInStatus ( tr ( "Poly-in server capability confirmed; queuing the fixed source map." ) );
+    SendPolyInConfigIfReady();
 }
 
-void CClient::OnAdvancedSplitMessageSupported()
+void CClient::OnPolyInSplitMessageSupported()
 {
-    if ( eAudioChannelConf != CC_ADVANCED || !AdvancedNegotiation.OnSplitCapabilityReceived() )
+    if ( eAudioChannelConf != CC_POLY_IN || !PolyInNegotiation.OnSplitCapabilityReceived() )
         return;
 
-    StopAdvancedDeadline();
-    SetAdvancedStatus ( tr ( "Advanced split-message capability confirmed; requesting server support." ) );
-    Channel.CreateReqMultiSourceCapsMes();
+    StopPolyInDeadline();
+    SetPolyInStatus ( tr ( "Poly-in split-message capability confirmed; requesting server support." ) );
+    Channel.CreateReqPolyInCapsMes();
 }
 
-void CClient::SendAdvancedConfigIfReady()
+void CClient::SendPolyInConfigIfReady()
 {
-    if ( eAudioChannelConf != CC_ADVANCED || AdvancedNegotiation.State() != MultiSource::NegotiationState::ConfigurationQueued )
+    if ( eAudioChannelConf != CC_POLY_IN || PolyInNegotiation.State() != PolyIn::NegotiationState::ConfigurationQueued )
         return;
 
-    CVector<CMultiSourceSourceConfig> config;
-    config.Init ( iAdvancedSourceCount );
-    for ( int i = 0; i < iAdvancedSourceCount; ++i )
-        config[i] = AdvancedSources[i].Config;
+    CVector<CPolyInSourceConfig> config;
+    config.Init ( iPolyInSourceCount );
+    for ( int i = 0; i < iPolyInSourceCount; ++i )
+        config[i] = PolyInSources[i].Config;
 
-    Channel.CreateMultiSourceConfigMes ( config );
-    SetAdvancedStatus ( tr ( "Advanced source configuration queued behind connection setup." ) );
+    Channel.CreatePolyInConfigMes ( config );
+    SetPolyInStatus ( tr ( "Poly-in source configuration queued behind connection setup." ) );
 }
 
-void CClient::SetOwnedSourceIDs ( const CVector<CMultiSourceSourceConfig>& sourceMap )
+void CClient::SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap )
 {
     bOwnedServerFaderIDs.fill ( false );
     CVector<int> clientIDs;
-    for ( const CMultiSourceSourceConfig& mapped : sourceMap )
+    for ( const CPolyInSourceConfig& mapped : sourceMap )
     {
         if ( mapped.iFaderID >= 0 && mapped.iFaderID < MAX_NUM_CHANNELS )
         {
@@ -1360,127 +1357,126 @@ bool CClient::IsOwnedServerFader ( const int serverFaderID ) const
     return serverFaderID >= 0 && serverFaderID < MAX_NUM_CHANNELS && bOwnedServerFaderIDs[serverFaderID];
 }
 
-void CClient::OnMultiSourceAccept ( CMultiSourceAcceptMap accept )
+void CClient::OnPolyInAccept ( CPolyInAcceptMap accept )
 {
-    if ( eAudioChannelConf != CC_ADVANCED )
+    if ( eAudioChannelConf != CC_POLY_IN )
         return;
 
     // Validate the complete ordinary-fader map before publishing a sendable
     // generation to the audio callback.
-    if ( accept.vecSources.Size() != iAdvancedSourceCount )
+    if ( accept.vecSources.Size() != iPolyInSourceCount )
     {
-        AdvancedNegotiation.OnReject();
-        StopAdvancedDeadline();
-        SetAdvancedStatus ( tr ( "Server returned an invalid Advanced source map; using legacy input." ) );
+        PolyInNegotiation.OnReject();
+        StopPolyInDeadline();
+        SetPolyInStatus ( tr ( "Server returned an invalid Poly-in source map; using legacy input." ) );
         return;
     }
     for ( int i = 0; i < accept.vecSources.Size(); ++i )
     {
-        if ( accept.vecSources[i].iKey != AdvancedSources[i].Config.iKey )
+        if ( accept.vecSources[i].iKey != PolyInSources[i].Config.iKey )
         {
-            AdvancedNegotiation.OnReject();
-            StopAdvancedDeadline();
-            SetAdvancedStatus ( tr ( "Server returned a mismatched Advanced source map; using legacy input." ) );
+            PolyInNegotiation.OnReject();
+            StopPolyInDeadline();
+            SetPolyInStatus ( tr ( "Server returned a mismatched Poly-in source map; using legacy input." ) );
             return;
         }
     }
-    if ( !AdvancedNegotiation.OnAccept ( accept.iGeneration ) )
+    if ( !PolyInNegotiation.OnAccept ( accept.iGeneration ) )
         return;
 
-    StopAdvancedDeadline();
+    StopPolyInDeadline();
     for ( int i = 0; i < accept.vecSources.Size(); ++i )
-        AdvancedSources[i].Config.iFaderID = accept.vecSources[i].iFaderID;
+        PolyInSources[i].Config.iFaderID = accept.vecSources[i].iFaderID;
     SetOwnedSourceIDs ( accept.vecSources );
 
     // The audio callback now starts multiplexed frames at the next codec
     // boundary. Until the server acknowledges activation, no source map is
     // claimed active in the user-facing status.
-    SetAdvancedStatus ( tr ( "Advanced source map accepted; waiting for the first codec frame." ) );
-    StartAdvancedDeadline ( EAdvancedDeadline::Activation, 3000 );
+    SetPolyInStatus ( tr ( "Poly-in source map accepted; waiting for the first codec frame." ) );
+    StartPolyInDeadline ( EPolyInDeadline::Activation, 3000 );
 }
 
-void CClient::OnMultiSourceReject ( const uint8_t reason )
+void CClient::OnPolyInReject ( const uint8_t reason )
 {
-    if ( eAudioChannelConf != CC_ADVANCED )
+    if ( eAudioChannelConf != CC_POLY_IN )
         return;
 
-    StopAdvancedDeadline();
-    AdvancedNegotiation.OnReject();
-    SetAdvancedStatus (
-        tr ( "Server declined Advanced multi-source routing (%1); using the saved legacy input mode." ).arg ( AdvancedRejectReason ( reason ) ) );
+    StopPolyInDeadline();
+    PolyInNegotiation.OnReject();
+    SetPolyInStatus ( tr ( "Server declined Poly-in (%1); using the saved legacy input mode." ).arg ( PolyInRejectReason ( reason ) ) );
 }
 
-void CClient::OnMultiSourceActive ( const int generation )
+void CClient::OnPolyInActive ( const int generation )
 {
-    if ( eAudioChannelConf != CC_ADVANCED || generation < 1 || generation > 0xffff ||
-         !AdvancedNegotiation.OnActivation ( static_cast<uint16_t> ( generation ) ) )
+    if ( eAudioChannelConf != CC_POLY_IN || generation < 1 || generation > 0xffff ||
+         !PolyInNegotiation.OnActivation ( static_cast<uint16_t> ( generation ) ) )
     {
         return;
     }
 
-    StopAdvancedDeadline();
-    SetAdvancedStatus ( tr ( "Advanced multi-source routing is active (%1 source faders)." ).arg ( iAdvancedSourceCount ) );
+    StopPolyInDeadline();
+    SetPolyInStatus ( tr ( "Poly-in is active (%1 source faders)." ).arg ( iPolyInSourceCount ) );
 }
 
-void CClient::OnAdvancedNegotiationTimeout()
+void CClient::OnPolyInNegotiationTimeout()
 {
-    const EAdvancedDeadline deadline = eAdvancedDeadline;
-    eAdvancedDeadline                = EAdvancedDeadline::None;
+    const EPolyInDeadline deadline = ePolyInDeadline;
+    ePolyInDeadline                = EPolyInDeadline::None;
 
     switch ( deadline )
     {
-    case EAdvancedDeadline::SplitCapability:
-        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingSplitCapability )
+    case EPolyInDeadline::SplitCapability:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingSplitCapability )
         {
-            AdvancedNegotiation.OnTimeout();
-            SetAdvancedStatus ( tr ( "Server did not confirm split-message capability; using the saved legacy input mode." ) );
+            PolyInNegotiation.OnTimeout();
+            SetPolyInStatus ( tr ( "Server did not confirm split-message capability; using the saved legacy input mode." ) );
         }
         break;
 
-    case EAdvancedDeadline::CapabilityResponse:
-        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingCapabilityResponse )
+    case EPolyInDeadline::CapabilityResponse:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingCapabilityResponse )
         {
-            AdvancedNegotiation.OnTimeout();
+            PolyInNegotiation.OnTimeout();
             // An old server may ACK the unknown probe. Only its dedicated
-            // MULTISOURCE_CAPS response is affirmative evidence.
-            SetAdvancedStatus ( tr ( "Server did not return Advanced capability support; using the saved legacy input mode." ) );
+            // POLY_IN_CAPS response is affirmative evidence.
+            SetPolyInStatus ( tr ( "Server did not return Poly-in capability support; using the saved legacy input mode." ) );
         }
         break;
 
-    case EAdvancedDeadline::ConfigurationResponse:
-        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::AwaitingConfigurationResponse )
+    case EPolyInDeadline::ConfigurationResponse:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingConfigurationResponse )
         {
-            AdvancedNegotiation.OnTimeout();
-            SetAdvancedStatus ( tr ( "Server did not accept the Advanced source map; using the saved legacy input mode." ) );
+            PolyInNegotiation.OnTimeout();
+            SetPolyInStatus ( tr ( "Server did not accept the Poly-in source map; using the saved legacy input mode." ) );
         }
         break;
 
-    case EAdvancedDeadline::Activation:
-        if ( AdvancedNegotiation.State() == MultiSource::NegotiationState::Prepared )
+    case EPolyInDeadline::Activation:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::Prepared )
         {
-            // No advanced packet was produced, so remaining in legacy mode is
+            // No Poly-in packet was produced, so remaining in legacy mode is
             // safe: the server has not promoted the hidden map.
-            AdvancedNegotiation.OnTimeout();
-            SetAdvancedStatus ( tr ( "Advanced source map was accepted but no codec frame was produced; using legacy input." ) );
+            PolyInNegotiation.OnTimeout();
+            SetPolyInStatus ( tr ( "Poly-in source map was accepted but no codec frame was produced; using legacy input." ) );
         }
-        else if ( AdvancedNegotiation.IsAwaitingActivation() )
+        else if ( PolyInNegotiation.IsAwaitingActivation() )
         {
             // Preserve compatibility with a server from the initial
-            // multi-source patch which has already promoted on the first frame
-            // but does not yet send MULTISOURCE_ACTIVE. Never revert to legacy
-            // after advanced datagrams have begun.
-            SetAdvancedStatus ( tr ( "Advanced audio is being sent, but the server has not confirmed source-map activation." ) );
+            // Poly-in implementation which has already promoted on the first frame
+            // but does not yet send POLY_IN_ACTIVE. Never revert to legacy
+            // after Poly-in datagrams have begun.
+            SetPolyInStatus ( tr ( "Poly-in audio is being sent, but the server has not confirmed source-map activation." ) );
         }
         break;
 
-    case EAdvancedDeadline::None:
+    case EPolyInDeadline::None:
         break;
     }
 }
 
 void CClient::OpenSndCrdDriverSetup()
 {
-    if ( RejectAdvancedAudioReinitialization ( tr ( "audio device settings" ) ) )
+    if ( RejectPolyInAudioReinitialization ( tr ( "audio device settings" ) ) )
         return;
 
     Sound.OpenDriverSetup();
@@ -1488,7 +1484,7 @@ void CClient::OpenSndCrdDriverSetup()
 
 QString CClient::SetSndCrdDev ( const QString strNewDev )
 {
-    if ( strNewDev != Sound.GetDev() && RejectAdvancedAudioReinitialization ( tr ( "the audio device" ) ) )
+    if ( strNewDev != Sound.GetDev() && RejectPolyInAudioReinitialization ( tr ( "the audio device" ) ) )
         return QString();
     // if client was running then first
     // stop it and restart again after new initialization
@@ -1521,7 +1517,7 @@ QString CClient::SetSndCrdDev ( const QString strNewDev )
 
 void CClient::SetSndCrdLeftInputChannel ( const int iNewChan )
 {
-    if ( RejectAdvancedAudioReinitialization ( tr ( "the input channel selection" ) ) )
+    if ( RejectPolyInAudioReinitialization ( tr ( "the input channel selection" ) ) )
         return;
 
     // if client was running then first
@@ -1544,7 +1540,7 @@ void CClient::SetSndCrdLeftInputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdRightInputChannel ( const int iNewChan )
 {
-    if ( RejectAdvancedAudioReinitialization ( tr ( "the input channel selection" ) ) )
+    if ( RejectPolyInAudioReinitialization ( tr ( "the input channel selection" ) ) )
         return;
 
     // if client was running then first
@@ -1567,7 +1563,7 @@ void CClient::SetSndCrdRightInputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdLeftOutputChannel ( const int iNewChan )
 {
-    if ( RejectAdvancedAudioReinitialization ( tr ( "the output channel selection" ) ) )
+    if ( RejectPolyInAudioReinitialization ( tr ( "the output channel selection" ) ) )
         return;
 
     // if client was running then first
@@ -1590,7 +1586,7 @@ void CClient::SetSndCrdLeftOutputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 {
-    if ( RejectAdvancedAudioReinitialization ( tr ( "the output channel selection" ) ) )
+    if ( RejectPolyInAudioReinitialization ( tr ( "the output channel selection" ) ) )
         return;
 
     // if client was running then first
@@ -1613,21 +1609,21 @@ void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 
 void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
 {
-    QString strError            = "";
-    bool    bAdvancedDisconnect = false;
+    QString strError          = "";
+    bool    bPolyInDisconnect = false;
 
     // Audio device notifications can come at any time and they are in a
     // different thread, therefore we need a mutex here.
     MutexDriverReinit.lock();
     {
         // The source descriptors, encoders and sequence number are immutable
-        // for one Advanced session. A device/backend reset recreates those
+        // for one Poly-in session. A device/backend reset recreates those
         // objects, so preserve the contract by ending the session rather than
         // silently restarting it with a new encoder state.
-        if ( IsAdvancedRoutingLocked() )
+        if ( IsPolyInRoutingLocked() )
         {
             Stop();
-            bAdvancedDisconnect = true;
+            bPolyInDisconnect = true;
         }
         else
         {
@@ -1662,9 +1658,9 @@ void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
     }
     MutexDriverReinit.unlock();
 
-    if ( bAdvancedDisconnect )
+    if ( bPolyInDisconnect )
     {
-        SetAdvancedStatus ( tr ( "Audio device reinitialized; Advanced routing was disconnected. Reconnect to resume." ) );
+        SetPolyInStatus ( tr ( "Audio device reinitialized; Poly-in was disconnected. Reconnect to resume." ) );
         emit Disconnected();
     }
 
@@ -1773,7 +1769,7 @@ void CClient::OnClientIDReceived ( int iServerChanID )
     // allocate and map client-side channel 0
     int iChanID = FindClientChannel ( iServerChanID, true ); // should always return channel 0
 
-    // A legacy session starts with one owned fader. Advanced acceptance later
+    // A legacy session starts with one owned fader. Poly-in acceptance later
     // replaces this set atomically with every source fader ID.
     bOwnedServerFaderIDs.fill ( false );
     if ( iServerChanID >= 0 && iServerChanID < MAX_NUM_CHANNELS )
@@ -1794,12 +1790,12 @@ void CClient::OnRawAudioSupported()
 {
     if ( !bRawAudioIsSupported )
     {
-        if ( IsAdvancedRoutingLocked() && AdvancedNegotiation.CanSendAdvanced() )
+        if ( IsPolyInRoutingLocked() && PolyInNegotiation.CanSendPolyIn() )
         {
             // Establish the changed capability on a fresh connection rather
             // than resetting source encoders and frame sequence in place.
             Stop();
-            SetAdvancedStatus ( tr ( "Server audio capability changed; Advanced routing was disconnected. Reconnect to resume." ) );
+            SetPolyInStatus ( tr ( "Server audio capability changed; Poly-in was disconnected. Reconnect to resume." ) );
             emit Disconnected();
             return;
         }
@@ -1822,10 +1818,10 @@ void CClient::OnRawAudioSupported()
 
 void CClient::Start()
 {
-    // Advanced source descriptors, codec choice and routing are a
+    // Poly-in source descriptors, codec choice and routing are a
     // connection-time contract. Lock them before audio/socket startup, not
     // only after the server has answered the first protocol message.
-    bAdvancedRoutingLocked = eAudioChannelConf == CC_ADVANCED;
+    bPolyInRoutingLocked = eAudioChannelConf == CC_POLY_IN;
 
     // init object
     Init();
@@ -1852,11 +1848,11 @@ void CClient::Stop()
 
     // disable channel
     Channel.SetEnable ( false );
-    bAdvancedRoutingLocked = false;
-    StopAdvancedDeadline();
-    AdvancedNegotiation.Reset();
+    bPolyInRoutingLocked = false;
+    StopPolyInDeadline();
+    PolyInNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
-    SetAdvancedStatus ( "Advanced inactive" );
+    SetPolyInStatus ( "Poly-in inactive" );
 
     // Fall back to opus in case raw was used
     bRawAudioIsSupported = false;
@@ -1895,9 +1891,9 @@ void CClient::Stop()
 
 void CClient::Init()
 {
-    // Advanced changes only the uplink.  Keep this legacy shape as the stable
+    // Poly-in changes only the uplink.  Keep this legacy shape as the stable
     // return-mix/fallback CNetworkTransportProps profile throughout promotion.
-    const EAudChanConf eTransportChannelConf = eAudioChannelConf == CC_ADVANCED ? eLegacyAudioChannelConf : eAudioChannelConf;
+    const EAudChanConf eTransportChannelConf = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
 
     // check if possible frame size factors are supported
     const int iFraSizePreffered = SYSTEM_FRAME_SIZE_SAMPLES * FRAME_SIZE_FACTOR_PREFERRED;
@@ -2151,9 +2147,9 @@ void CClient::Init()
     // set the channel network properties
     Channel.SetAudioStreamProperties ( eAudioCompressionType, iCeltNumCodedBytes, iSndCrdFrameSizeFactor, iNumAudioChannels );
 
-    // Allocate and configure all Advanced source-local codec/PCM state here,
+    // Allocate and configure all Poly-in source-local codec/PCM state here,
     // never in the callback. The return channel above deliberately remains legacy.
-    ConfigureAdvancedSources();
+    ConfigurePolyInSources();
 
     // init reverberation
     AudioReverb.Init ( eTransportChannelConf, iStereoBlockSizeSam, SYSTEM_SAMPLE_RATE_HZ );
@@ -2220,7 +2216,7 @@ void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
         else
         {
             // Unsupported drivers retain a stable legacy stereo fallback. This
-            // branch is never used after Advanced capability is advertised.
+            // branch is never used after Poly-in capability is advertised.
             const int available = qMin ( expectedCaptureSamples, vecCapturedInputFallback.Size() );
             vecCapturedInputFallback.Reset ( 0 );
             for ( int frame = 0; frame < callbackFrames && 2 * frame + 1 < vecsStereoSndCrd.Size(); ++frame )
@@ -2262,38 +2258,38 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     int            iUnused       = 0;
     unsigned char* pCurCodedData = nullptr;
 
-    const EAudChanConf      eInputProfile   = eAudioChannelConf == CC_ADVANCED ? eLegacyAudioChannelConf : eAudioChannelConf;
+    const EAudChanConf      eInputProfile   = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
     const CVector<int16_t>& captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
     const int               captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
-    const bool              advancedActive =
-        eAudioChannelConf == CC_ADVANCED && AdvancedNegotiation.CanSendAdvanced() && Sound.SupportsAdvancedCapture() && iAdvancedSourceCount > 0;
+    const bool              polyInActive =
+        eAudioChannelConf == CC_POLY_IN && PolyInNegotiation.CanSendPolyIn() && Sound.SupportsPolyInCapture() && iPolyInSourceCount > 0;
 
     // Transmit signal ---------------------------------------------------------
-    if ( advancedActive )
+    if ( polyInActive )
     {
         if ( bMuteOutStream )
             vecsStereoSndCrdMuteStream.Reset ( 0 );
         for ( i = 0; i < iSndCrdFrameSizeFactor; ++i )
         {
             const int frameOffset = i * iOPUSFrameSizeSamples;
-            if ( !SendAdvancedFrame ( captured, captureChannels, frameOffset ) )
+            if ( !SendPolyInFrame ( captured, captureChannels, frameOffset ) )
             {
                 // An unprepared/stale state must fail closed to ordinary legacy
                 // transport rather than sending an unrecognised audio datagram.
-                AdvancedNegotiation.OnTimeout();
+                PolyInNegotiation.OnTimeout();
                 break;
             }
             if ( bMuteOutStream )
-                BuildAdvancedLocalMonitor ( vecsStereoSndCrdMuteStream, frameOffset );
+                BuildPolyInLocalMonitor ( vecsStereoSndCrdMuteStream, frameOffset );
         }
 #ifndef HEADLESS
-        UpdateAdvancedInputLevelMeter ( captured, captureChannels );
+        UpdatePolyInInputLevelMeter ( captured, captureChannels );
 #endif
     }
     else
     {
         // Legacy profile remains active until explicit semantic capability and
-        // acceptance. Advanced never chooses an arbitrary row as fallback.
+        // acceptance. Poly-in never chooses an arbitrary row as fallback.
         if ( iInputBoost != 1 )
         {
             for ( i = 0, j = 0; i < iMonoBlockSizeSam; i++, j += 2 )
@@ -2361,7 +2357,7 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
 
     // Receive signal ----------------------------------------------------------
     // in case of mute stream, store local data
-    if ( bMuteOutStream && !advancedActive )
+    if ( bMuteOutStream && !polyInActive )
     {
         vecsStereoSndCrdMuteStream = vecsStereoSndCrd;
     }
@@ -2413,10 +2409,10 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     // for muted stream we have to add our local data here
     if ( bMuteOutStream )
     {
-        // BuildAdvancedLocalMonitor() already applies one gain/pan pair per
+        // BuildPolyInLocalMonitor() already applies one gain/pan pair per
         // source. The legacy single-stream path still applies its shared own
         // fader gain here.
-        const float localMonitorGain = advancedActive ? 1.0f : fMuteOutStreamGain;
+        const float localMonitorGain = polyInActive ? 1.0f : fMuteOutStreamGain;
         for ( i = 0; i < iStereoBlockSizeSam; i++ )
         {
             vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * localMonitorGain );

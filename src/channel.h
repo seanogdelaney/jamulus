@@ -102,13 +102,13 @@ public:
     bool IsConnected() const { return iConTimeOut > 0; }
     void Disconnect();
 
-    // Server-side Advanced sessions do not call GetData(), so they need an
+    // Server-side Poly-in sessions do not call GetData(), so they need an
     // explicit one-per-session timeout tick. The caller owns the CServer
     // session mutex and performs the full teardown if this returns true.
     bool AdvanceTimeOutCounter ( int iNumSamples );
 
-    // Advanced uplink bypasses PutAudioData(). Advance the same physical
-    // session join fade once for each accepted logical Advanced frame.
+    // Poly-in uplink bypasses PutAudioData(). Advance the same physical
+    // session join fade once for each accepted logical Poly-in frame.
     void AdvanceFadeInCounter();
 
     // Reset every per-endpoint state which must not survive a server slot reuse.
@@ -187,12 +187,12 @@ public:
     }
     void CreateClientIDMes ( const int iChanID ) { Protocol.CreateClientIDMes ( iChanID ); }
     void CreateRawAudioSupportedMes() { Protocol.CreateRawAudioSupportedMes(); }
-    void CreateReqMultiSourceCapsMes() { Protocol.CreateReqMultiSourceCapsMes(); }
-    void CreateMultiSourceCapsMes() { Protocol.CreateMultiSourceCapsMes(); }
-    void CreateMultiSourceConfigMes ( const CVector<CMultiSourceSourceConfig>& config ) { Protocol.CreateMultiSourceConfigMes ( config ); }
-    void CreateMultiSourceAcceptMes ( const CMultiSourceAcceptMap& accept ) { Protocol.CreateMultiSourceAcceptMes ( accept ); }
-    void CreateMultiSourceRejectMes ( uint8_t reason ) { Protocol.CreateMultiSourceRejectMes ( reason ); }
-    void CreateMultiSourceActiveMes ( uint16_t generation ) { Protocol.CreateMultiSourceActiveMes ( generation ); }
+    void CreateReqPolyInCapsMes() { Protocol.CreateReqPolyInCapsMes(); }
+    void CreatePolyInCapsMes() { Protocol.CreatePolyInCapsMes(); }
+    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config ) { Protocol.CreatePolyInConfigMes ( config ); }
+    void CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept ) { Protocol.CreatePolyInAcceptMes ( accept ); }
+    void CreatePolyInRejectMes ( uint8_t reason ) { Protocol.CreatePolyInRejectMes ( reason ); }
+    void CreatePolyInActiveMes ( uint16_t generation ) { Protocol.CreatePolyInActiveMes ( generation ); }
     void CreateReqNetwTranspPropsMes() { Protocol.CreateReqNetwTranspPropsMes(); }
     void CreateReqSplitMessSupportMes() { Protocol.CreateReqSplitMessSupportMes(); }
     void CreateReqJitBufMes() { Protocol.CreateReqJitBufMes(); }
@@ -320,12 +320,12 @@ signals:
     void ClientIDReceived ( int iChanID );
     void RawAudioSupported();
     void SplitMessageSupported();
-    void ReqMultiSourceCaps();
-    void MultiSourceCapsReceived();
-    void MultiSourceConfigReceived ( CVector<CMultiSourceSourceConfig> config );
-    void MultiSourceAcceptReceived ( CMultiSourceAcceptMap accept );
-    void MultiSourceRejected ( uint8_t reason );
-    void MultiSourceActive ( int generation );
+    void ReqPolyInCaps();
+    void PolyInCapsReceived();
+    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config );
+    void PolyInAcceptReceived ( CPolyInAcceptMap accept );
+    void PolyInRejected ( uint8_t reason );
+    void PolyInActive ( int generation );
     void ReliableMessageSent ( int logicalMessageID );
     void MuteStateHasChanged ( int iChanID, bool bIsMuted );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );

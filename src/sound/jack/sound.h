@@ -108,8 +108,8 @@ public:
     virtual void Start();
     virtual void Stop();
 
-    virtual float       GetInOutLatencyMs() { return fInOutLatencyMs; }
-    virtual bool        SupportsAdvancedCapture() const override { return true; }
+    virtual float GetInOutLatencyMs() { return fInOutLatencyMs; }
+    virtual bool  SupportsPolyInCapture() const override { return true; }
 
     virtual int         GetNumInputChannels() override { return iNumInputChannels; }
     virtual QString     GetInputChannelName ( const int iChannel ) override { return QString ( "Input %1" ).arg ( iChannel + 1 ); }

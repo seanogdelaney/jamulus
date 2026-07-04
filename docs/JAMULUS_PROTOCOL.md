@@ -223,82 +223,317 @@ Both client and server use a jitter buffer for received audio data to prevent au
 
 ---
 
-## Advanced multi-source session extension (version 1)
+## Poly-in session extension (version 1)
 
-This optional extension is used only after a client has started an ordinary
-legacy session and has received a semantic capability reply. It does **not**
-change legacy audio packets or reinterpret generic protocol acknowledgements.
-A generic ACK for an unknown message is insufficient evidence of support.
+This section is normative for the optional extension called **Poly-in** in
+[POLY_IN.md](POLY_IN.md). The implementation's client UI calls the same feature
+**Poly-in routing**.
 
-### Capability and promotion
+The extension transports several independently mixable upstream sources through
+one ordinary Jamulus client/server session. It adds reliable control messages
+and a separate upstream audio-datagram format. It does **not** alter legacy
+audio packets, the existing return transport, or legacy client/server startup.
 
-The new reliable message identifiers are:
+The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**
+and **MAY** in this section are to be interpreted as normative requirements.
 
-| Message | Direction | Body |
-|---|---|---|
-| `REQ_MULTISOURCE_CAPS` | Advanced client → server | empty |
-| `MULTISOURCE_CAPS` | server → Advanced client | extension version, maximum supported source rows |
-| `MULTISOURCE_CONFIG` | client → server | versioned, split-message-capable source descriptors |
-| `MULTISOURCE_ACCEPT` | server → client | configuration generation and local-key → ordinary fader-ID map |
-| `MULTISOURCE_REJECT` | server → client | version and rejection reason |
-| `MULTISOURCE_ACTIVE` | server → client | version and accepted generation, sent after the first valid Advanced audio frame commits the source map |
+### Interoperability rules
 
-`MULTISOURCE_CONFIG` is sent only after the existing split-message capability
-has been negotiated. A server sends `MULTISOURCE_CAPS` only after it has
-completed that prerequisite itself, so the semantic response means both
-“feature supported” and “configuration may now be sent”. Each descriptor
-contains a session-local key, 1/2 input channels, codec (`CT_OPUS` or
-`CT_OPUS64`), session Raw flag, exact fixed payload size, instrument icon, and
-UTF-8 tag. Sources in a configuration share codec family and Raw policy.
+- A Poly-in client MUST begin as an ordinary legacy client and MUST continue
+  ordinary legacy upload until it has received `POLY_IN_ACCEPT`.
+- A server MUST NOT probe or reinterpret a legacy client. An old client never
+  sends `REQ_POLY_IN_CAPS` and therefore remains legacy.
+- A generic acknowledgement of an unknown reliable message is **not** evidence
+  of Poly-in support. Only `POLY_IN_CAPS` is affirmative capability
+  evidence.
+- `POLY_IN_CAPS` is meaningful only after the existing split-message
+  prerequisite has completed. A supporting server sends it only when it is
+  ready to receive a split-capable configuration.
+- A client MUST begin the timeout for each control stage only after the
+  corresponding logical request has actually left the ACK-gated reliable
+  message queue. Queuing the request is not sufficient.
+- A timeout, missing semantic capability reply or rejection MUST leave the
+  legacy session usable. A client MUST NOT transmit Poly-in UDP audio before
+  receiving a valid `POLY_IN_ACCEPT`.
+- Once Poly-in audio is active, both sides MUST reject or ignore data for a
+  stale configuration generation. Changing source routing requires a new
+  connection in version 1.
 
-The client keeps transmitting ordinary legacy upload packets until it receives
-`MULTISOURCE_ACCEPT`. At the next codec-frame boundary it transmits advanced
-fragments with the accepted generation. The server reserves source faders
-without exposing them, then promotes atomically on the first valid advanced
-fragment and returns `MULTISOURCE_ACTIVE` for that generation. `ACCEPT` is the
-permission to start Advanced uplink; `ACTIVE` is only the later confirmation
-that the temporary legacy fader has been replaced. Old servers do not send
-`MULTISOURCE_CAPS`, so a timeout leaves the legacy session unchanged.
+### Message identifiers
 
-The client starts each negotiation deadline only when the relevant logical
-request has actually left the ACK-gated reliable-message FIFO. It never treats
-a generic ACK as a capability response. The client emits stage-specific status
-for split capability, capability response, configuration acceptance, and first
-frame activation; this makes an old/refusing server distinguishable from a
-queued or malformed startup exchange.
+The reliable-message IDs are defined in `src/protocol.h`.
 
-### UDP uplink fragment
+| ID | Message | Direction | Meaning |
+| ---: | --- | --- | --- |
+| 37 | `REQ_POLY_IN_CAPS` | client → server | Request semantic Poly-in capability. Body is empty. |
+| 38 | `POLY_IN_CAPS` | server → client | Extension version and maximum source rows. |
+| 39 | `POLY_IN_CONFIG` | client → server | Versioned source descriptors; may use existing split-message support. |
+| 40 | `POLY_IN_ACCEPT` | server → client | Accepted generation and local-source-key to visible-fader map. |
+| 41 | `POLY_IN_REJECT` | server → client | Version and rejection reason. |
+| 42 | `POLY_IN_ACTIVE` | server → client | Confirmation that first valid Poly-in audio committed the map. |
 
-Advanced uplink audio is a non-protocol UDP datagram; its non-zero magic means
-it cannot be mistaken for a protocol frame (whose tag is two zero bytes). All
-multi-byte fields are big-endian/network byte order.
+The bodies below use unsigned integer fields. Every multi-byte integer in this
+extension is big-endian/network byte order. `u8`, `u16` and `u32` mean an
+unsigned 8-, 16- and 32-bit integer respectively.
 
+### Reliable control bodies
+
+#### `REQ_POLY_IN_CAPS`
+
+The body is empty.
+
+A server receives this request only after ordinary client connection startup.
+It MUST send `POLY_IN_CAPS` only if the session is connected and the
+existing split-message capability is already known. A server that cannot make
+that promise MAY remain silent; a client then falls back to legacy operation.
+
+#### `POLY_IN_CAPS`
+
+```text
+0  u8  version       1
+1  u8  max rows      1..64
 ```
-0   u16  magic       0x4d53 ("MS")
+
+A version-1 receiver accepts this body only when it has exactly two bytes,
+`version == 1`, and `max rows` is in `1..64`.
+
+#### `POLY_IN_CONFIG`
+
+```text
+0  u8  version       1
+1  u8  session flags bit 0 = Raw; bits 1..7 = 0
+2  u8  source count  1..64
+3  repeated source descriptor:
+     u8   local source key
+     u8   audio channels         1 = mono, 2 = stereo
+     u8   codec                  CT_OPUS or CT_OPUS64
+     u8   Raw                    0 or 1; MUST equal session flag bit 0
+     u16  payload bytes
+     u16  instrument
+     u8   UTF-8 tag byte length  1..63
+     u8[] UTF-8 tag
+```
+
+The body has no padding. Each descriptor consumes `9 + tag length` bytes.
+`source count` descriptors MUST consume the body exactly; trailing bytes are
+invalid.
+
+A version-1 implementation MUST reject a configuration unless all of the
+following hold:
+
+- source count is in `1..64`;
+- every local key is non-zero and unique within the configuration;
+- every source has one or two audio channels;
+- codec is `CT_OPUS` or `CT_OPUS64`;
+- all sources use the same codec and Raw policy;
+- each per-source Raw byte agrees with the session Raw bit;
+- tag bytes decode as a non-empty UTF-8 tag of at most 63 bytes, and tags are
+  unique after the implementation's trimmed tag comparison;
+- payload length is one of the exact fixed sizes permitted by codec, channel
+  count and Raw policy; and
+- sufficient source and physical-session capacity is available at the server.
+
+The accepted compressed payload sizes are fixed CBR Jamulus values:
+
+| Codec/frame size | Mono payload bytes | Stereo payload bytes |
+| --- | ---: | ---: |
+| `CT_OPUS` / 128 samples | 25, 45, 82 | 47, 71, 165 |
+| `CT_OPUS64` / 64 samples | 12, 22, 36 | 24, 35, 73 |
+
+For Raw, payload bytes MUST be `sizeof(int16_t) × audio channels × frame
+samples`: 256/512 bytes for mono/stereo `CT_OPUS`, and 128/256 bytes for
+mono/stereo `CT_OPUS64`.
+
+The instrument field is an ordinary Jamulus instrument value. It does not make
+a new participant identity: the server combines parent session profile
+information with the source tag and instrument when creating a visible source.
+
+#### `POLY_IN_ACCEPT`
+
+```text
+0  u8  version       1
+1  u16 generation    non-zero
+3  u8  source count  1..64
+4  repeated accepted source:
+     u8   local source key
+     u16  visible fader ID
+```
+
+The source count and key set MUST match the accepted configuration. Fader IDs
+are ordinary global visible mixer IDs and MUST be in the implementation's
+normal mixer range. A receiver rejects a body whose exact length is not
+`4 + 3 × source count`, whose generation is zero, or whose local keys are
+zero/duplicate.
+
+`POLY_IN_ACCEPT` reserves the source map and gives the client permission to
+start sending Poly-in upstream frames for `generation`. It does not yet mean
+that other clients can see the sources.
+
+#### `POLY_IN_REJECT`
+
+```text
+0  u8  version  1
+1  u8  reason
+```
+
+Defined version-1 reasons are:
+
+| Value | Name | Meaning |
+| ---: | --- | --- |
+| 1 | malformed | Configuration or state was invalid. |
+| 2 | capacity | Visible-source or physical-session capacity was insufficient. |
+| 3 | unsupported | Requested feature/policy is not available. |
+| 4 | split message not ready | The required existing split-message support was not complete. |
+| 5 | invalid session state | The session was not in a state that permits configuration. |
+
+A client receiving a syntactically valid reject MUST stop the pending Poly-in
+negotiation and retain/return to legacy upload for that connection.
+
+#### `POLY_IN_ACTIVE`
+
+```text
+0  u8  version     1
+1  u16 generation  non-zero
+```
+
+The server sends this only after receiving the first valid Poly-in audio frame
+for an accepted generation and atomically committing the visible source map.
+It is a confirmation, not permission to begin transmitting: permission was
+already given by `POLY_IN_ACCEPT`.
+
+### Negotiation and promotion sequence
+
+```text
+client                                            server
+  | ordinary legacy connection/startup              |
+  |------------------------------------------------>|
+  | REQ_POLY_IN_CAPS                            |
+  |------------------------------------------------>|
+  |                         POLY_IN_CAPS        |
+  |<------------------------------------------------|
+  | POLY_IN_CONFIG (may be split)               |
+  |------------------------------------------------>|
+  |                         POLY_IN_ACCEPT      |
+  |<------------------------------------------------|
+  | Poly-in UDP fragments for accepted generation  |
+  |------------------------------------------------>|
+  |                         atomically promote map  |
+  |                         POLY_IN_ACTIVE      |
+  |<------------------------------------------------|
+```
+
+Before `POLY_IN_ACCEPT`, the client MUST send only ordinary legacy upload
+audio. The server keeps the normal temporary legacy visible source while the
+Poly-in configuration is prepared. On the first valid Poly-in fragment for
+the accepted generation, it atomically retires that temporary source, exposes
+all reserved sources, publishes one connected-client-list update and then
+sends `POLY_IN_ACTIVE` from the server QObject/protocol-owning thread.
+
+A disconnect while the map is prepared MUST release the reservation. A timeout
+or explicit disconnect while active MUST retire every source belonging to the
+physical session, clear Poly-in reassembly/generation state, and reset the
+reliable protocol queue before the session slot can be reused.
+
+### Poly-in upstream UDP datagrams
+
+A Poly-in upstream datagram is not a reliable protocol message. Its non-zero
+magic prevents it being mistaken for a protocol frame whose tag begins with two
+zero bytes.
+
+```text
+0   u16  magic       0x5049 ("PI")
 2   u8   version     1
-3   u8   flags       bit 0 = Raw; all other bits zero
+3   u8   flags       bit 0 = Raw; bits 1..7 = 0
 4   u16  generation  accepted configuration generation
-6   u32  sequence    one monotonically increasing codec-frame sequence
+6   u32  sequence    monotonically increasing session-frame sequence
 10  u8   fragment    zero-based fragment index
 11  u8   fragments   total fragments, 1..32
 12  u8   records     records carried by this fragment
-13  u8   reserved    zero
+13  u8   reserved    0
 14  repeated record:
       u8   local source key
       u16  payload bytes
       u8[] encoded or Raw payload
 ```
 
-The maximum application UDP payload is 1200 bytes. A record is never split
-across fragments. The largest first-version record is Raw stereo Opus-128:
-`1 + 2 + (2 * 128 * 2) = 515` bytes. Therefore two largest records fit in one
-fragment (`14 + 2 * 515 = 1044`), and 64 configured rows require at most 32
-fragments. The server rejects malformed header fields, stale generations,
-unknown keys, duplicated records/fragments, wrong payload sizes, and packets
-outside its bounded sequence window.
+All source records produced for one codec-frame boundary MUST use the same
+session `sequence`, including records sent in different UDP fragments. The
+sequence is a session sequence, not one sequence per source.
 
-A session reassembly ring is keyed by the shared sequence. A fragment loss
-only removes its records: other source records in the same sequence are still
-decoded. Missing source payloads invoke the existing source codec PLC (or Raw
-silence). The existing single return stream remains the legacy transport profile
-negotiated when the session began.
+A datagram MUST satisfy all of these conditions before it changes ingress
+state:
+
+- length is at least the 14-byte header and at most the 1200-byte application
+  limit;
+- magic and version match exactly;
+- no reserved or unknown flag bit is set;
+- generation equals the currently prepared/active generation;
+- `fragments` is in `1..32` and `fragment < fragments`;
+- reserved header byte is zero;
+- record data exactly fills the datagram after the header;
+- every local key is known in the accepted descriptor map and occurs at most
+  once in the logical sequence;
+- every payload length equals the descriptor's negotiated fixed payload size;
+- duplicate fragment indexes, incompatible fragment counts and sequences
+  outside the bounded receive window are rejected; and
+- a malformed, stale or unconfigured datagram leaves playout state unchanged.
+
+Records MUST NOT span fragments. The version-1 application payload limit is
+1200 bytes. The largest supported record is Raw stereo at 128 samples:
+
+```text
+record header (1 + 2 bytes) + 2 channels × 128 samples × 2 bytes = 515 bytes
+```
+
+Two such records plus the 14-byte datagram header occupy 1044 bytes. Therefore
+two worst-case records fit one fragment and 64 worst-case sources require at
+most 32 fragments.
+
+### Reassembly, loss and jitter semantics
+
+The server uses a fixed, session-level logical-frame reassembly ring configured
+only during negotiation/reconnect. A ring slot is indexed by shared session
+sequence and records which fragments and source payloads have arrived.
+
+- A logical frame becomes usable when at least one valid fragment for that
+  sequence arrives.
+- Loss of a fragment makes only its records absent. Valid source records in
+  other fragments for the same sequence remain usable.
+- Missing compressed source payloads use the existing source decoder's packet
+  loss concealment; missing Raw payloads produce silence.
+- The ingress jitter estimator observes one arrival per logical session frame,
+  not one per UDP fragment or source. Source/fragment loss alone does not count
+  as a timing failure when another fragment for the frame arrived.
+- Reassembly is bounded and wrap-safe. Too-old, too-far-ahead and discontinuous
+  sequences are discarded or explicitly re-anchored without replaying stale
+  audio.
+
+There is no per-source network jitter buffer or return stream. Source-local
+loss handling and session-level timing are deliberate.
+
+### Return stream and cadence
+
+The downstream stream remains the ordinary legacy transport profile negotiated
+at connection start. There is exactly one return encoder and return stream per
+physical session, regardless of number of sources.
+
+The server MUST send return packets at the negotiated return codec cadence. In
+particular, a 128-sample server callback feeding a 64-sample `CT_OPUS64` return
+profile MUST encode and send two non-overlapping return packets per callback.
+This applies to Poly-in and legacy sessions alike; sending one packet would
+supply half the required return cadence.
+
+### Implementation and validation requirements
+
+- Parsing, packetisation and reassembly MUST use bounded storage derived from
+  negotiated limits. A socket datagram or audio callback MUST NOT cause
+  unbounded allocation or source-map growth.
+- The high-priority socket worker MAY write accepted data to preallocated
+  ingress storage, but MUST NOT start Qt timers or directly perform reliable
+  protocol/UI promotion work. Promotion and protocol messages run in the
+  owning server QObject thread.
+- A client MUST track every accepted visible fader ID as an owned source. All
+  own-source handling—own-first ordering, gain/mute behaviour, auto-level
+  exclusion and local monitoring—MUST apply to the complete owned set.
+- The server MUST apply decode, meter, fade and recorder lifecycle per visible
+  source, then mix/encode/transmit once per physical session.
