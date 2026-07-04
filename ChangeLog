@@ -1,3 +1,11 @@
+### 4.0.0sdel4 ###
+
+- Adopt Poly-in terminology throughout the implementation, protocol, settings, tests and documentation.
+
+- Consolidate the Poly-in architecture and protocol documentation.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel3 ###
 
 - Add independent server limits for physical clients (`--numclient`) and visible mixer channels (`--numchannels`).
