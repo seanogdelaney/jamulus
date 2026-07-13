@@ -120,6 +120,7 @@ CChannel::CChannel ( const bool bNIsServer ) :
     QObject::connect ( &Protocol, &CProtocol::PolyInRejected, this, &CChannel::PolyInRejected );
     QObject::connect ( &Protocol, &CProtocol::PolyInActive, this, &CChannel::PolyInActive );
     QObject::connect ( &Protocol, &CProtocol::ReliableMessageSent, this, &CChannel::ReliableMessageSent );
+    QObject::connect ( &Protocol, &CProtocol::ReliableMessageAcknowledged, this, &CChannel::ReliableMessageAcknowledged );
 
     QObject::connect ( &Protocol, &CProtocol::MuteStateHasChangedReceived, this, &CChannel::MuteStateHasChangedReceived );
 

@@ -134,8 +134,9 @@ sequenceDiagram
         CC->>SC: POLY_IN_CONFIG
         SC->>SC: Reserve hidden sources and SessionIngress
         SC-->>CC: POLY_IN_ACCEPT
-        CC->>CC: Activation deadline expiry returns negotiation to Legacy
-        Note over SC: Reserved sources remain hidden until session teardown
+        CC-->>SC: ACK for POLY_IN_ACCEPT
+        CC->>CC: Three-second activation deadline returns negotiation to Legacy
+        SC->>SC: Five-second prepared deadline releases the hidden map
     end
 
     CA->>SC: Ordinary legacy upload remains usable
@@ -147,8 +148,9 @@ sequenceDiagram
 ```
 
 Thus an old server, a policy refusal and a client which never emits Poly-in
-audio all retain the ordinary session path. No fallback case requires converting
-partially visible Poly-in sources back into a legacy fader.
+audio all retain the ordinary session path. The accepted-but-unused map returns
+to `ST_LEGACY` without leaving hidden reservations behind, and no fallback case
+requires converting partially visible Poly-in sources back into a legacy fader.
 
 ### Audio data path
 
@@ -174,7 +176,7 @@ flowchart TB
     end
 
     PLAY[Client return decode and playback]
-    PACK -->|One Poly-in UDP session<br/>with several source records| INGRESS
+    PACK -->|Multiplexed Poly-in uplink<br/>on the existing session| INGRESS
     RETURN -->|One ordinary return stream| PLAY
 ```
 
@@ -247,6 +249,12 @@ a logical reliable message is handed to the socket. `CClient` starts each
 response deadline from that event, not when a message merely enters the
 ACK-gated reliable FIFO. This avoids timing out behind earlier startup traffic.
 
+The server uses the corresponding completion boundary for acceptance:
+`ReliableMessageAcknowledged` is emitted only after the final physical frame of
+the logical `POLY_IN_ACCEPT` has been acknowledged. The server then starts its
+prepared-state expiry, so reliable-queue delay cannot consume the interval in
+which the client is expected to produce first audio.
+
 `PolyIn::Negotiation` is atomic because protocol callbacks and the audio callback
 both inspect or advance it. Its relevant contract is:
 
@@ -276,6 +284,14 @@ Reservation is all-or-nothing:
 Only after all reservations and the fixed-capacity `SessionIngress` succeed does
 the server enter `ST_PREPARED` and send `POLY_IN_ACCEPT` with the generation and
 source-key-to-fader mapping.
+
+Once that logical acceptance is acknowledged, the server allows five seconds
+for the first valid accepted-generation frame. That frame cancels the deadline
+when it queues promotion. If no frame arrives, the server frees every hidden
+source, clears ingress and generation state, and returns to `ST_LEGACY` while
+leaving the visible legacy placeholder and physical session untouched. The
+client uses a shorter three-second deadline and restores legacy-fader ownership
+when it falls back.
 
 Reserving before acceptance avoids two harder alternatives: changing fader IDs
 after the client has started sending, or accepting a map which can later fail
@@ -330,7 +346,9 @@ those operations belong to `CServer`/`CProtocol`'s QObject thread.
 
 `QueuePolyInPromotion()` posts a custom event. The first frame is already owned
 by `SessionIngress`, so deferring the visible transition cannot lose the audio
-which justified it.
+which justified it. Queueing that event also cancels the prepared-state expiry;
+once first audio exists, only promotion or whole-session teardown may retire
+the map.
 
 ### 7. Promotion atomically replaces the placeholder
 
@@ -437,6 +455,7 @@ ordinary server mixer channels with a shared parent session.
 | `CClient::BeginPolyInNegotiation()` | Ordinary connection established | Legacy upload continues while semantic split and Poly-in capability are tested. |
 | `CClient::SendPolyInFrame()` | Negotiation is sendable; captured input and source storage match the accepted map | One complete shared-sequence frame is packetised and sent without dynamic allocation. |
 | `CServer::PreparePolyInSources()` | Connected legacy session; split support confirmed; valid fixed source map | Complete hidden source bank, stable fader IDs, generation and ingress storage exist, so `POLY_IN_ACCEPT` is safe to send. |
+| `CServer::ReleasePreparedPolyInSources()` | Prepared state, no queued first-frame promotion, acceptance deadline expired | Hidden sources, ingress and generation are released while the physical session and legacy placeholder remain active. |
 | `CServer::PutPolyInAudioData()` | Existing prepared/active session and matching generation | Valid fragment is owned by the session ingress ring; no visible state is changed in the socket thread. |
 | `CServer::ActivatePreparedSources()` | Prepared state and matching generation, called from the queued server event | Every reserved source is active, the placeholder is retired and the session playout cursor starts at the first accepted sequence. |
 | `CServer::ReadPolyInFrame()` | Active session; one logical sequence due for playout | Per-source payload-presence slots represent that sequence; shared jitter/sequence state advances once. |
@@ -448,7 +467,7 @@ ordinary server mixer channels with a shared parent session.
 
 ### Client
 
-| State range | Upstream transport | Exit |
+| State range | Client-to-server transport | Exit |
 | --- | --- | --- |
 | `Legacy` / pre-acceptance | Ordinary legacy packet | Capability/configuration success, refusal or timeout |
 | `Prepared` | Poly-in packet permitted | First successfully sent accepted-generation frame |
@@ -463,6 +482,10 @@ ordinary server mixer channels with a shared parent session.
 | `ST_LEGACY` | One legacy placeholder | Legacy |
 | `ST_PREPARED` | Legacy placeholder only; Poly-in bank hidden | Legacy plus accepted-generation Poly-in used to trigger promotion |
 | `ST_ACTIVE` | Complete Poly-in source bank | Poly-in; delayed legacy packets discarded |
+
+`ST_PREPARED` has a bounded lifetime after `POLY_IN_ACCEPT` is acknowledged.
+First valid audio cancels the five-second deadline and queues promotion;
+otherwise expiry releases the complete hidden map and restores `ST_LEGACY`.
 
 `CServer::FreeChannel()` resets the parent `CChannel`, frees every source whose
 `ParentSessionID()` matches, resets `CServerSessionState` and returns the session
@@ -497,8 +520,9 @@ the functions above:
 
 1. **Unsupported server:** legacy startup, no semantic capability response,
    timeout, continued legacy audio and no reserved server sources.
-2. **Accepted map, no Poly-in audio:** hidden reservations remain invisible and
-   are removed on disconnect/timeout.
+2. **Accepted map, no Poly-in audio:** the client falls back after three seconds;
+   the server's acknowledged-accept deadline then releases the hidden map,
+   ingress and generation without disturbing the legacy session.
 3. **Successful promotion:** first frame is stored, queued promotion swaps the
    complete source bank, client list resolves all owned faders, and one return
    stream continues.

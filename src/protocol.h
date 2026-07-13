@@ -217,21 +217,23 @@ protected:
     class CSendMessage
     {
     public:
-        CSendMessage() : vecMessage ( 0 ), iID ( PROTMESSID_ILLEGAL ), iLogicalID ( PROTMESSID_ILLEGAL ), iCnt ( 0 ) {}
-        CSendMessage ( const CVector<uint8_t>& nMess, const int iNCnt, const int iNID, const int iNLogicalID ) :
+        CSendMessage() : vecMessage ( 0 ), iID ( PROTMESSID_ILLEGAL ), iLogicalID ( PROTMESSID_ILLEGAL ), iCnt ( 0 ), bLastLogicalPart ( true ) {}
+        CSendMessage ( const CVector<uint8_t>& nMess, const int iNCnt, const int iNID, const int iNLogicalID, const bool bNLastLogicalPart ) :
             vecMessage ( nMess ),
             iID ( iNID ),
             iLogicalID ( iNLogicalID ),
-            iCnt ( iNCnt )
+            iCnt ( iNCnt ),
+            bLastLogicalPart ( bNLastLogicalPart )
         {}
 
         CSendMessage ( const CSendMessage& SendMess )
         {
             vecMessage.Init ( SendMess.vecMessage.Size() );
-            vecMessage = SendMess.vecMessage;
-            iID        = SendMess.iID;
-            iLogicalID = SendMess.iLogicalID;
-            iCnt       = SendMess.iCnt;
+            vecMessage       = SendMess.vecMessage;
+            iID              = SendMess.iID;
+            iLogicalID       = SendMess.iLogicalID;
+            iCnt             = SendMess.iCnt;
+            bLastLogicalPart = SendMess.bLastLogicalPart;
         }
 
         CSendMessage& operator= ( const CSendMessage& NewSendMess )
@@ -239,20 +241,23 @@ protected:
             vecMessage.Init ( NewSendMess.vecMessage.Size() );
             vecMessage = NewSendMess.vecMessage;
 
-            iID        = NewSendMess.iID;
-            iLogicalID = NewSendMess.iLogicalID;
-            iCnt       = NewSendMess.iCnt;
+            iID              = NewSendMess.iID;
+            iLogicalID       = NewSendMess.iLogicalID;
+            iCnt             = NewSendMess.iCnt;
+            bLastLogicalPart = NewSendMess.bLastLogicalPart;
             return *this;
         }
 
         CVector<uint8_t> vecMessage;
         // iID is the physical reliable frame ID (SPECIAL_SPLIT_MESSAGE for a
         // fragment); iLogicalID is the original request whose send starts a
-        // higher-level negotiation deadline.
-        int iID, iLogicalID, iCnt;
+        // higher-level negotiation deadline. The final-part marker lets an
+        // acknowledgement expose completion of the whole logical message.
+        int  iID, iLogicalID, iCnt;
+        bool bLastLogicalPart;
     };
 
-    void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID );
+    void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID, const bool bLastLogicalPart );
 
     void GenMessageFrame ( CVector<uint8_t>& vecOut, const int iCnt, const int iID, const CVector<uint8_t>& vecData );
 
@@ -394,6 +399,9 @@ signals:
     // Emitted after a queued reliable protocol frame has actually been handed
     // to the socket. Split fragments retain their original logical message ID.
     void ReliableMessageSent ( int logicalMessageID );
+    // Emitted only when the final physical frame belonging to a logical
+    // reliable message has been acknowledged.
+    void ReliableMessageAcknowledged ( int logicalMessageID );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );
     void RecorderStateReceived ( ERecorderState eRecorderState );

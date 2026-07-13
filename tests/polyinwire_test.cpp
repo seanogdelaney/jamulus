@@ -105,6 +105,17 @@ void TestNegotiationFallback()
     assert ( client.OnConfigurationRequestSent() );
     assert ( client.OnAccept ( 7 ) );
     assert ( client.CanSendPolyIn() );
+
+    Negotiation acceptedButIdle;
+    assert ( acceptedButIdle.Begin() );
+    assert ( acceptedButIdle.OnSplitCapabilityReceived() );
+    assert ( acceptedButIdle.OnCapabilityRequestSent() );
+    assert ( acceptedButIdle.OnCapabilityResponse ( kVersion ) );
+    assert ( acceptedButIdle.OnConfigurationRequestSent() );
+    assert ( acceptedButIdle.OnAccept ( 8 ) );
+    acceptedButIdle.OnTimeout();
+    assert ( acceptedButIdle.State() == NegotiationState::Legacy && !acceptedButIdle.CanSendPolyIn() );
+
     assert ( !client.OnFirstAcceptedFrame ( 6 ) );
     assert ( client.OnFirstAcceptedFrame ( 7 ) );
     assert ( client.State() == NegotiationState::AwaitingActivation );

@@ -53,6 +53,7 @@ namespace
 {
 constexpr int kServerEventPolyInPromotion    = 1;
 constexpr int kServerEventPolyInJitterReport = 2;
+constexpr int kPolyInPreparedExpirySamples   = 5 * SYSTEM_SAMPLE_RATE_HZ;
 } // namespace
 
 // CServer implementation ******************************************************
@@ -398,6 +399,9 @@ inline void CServer::connectChannelSignalsToServerSlots()
     QObject::connect ( &vecSessions[iCurChanID], &CChannel::PolyInConfigReceived, this, [this, iCurChanID] ( CVector<CPolyInSourceConfig> config ) {
         OnPolyInConfig ( iCurChanID, config );
     } );
+    QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReliableMessageAcknowledged, this, [this, iCurChanID] ( int logicalMessageID ) {
+        OnPolyInReliableMessageAcknowledged ( iCurChanID, logicalMessageID );
+    } );
 
     connectChannelSignalsToServerSlots<slotId - 1>();
 }
@@ -720,7 +724,16 @@ void CServer::OnTimer()
         // explicit disconnect path above is immediate.
         for ( int sessionID = 0; sessionID < MAX_NUM_CHANNELS; ++sessionID )
         {
-            if ( vecSessionState[sessionID].eState == CServerSessionState::ST_ACTIVE && vecSessions[sessionID].IsConnected() &&
+            CServerSessionState& state = vecSessionState[sessionID];
+
+            if ( state.eState == CServerSessionState::ST_PREPARED && state.iPreparedExpirySamplesRemaining > 0 && !state.bPromotionQueued )
+            {
+                state.iPreparedExpirySamplesRemaining -= iServerFrameSizeSamples;
+                if ( state.iPreparedExpirySamplesRemaining <= 0 )
+                    ReleasePreparedPolyInSources ( sessionID );
+            }
+
+            if ( state.eState == CServerSessionState::ST_ACTIVE && vecSessions[sessionID].IsConnected() &&
                  vecSessions[sessionID].AdvanceTimeOutCounter ( iServerFrameSizeSamples ) )
             {
                 FreeChannel ( sessionID );
@@ -1571,8 +1584,9 @@ void CServer::QueuePolyInPromotion ( const int sessionID, const uint32_t firstSe
     if ( state.eState != CServerSessionState::ST_PREPARED || state.bPromotionQueued )
         return;
 
-    state.bPromotionQueued        = true;
-    state.iPromotionFirstSequence = firstSequence;
+    state.bPromotionQueued                = true;
+    state.iPromotionFirstSequence         = firstSequence;
+    state.iPreparedExpirySamplesRemaining = 0;
     QCoreApplication::postEvent ( this, new CCustomEvent ( kServerEventPolyInPromotion, 0, sessionID ) );
 }
 
@@ -1581,6 +1595,36 @@ void CServer::QueuePolyInJitterReport ( const int sessionID, const int numFrames
     if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
         return;
     QCoreApplication::postEvent ( this, new CCustomEvent ( kServerEventPolyInJitterReport, numFrames, sessionID ) );
+}
+
+void CServer::OnPolyInReliableMessageAcknowledged ( const int sessionID, const int logicalMessageID )
+{
+    if ( logicalMessageID != PROTMESSID_POLY_IN_ACCEPT || !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
+        return;
+
+    CServerSessionState& state = vecSessionState[sessionID];
+    if ( state.eState == CServerSessionState::ST_PREPARED && !state.bPromotionQueued && state.iPreparedExpirySamplesRemaining == 0 )
+    {
+        // Start only after ACCEPT is acknowledged: before that, the reliable
+        // FIFO may still be retrying a map which the client has not received.
+        state.iPreparedExpirySamplesRemaining = kPolyInPreparedExpirySamples;
+    }
+}
+
+void CServer::ReleasePreparedPolyInSources ( const int sessionID )
+{
+    CServerSessionState& state = vecSessionState[sessionID];
+    if ( state.eState != CServerSessionState::ST_PREPARED || state.bPromotionQueued )
+        return;
+
+    // The placeholder stays active, so expiry is invisible to the mixer and
+    // ordinary audio. Only the accepted generation and its hidden resources
+    // are discarded.
+    const int legacySourceID = state.iLegacySourceID;
+    for ( int sourceIndex = 0; sourceIndex < state.iNumSources; ++sourceIndex )
+        FreeSource ( state.vecSourceIDs[sourceIndex] );
+    state.Reset();
+    state.iLegacySourceID = legacySourceID;
 }
 
 bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason )
@@ -1691,13 +1735,14 @@ bool CServer::ActivatePreparedSources ( const int sessionID, const uint16_t gene
     }
     if ( legacySourceID != INVALID_CHANNEL_ID )
         FreeSource ( legacySourceID );
-    state.iLegacySourceID         = INVALID_INDEX;
-    state.eState                  = CServerSessionState::ST_ACTIVE;
-    state.iNextSequence           = firstSequence;
-    state.iFirstSequence          = firstSequence;
-    state.bHaveNextSequence       = true;
-    state.bIngressPrimed          = false;
-    state.bPolyInHalfFramePending = false;
+    state.iLegacySourceID                 = INVALID_INDEX;
+    state.eState                          = CServerSessionState::ST_ACTIVE;
+    state.iNextSequence                   = firstSequence;
+    state.iFirstSequence                  = firstSequence;
+    state.bHaveNextSequence               = true;
+    state.bIngressPrimed                  = false;
+    state.bPolyInHalfFramePending         = false;
+    state.iPreparedExpirySamplesRemaining = 0;
     // Protocol/UI notifications are deliberately emitted by customEvent(),
     // which runs in CServer's QObject thread.  This routine is also invoked
     // only from that event after the socket worker staged promotion.

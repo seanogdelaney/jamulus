@@ -74,6 +74,7 @@ CClient::CClient ( const quint16  iPortNumber,
     iPolyInSourceCount ( 0 ),
     iPolyInFrameSequence ( 0 ),
     bOwnedServerFaderIDs(),
+    iLegacyServerFaderID ( INVALID_INDEX ),
     strPolyInStatus ( "Poly-in inactive" ),
     ePolyInDeadline ( EPolyInDeadline::None ),
     bPolyInRoutingLocked ( false ),
@@ -1371,6 +1372,20 @@ void CClient::SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap 
     emit OwnedSourceIDsReceived ( clientIDs );
 }
 
+void CClient::RestoreLegacyOwnedSourceID()
+{
+    bOwnedServerFaderIDs.fill ( false );
+    CVector<int> clientIDs;
+    if ( iLegacyServerFaderID >= 0 && iLegacyServerFaderID < MAX_NUM_CHANNELS )
+    {
+        bOwnedServerFaderIDs[iLegacyServerFaderID] = true;
+        const int clientID                         = FindClientChannel ( iLegacyServerFaderID, false );
+        if ( clientID != INVALID_INDEX )
+            clientIDs.push_back ( clientID );
+    }
+    emit OwnedSourceIDsReceived ( clientIDs );
+}
+
 bool CClient::IsOwnedServerFader ( const int serverFaderID ) const
 {
     return serverFaderID >= 0 && serverFaderID < MAX_NUM_CHANNELS && bOwnedServerFaderIDs[serverFaderID];
@@ -1476,6 +1491,7 @@ void CClient::OnPolyInNegotiationTimeout()
             // No Poly-in packet was produced, so remaining in legacy mode is
             // safe: the server has not promoted the hidden map.
             PolyInNegotiation.OnTimeout();
+            RestoreLegacyOwnedSourceID();
             SetPolyInStatus ( tr ( "Poly-in source map was accepted but no codec frame was produced; using legacy input." ) );
         }
         else if ( PolyInNegotiation.IsAwaitingActivation() )
@@ -1791,6 +1807,7 @@ void CClient::OnClientIDReceived ( int iServerChanID )
     // A legacy session starts with one owned fader. Poly-in acceptance later
     // replaces this set atomically with every source fader ID.
     bOwnedServerFaderIDs.fill ( false );
+    iLegacyServerFaderID = iServerChanID;
     if ( iServerChanID >= 0 && iServerChanID < MAX_NUM_CHANNELS )
         bOwnedServerFaderIDs[iServerChanID] = true;
 
@@ -1871,6 +1888,7 @@ void CClient::Stop()
     StopPolyInDeadline();
     PolyInNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
+    iLegacyServerFaderID = INVALID_INDEX;
     SetPolyInStatus ( "Poly-in inactive" );
 
     // Fall back to opus in case raw was used
@@ -2527,8 +2545,9 @@ void CClient::ClearClientChannels()
 {
     QMutexLocker locker ( &MutexChannels );
 
-    iActiveChannels = 0;
-    iJoinSequence   = 0;
+    iActiveChannels      = 0;
+    iJoinSequence        = 0;
+    iLegacyServerFaderID = INVALID_INDEX;
 
     for ( int i = 0; i < MAX_NUM_CHANNELS; i++ )
     {
