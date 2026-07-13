@@ -54,7 +54,9 @@ Mostly documentation can be found on the Jamulus Website: https://jamulus.io
 
 ## In-repository technical documentation
 
-- [Poly-in](POLY_IN.md): problem statement,
-  architecture, compatibility model, review constraints and verification guide.
+- [Poly-in](POLY_IN.md): problem statement, architecture, compatibility model
+  and review constraints.
+- [Poly-in implementation](POLY_IN_IMPLEMENTATION.md): reviewer-oriented map of
+  control flow, state ownership and principal function contracts.
 - [Jamulus protocol](JAMULUS_PROTOCOL.md): normative protocol definitions,
   including the Poly-in control and UDP transport extension.
