@@ -1,3 +1,13 @@
+### 4.0.0sdel5 ###
+
+- Expire accepted but unactivated Poly-in preparations after acknowledged negotiation, preventing stale hidden source reservations.
+
+- Preserve local input monitoring when "Mute Myself" is enabled in a Poly-in session.
+
+- Add a Poly-in implementation guide with protocol timelines, data flow and reviewer guidance.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel4 ###
 
 - Adopt Poly-in terminology throughout the implementation, protocol, settings, tests and documentation.
