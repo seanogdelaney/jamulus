@@ -443,6 +443,7 @@ protected:
     void    SetPolyInStatus ( const QString& status );
     QString PolyInRejectReason ( uint8_t reason ) const;
     void    SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap );
+    void    RestoreLegacyOwnedSourceID();
     bool    IsOwnedServerFader ( int serverFaderID ) const;
 
     int  PreparePingMessage();
@@ -506,6 +507,7 @@ protected:
     PolyIn::Negotiation                                    PolyInNegotiation;
     uint32_t                                               iPolyInFrameSequence;
     std::array<bool, MAX_NUM_CHANNELS>                     bOwnedServerFaderIDs;
+    int                                                    iLegacyServerFaderID;
     std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorGain;
     std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorPan;
     QString                                                strPolyInStatus;
