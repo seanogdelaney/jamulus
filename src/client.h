@@ -62,6 +62,7 @@
 #include "polyin.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include "util.h"
 #include "plugins/audioreverb.h"
@@ -178,8 +179,6 @@ public:
     CVector<int16_t> vecPCM;
     CVector<int16_t> vecMutedPCM;
     CVector<uint8_t> vecCoded;
-    float            fLocalMonitorGain = 1.0f;
-    float            fLocalMonitorPan  = 0.5f;
 };
 
 class CClientSettings;
@@ -329,7 +328,7 @@ public:
     bool GetFraSiFactDefSupported() { return bFraSiFactDefSupported; }
     bool GetFraSiFactSafeSupported() { return bFraSiFactSafeSupported; }
 
-    void SetMuteOutStream ( const bool bDoMute ) { bMuteOutStream = bDoMute; }
+    void SetMuteOutStream ( const bool bDoMute ) { bMuteOutStream.store ( bDoMute, std::memory_order_relaxed ); }
 
     void SetRemoteChanGain ( const int iId, const float fGain, const bool bIsMyOwnFader );
     void SetRemoteChanPan ( const int iId, const float fPan );
@@ -400,8 +399,8 @@ protected:
     void BuildPolyInSourceConfig();
     void FillPolyInSourcePCM ( CClientPolyInSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
     void UpdatePolyInInputLevelMeter ( const CVector<int16_t>& captured, int captureChannels );
-    bool SendPolyInFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset );
-    void BuildPolyInLocalMonitor ( CVector<int16_t>& localMonitor, int frameOffset = 0 );
+    bool SendPolyInFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset, bool muteOutStream );
+    void AccumulatePolyInLocalMonitor ( int frameOffset );
     bool SetPolyInLocalMonitorGain ( int serverFaderID, float gain );
     bool SetPolyInLocalMonitorPan ( int serverFaderID, float pan );
     bool RejectPolyInAudioReinitialization ( const QString& setting );
@@ -468,22 +467,24 @@ protected:
     EAudioQuality      eAudioQuality;
     EAudChanConf       eAudioChannelConf;
     // Poly-in is an input mode; this remains the negotiated legacy return/fallback profile.
-    EAudChanConf                       eLegacyAudioChannelConf;
-    QVector<CPolyInAudioChannelConfig> vecPolyInAudioChannels;
-    CClientPolyInSource                PolyInSources[PolyIn::kMaxSourceRows];
-    int                                iPolyInSourceCount;
-    PolyIn::FramePacketizer            PolyInPacketizer;
-    PolyIn::Negotiation                PolyInNegotiation;
-    uint32_t                           iPolyInFrameSequence;
-    std::array<bool, MAX_NUM_CHANNELS> bOwnedServerFaderIDs;
-    QString                            strPolyInStatus;
-    EPolyInDeadline                    ePolyInDeadline;
-    bool                               bPolyInRoutingLocked;
-    int                                iNumAudioChannels;
-    bool                               bIsInitializationPhase;
-    bool                               bMuteOutStream;
-    float                              fMuteOutStreamGain;
-    CVector<unsigned char>             vecCeltData;
+    EAudChanConf                                           eLegacyAudioChannelConf;
+    QVector<CPolyInAudioChannelConfig>                     vecPolyInAudioChannels;
+    CClientPolyInSource                                    PolyInSources[PolyIn::kMaxSourceRows];
+    int                                                    iPolyInSourceCount;
+    PolyIn::FramePacketizer                                PolyInPacketizer;
+    PolyIn::Negotiation                                    PolyInNegotiation;
+    uint32_t                                               iPolyInFrameSequence;
+    std::array<bool, MAX_NUM_CHANNELS>                     bOwnedServerFaderIDs;
+    std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorGain;
+    std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorPan;
+    QString                                                strPolyInStatus;
+    EPolyInDeadline                                        ePolyInDeadline;
+    bool                                                   bPolyInRoutingLocked;
+    int                                                    iNumAudioChannels;
+    bool                                                   bIsInitializationPhase;
+    std::atomic<bool>                                      bMuteOutStream;
+    std::atomic<float>                                     fMuteOutStreamGain;
+    CVector<unsigned char>                                 vecCeltData;
 
     bool            bIPv6Available; // must be before Socket - passed by reference to Socket
     CHighPrioSocket Socket;
@@ -513,6 +514,7 @@ protected:
     const CVector<int16_t>* pCurrentCaptureInput;
     int                     iCurrentCaptureInputChannels;
     CVector<int16_t>        vecsStereoSndCrdMuteStream;
+    CVector<float>          vecfPolyInLocalMonitor;
     CVector<int16_t>        vecZeros;
 
     bool bFraSiFactPrefSupported;
