@@ -4,9 +4,9 @@
 
 **Poly-in** means *polyphonic input*: it enables one Jamulus
 client to send several independently mixable audio sources while retaining **one
-client/server session and one return mix**. A typical participant might send a
-mono vocal, a mono guitar and stereo keys; remote musicians receive ordinary
-mixer faders for those three sources, not three unrelated client sessions.
+client/server session and one return mix**. A poly-in participant might send a
+mono vocal, a mono guitar and stereo keys; fellow participants see ordinary
+mixer faders for those three sources, with a common base name.
 
 This is a review guide for the architecture. Definitive details of the Poly-in
 data-exchange protocol are in [`JAMULUS_PROTOCOL.md`](JAMULUS_PROTOCOL.md).
@@ -16,15 +16,28 @@ data-exchange protocol are in [`JAMULUS_PROTOCOL.md`](JAMULUS_PROTOCOL.md).
 
 ## Why this matters: custom mixes
 
-Custom mixes are a core Jamulus feature. Without them, Jamulus could trivially
+Custom mixes are a core Jamulus feature. Without them, Jamulus could easily
 use a “garage-band” model: one shared mix, with levels set by source owners
 through verbal consensus. Instead, Jamulus empowers each listener with a
 personal mix.
 
 That benefit currently stops at the client boundary. A participant with a vocal
-and guitar must either send a premix—choosing that balance for everyone—or run
+and guitar must either send a premix—choosing a balance for everyone—or run
 multiple clients as a workaround. Poly-in extends the existing custom-mix
 model: every listener can choose the balance of those sources too.
+
+To paraphrase Jamulus project principles: 'Stability above all', 'Keep it
+simple, stupid!', 'Do one thing, well.' and 'Intuitive usage, minimizing
+technical barriers'. Poly-in should be judged against those principles: it is
+not an unrelated routing feature, but a focused fix / enhancement to Jamulus’
+existing custom-mix model.
+
+The multi-client workaround is not ideally suited for that usability principle.
+Multiple instances require users to understand that only one of the resulting
+mixer windows is relevant for listening, route the others to null or unused
+playback, maintain separate profiles and channel assignments, and often use
+scripts, `--nogui` or INI-file editing. That is serviceable for technical users,
+but not a good model for ordinary Windows or MacOS musicians.
 
 ## The missing capability
 
@@ -53,8 +66,22 @@ includes [Discussion #1063](https://github.com/jamulussoftware/jamulus/discussio
 Running several instances still works. Poly-in avoids unnecessary duplication of
 the participant profile, session/control state, return jitter buffer and return
 stream. All of a participant’s sources share one coherent lifecycle and GUI.
-Poly-in does use more resources than standard single-source mono or stereo, but
-avoids duplicating whole client sessions.
+Poly-in adds per-source work, but avoids duplicating whole client sessions.
+
+### Why one session and return path matter
+
+This is not merely GUI convenience. Jamulus must finish each mix/encode cycle
+before its audio deadline. One participant running `n` simultaneous clients
+creates `n` target sessions: the server builds, encodes and sends `n` return
+mixes, even where an instance’s faders are all muted. Each instance also has
+associated server-ingress and client-return buffering and adaptive-jitter work.
+
+Poly-in retains unavoidable source-local work: capture, codec/conversion, fader,
+decode, metering, recording and loss handling. But for `n` sources it uses one
+client session, removing `n - 1` return mixes, output encodes, UDP streams,
+return decoder/jitter paths and duplicate session-level work. Source/fader
+capacity remains per source; client-session capacity is charged once. Fewer
+target sessions mean less server work and more real-time deadline headroom.
 
 ## The model
 
