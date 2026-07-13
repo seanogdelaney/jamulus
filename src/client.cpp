@@ -108,6 +108,11 @@ CClient::CClient ( const quint16  iPortNumber,
 {
     int iOpusError;
     bOwnedServerFaderIDs.fill ( false );
+    for ( size_t i = 0; i < PolyIn::kMaxSourceRows; ++i )
+    {
+        fPolyInLocalMonitorGain[i].store ( 1.0f, std::memory_order_relaxed );
+        fPolyInLocalMonitorPan[i].store ( 0.5f, std::memory_order_relaxed );
+    }
 
     OpusMode = opus_custom_mode_create ( SYSTEM_SAMPLE_RATE_HZ, DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES, &iOpusError );
 
@@ -553,7 +558,7 @@ void CClient::SetRemoteChanGain ( const int iId, const float fGain, const bool b
     const bool bPolyInOwnFader = SetPolyInLocalMonitorGain ( clientChan->iServerChannelID, fGain );
     if ( bIsMyOwnFader && !bPolyInOwnFader )
     {
-        fMuteOutStreamGain = fGain;
+        fMuteOutStreamGain.store ( fGain, std::memory_order_relaxed );
     }
 
     if ( TimerGainOrPan.isActive() )
@@ -917,6 +922,8 @@ void CClient::DestroyPolyInSources()
         if ( PolyInSources[i].pEncoder != nullptr )
             opus_custom_encoder_destroy ( PolyInSources[i].pEncoder );
         PolyInSources[i] = CClientPolyInSource();
+        fPolyInLocalMonitorGain[i].store ( 1.0f, std::memory_order_relaxed );
+        fPolyInLocalMonitorPan[i].store ( 0.5f, std::memory_order_relaxed );
     }
     iPolyInSourceCount = 0;
 }
@@ -1071,7 +1078,7 @@ void CClient::UpdatePolyInInputLevelMeter ( const CVector<int16_t>& captured, co
     SignalLevelMeter.UpdatePeakLevels ( peakLeft, peakRight );
 }
 
-bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
+bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset, const bool muteOutStream )
 {
     if ( !PolyInNegotiation.CanSendPolyIn() || iPolyInSourceCount == 0 || captureChannels <= 0 )
         return false;
@@ -1083,7 +1090,7 @@ bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int capt
         // Mute Myself replaces only the network payload. Leave vecPCM intact
         // for direct local monitoring below, otherwise muted users cannot hear
         // their own capture at all.
-        const CVector<int16_t>& encodedPCM = bMuteOutStream ? source.vecMutedPCM : source.vecPCM;
+        const CVector<int16_t>& encodedPCM = muteOutStream ? source.vecMutedPCM : source.vecPCM;
         if ( source.Config.bRaw )
         {
             std::memcpy ( &source.vecCoded[0], &encodedPCM[0], source.Config.iPayloadBytes );
@@ -1117,29 +1124,30 @@ bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int capt
     return true;
 }
 
-void CClient::BuildPolyInLocalMonitor ( CVector<int16_t>& localMonitor, const int frameOffset )
+void CClient::AccumulatePolyInLocalMonitor ( const int frameOffset )
 {
     for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
     {
         const CClientPolyInSource& source    = PolyInSources[sourceIndex];
-        const float                gain      = source.fLocalMonitorGain;
-        const float                gainLeft  = MathUtils::GetLeftPan ( source.fLocalMonitorPan, false ) * gain;
-        const float                gainRight = MathUtils::GetRightPan ( source.fLocalMonitorPan, false ) * gain;
+        const float                gain      = fPolyInLocalMonitorGain[sourceIndex].load ( std::memory_order_relaxed );
+        const float                pan       = fPolyInLocalMonitorPan[sourceIndex].load ( std::memory_order_relaxed );
+        const float                gainLeft  = MathUtils::GetLeftPan ( pan, false ) * gain;
+        const float                gainRight = MathUtils::GetRightPan ( pan, false ) * gain;
         for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
         {
             const int out = 2 * ( frameOffset + frame );
-            if ( out + 1 >= localMonitor.Size() )
+            if ( out + 1 >= vecfPolyInLocalMonitor.Size() )
                 break;
             if ( source.Config.iNumChannels == 1 )
             {
-                const float value     = source.vecPCM[frame];
-                localMonitor[out]     = Float2Short ( localMonitor[out] + value * gainLeft );
-                localMonitor[out + 1] = Float2Short ( localMonitor[out + 1] + value * gainRight );
+                const float value = source.vecPCM[frame];
+                vecfPolyInLocalMonitor[out] += value * gainLeft;
+                vecfPolyInLocalMonitor[out + 1] += value * gainRight;
             }
             else
             {
-                localMonitor[out]     = Float2Short ( localMonitor[out] + source.vecPCM[2 * frame] * gainLeft );
-                localMonitor[out + 1] = Float2Short ( localMonitor[out + 1] + source.vecPCM[2 * frame + 1] * gainRight );
+                vecfPolyInLocalMonitor[out] += source.vecPCM[2 * frame] * gainLeft;
+                vecfPolyInLocalMonitor[out + 1] += source.vecPCM[2 * frame + 1] * gainRight;
             }
         }
     }
@@ -1155,7 +1163,7 @@ bool CClient::SetPolyInLocalMonitorGain ( const int serverFaderID, const float g
         CClientPolyInSource& source = PolyInSources[sourceIndex];
         if ( source.Config.iFaderID == serverFaderID )
         {
-            source.fLocalMonitorGain = gain;
+            fPolyInLocalMonitorGain[sourceIndex].store ( gain, std::memory_order_relaxed );
             return true;
         }
     }
@@ -1172,7 +1180,7 @@ bool CClient::SetPolyInLocalMonitorPan ( const int serverFaderID, const float pa
         CClientPolyInSource& source = PolyInSources[sourceIndex];
         if ( source.Config.iFaderID == serverFaderID )
         {
-            source.fLocalMonitorPan = pan;
+            fPolyInLocalMonitorPan[sourceIndex].store ( pan, std::memory_order_relaxed );
             return true;
         }
     }
@@ -2133,6 +2141,7 @@ void CClient::Init()
     vecCeltData.Init ( iCeltNumCodedBytes );
     vecZeros.Init ( iStereoBlockSizeSam, 0 );
     vecsStereoSndCrdMuteStream.Init ( iStereoBlockSizeSam );
+    vecfPolyInLocalMonitor.Init ( iStereoBlockSizeSam, 0.0f );
 
     // In case we are connected to a non raw audio server or we don't use raw audio we need to initialze the codec
     if ( CurOpusEncoder != nullptr )
@@ -2263,24 +2272,26 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     const int               captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
     const bool              polyInActive =
         eAudioChannelConf == CC_POLY_IN && PolyInNegotiation.CanSendPolyIn() && Sound.SupportsPolyInCapture() && iPolyInSourceCount > 0;
+    const bool  muteOutStream     = bMuteOutStream.load ( std::memory_order_relaxed );
+    const float muteOutStreamGain = fMuteOutStreamGain.load ( std::memory_order_relaxed );
 
     // Transmit signal ---------------------------------------------------------
     if ( polyInActive )
     {
-        if ( bMuteOutStream )
-            vecsStereoSndCrdMuteStream.Reset ( 0 );
+        if ( muteOutStream )
+            vecfPolyInLocalMonitor.Reset ( 0.0f );
         for ( i = 0; i < iSndCrdFrameSizeFactor; ++i )
         {
             const int frameOffset = i * iOPUSFrameSizeSamples;
-            if ( !SendPolyInFrame ( captured, captureChannels, frameOffset ) )
+            if ( !SendPolyInFrame ( captured, captureChannels, frameOffset, muteOutStream ) )
             {
                 // An unprepared/stale state must fail closed to ordinary legacy
                 // transport rather than sending an unrecognised audio datagram.
                 PolyInNegotiation.OnTimeout();
                 break;
             }
-            if ( bMuteOutStream )
-                BuildPolyInLocalMonitor ( vecsStereoSndCrdMuteStream, frameOffset );
+            if ( muteOutStream )
+                AccumulatePolyInLocalMonitor ( frameOffset );
         }
 #ifndef HEADLESS
         UpdatePolyInInputLevelMeter ( captured, captureChannels );
@@ -2339,14 +2350,14 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
         {
             if ( CurOpusEncoder != nullptr )
             {
-                if ( bMuteOutStream )
+                if ( muteOutStream )
                     iUnused = opus_custom_encode ( CurOpusEncoder, &vecZeros[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
                 else
                     iUnused = opus_custom_encode ( CurOpusEncoder, &vecsStereoSndCrd[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
             }
             else if ( bRawAudioIsSupported )
             {
-                if ( bMuteOutStream )
+                if ( muteOutStream )
                     memset ( &vecCeltData[0], 0, iCeltNumCodedBytes );
                 else
                     memcpy ( &vecCeltData[0], &vecsStereoSndCrd[j], iCeltNumCodedBytes );
@@ -2357,7 +2368,7 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
 
     // Receive signal ----------------------------------------------------------
     // in case of mute stream, store local data
-    if ( bMuteOutStream && !polyInActive )
+    if ( muteOutStream && !polyInActive )
     {
         vecsStereoSndCrdMuteStream = vecsStereoSndCrd;
     }
@@ -2407,15 +2418,19 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     }
 
     // for muted stream we have to add our local data here
-    if ( bMuteOutStream )
+    if ( muteOutStream )
     {
-        // BuildPolyInLocalMonitor() already applies one gain/pan pair per
-        // source. The legacy single-stream path still applies its shared own
-        // fader gain here.
-        const float localMonitorGain = polyInActive ? 1.0f : fMuteOutStreamGain;
-        for ( i = 0; i < iStereoBlockSizeSam; i++ )
+        if ( polyInActive )
         {
-            vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * localMonitorGain );
+            // Keep all Poly-in sources in float until they are combined with
+            // the decoded server return, then clip exactly once.
+            for ( i = 0; i < iStereoBlockSizeSam; ++i )
+                vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecfPolyInLocalMonitor[i] );
+        }
+        else
+        {
+            for ( i = 0; i < iStereoBlockSizeSam; ++i )
+                vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * muteOutStreamGain );
         }
     }
 
