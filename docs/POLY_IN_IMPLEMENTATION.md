@@ -58,6 +58,131 @@ structural reason several incoming faders still produce one return stream.
 
 ## What changes in the existing control flow
 
+The diagrams below are implementation maps rather than protocol definitions.
+They show which execution context performs each transition; the normative wire
+rules remain in [`JAMULUS_PROTOCOL.md`](JAMULUS_PROTOCOL.md).
+
+### Successful activation timeline
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CC as Client control / protocol
+    participant CA as Client audio callback
+    participant SC as Server QObject / protocol
+    participant RX as Socket receive / SessionIngress
+    participant SM as Server timer / mixer
+
+    CC->>CC: Fix source map and preallocate source-local storage
+    CC->>SC: Ordinary legacy connection and startup
+    Note over CA,SC: Legacy upload remains active throughout negotiation
+    CC->>SC: Complete existing split-message prerequisite
+    SC-->>CC: Split-message support confirmed
+    CC->>SC: REQ_POLY_IN_CAPS
+    SC-->>CC: POLY_IN_CAPS
+    CC->>SC: POLY_IN_CONFIG with fixed source descriptors
+    SC->>SC: Validate and reserve the complete hidden source bank
+    SC->>SC: Allocate generation and fixed SessionIngress storage
+    SC-->>CC: POLY_IN_ACCEPT with generation and key-to-fader map
+    CC->>CA: Publish accepted map and permit Poly-in upload
+    CA->>RX: First multiplexed codec frame
+    RX->>RX: Validate generation and store the frame
+    RX-->>SC: Queue promotion event across the thread boundary
+    SC->>SC: Activate all sources and retire the legacy placeholder
+    SC-->>CC: Connected-client list and POLY_IN_ACTIVE
+
+    loop Each logical codec frame
+        CA->>RX: Poly-in fragments sharing one session sequence
+        RX->>RX: Reassemble and store the shared session frame
+        SM->>RX: Read the next due sequence
+        RX-->>SM: Present and missing records for each source
+        SM->>SM: Decode per source, then meter, record and mix
+        SM-->>CA: One encoded return stream for the physical session
+    end
+
+    SC->>SC: FreeChannel on disconnect or session timeout
+    Note over SC,SM: Parent session, owned sources, ingress and generation are cleared together
+```
+
+The important boundary is the first valid Poly-in frame. `POLY_IN_ACCEPT`
+permits the client to send it, the socket worker stores it, and only the queued
+server-thread event makes the hidden source bank visible.
+
+### Inactive, unsupported or refused timeline
+
+```mermaid
+sequenceDiagram
+    participant CC as Client control / protocol
+    participant CA as Client audio callback
+    participant SC as Server QObject / protocol
+    participant RX as Socket receive / SessionIngress
+
+    CC->>SC: Ordinary legacy connection and startup
+    CA->>SC: Ordinary legacy upload
+
+    alt Poly-in is not selected or local setup is unsuitable
+        Note over CC,SC: BeginPolyInNegotiation returns without sending Poly-in messages
+    else Split prerequisite or semantic capability is unavailable
+        CC->>SC: Split-message or REQ_POLY_IN_CAPS request
+        Note over CC,SC: No required affirmative response arrives
+        CC->>CC: Deadline expiry returns negotiation to Legacy
+    else Server rejects the source configuration
+        CC->>SC: POLY_IN_CONFIG
+        SC-->>CC: POLY_IN_REJECT
+        CC->>CC: Negotiation enters Refused
+    else Map is accepted but no codec frame is produced
+        CC->>SC: POLY_IN_CONFIG
+        SC->>SC: Reserve hidden sources and SessionIngress
+        SC-->>CC: POLY_IN_ACCEPT
+        CC->>CC: Activation deadline expiry returns negotiation to Legacy
+        Note over SC: Reserved sources remain hidden until session teardown
+    end
+
+    CA->>SC: Ordinary legacy upload remains usable
+    Note over RX,SC: Invalid or stale Poly-in datagrams cannot promote the map
+
+    opt Disconnect or session timeout
+        SC->>SC: FreeChannel clears placeholder, reservations and protocol state
+    end
+```
+
+Thus an old server, a policy refusal and a client which never emits Poly-in
+audio all retain the ordinary session path. No fallback case requires converting
+partially visible Poly-in sources back into a legacy fader.
+
+### Audio data path
+
+```mermaid
+flowchart TB
+    subgraph ClientSend[Client send path]
+        direction LR
+        CAP[All-channel backend capture]
+        ROUTE[Fixed mono/stereo source routing]
+        ENC[Per-source Opus or Raw payload]
+        PACK[FramePacketizer<br/>one generation and sequence]
+        CAP --> ROUTE --> ENC --> PACK
+    end
+
+    subgraph Server[Server receive and mix path]
+        direction LR
+        INGRESS[SessionIngress<br/>fragment reassembly and jitter]
+        DECODE[Per-source decode or PLC]
+        SOURCE[Ordinary source PCM<br/>metering, recording and faders]
+        MIX[Per-target-session mix]
+        RETURN[Existing return encoder and socket]
+        INGRESS --> DECODE --> SOURCE --> MIX --> RETURN
+    end
+
+    PLAY[Client return decode and playback]
+    PACK -->|One Poly-in UDP session<br/>with several source records| INGRESS
+    RETURN -->|One ordinary return stream| PLAY
+```
+
+The client and server therefore share sequence, fragmentation and ingress jitter
+at session level, while codec state, PLC, metering, recording and mixer identity
+remain source-local. The return side continues to operate once per physical
+session.
+
 ### 1. Configuration and capture are fixed before connection
 
 The source table is edited through `CPolyInAudioChannelsDlg`, persisted by
