@@ -201,19 +201,20 @@ public:
 
     void Reset()
     {
-        eState                  = ST_LEGACY;
-        iLegacySourceID         = INVALID_INDEX;
-        iNumSources             = 0;
-        iGeneration             = 0;
-        bHaveNextSequence       = false;
-        iNextSequence           = 0;
-        iFirstSequence          = 0;
-        bIngressPrimed          = false;
-        iIngressTargetFrames    = DEF_NET_BUF_SIZE_NUM_BL;
-        bIngressAuto            = false;
-        bPolyInHalfFramePending = false;
-        bPromotionQueued        = false;
-        iPromotionFirstSequence = 0;
+        eState                          = ST_LEGACY;
+        iLegacySourceID                 = INVALID_INDEX;
+        iNumSources                     = 0;
+        iGeneration                     = 0;
+        bHaveNextSequence               = false;
+        iNextSequence                   = 0;
+        iFirstSequence                  = 0;
+        bIngressPrimed                  = false;
+        iIngressTargetFrames            = DEF_NET_BUF_SIZE_NUM_BL;
+        bIngressAuto                    = false;
+        bPolyInHalfFramePending         = false;
+        bPromotionQueued                = false;
+        iPromotionFirstSequence         = 0;
+        iPreparedExpirySamplesRemaining = 0;
         Ingress.Reset();
     }
 
@@ -232,8 +233,9 @@ public:
     // The first multiplexed packet is received in the high-priority socket
     // thread.  Promotion, protocol messages and recorder/UI signals must be
     // deferred to CServer's QObject thread.
-    bool                   bPromotionQueued        = false;
-    uint32_t               iPromotionFirstSequence = 0;
+    bool                   bPromotionQueued                = false;
+    uint32_t               iPromotionFirstSequence         = 0;
+    int                    iPreparedExpirySamplesRemaining = 0;
     PolyIn::SessionIngress Ingress;
 };
 
@@ -356,8 +358,10 @@ protected:
     CChannelCoreInfo      GetSourceInfo ( const int sourceID ) const;
     int                   GetLegacySourceID ( const int sessionID ) const;
     bool                  PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason );
+    void                  ReleasePreparedPolyInSources ( const int sessionID );
     bool                  PutPolyInAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );
     bool                  ActivatePreparedSources ( const int sessionID, const uint16_t generation, const uint32_t firstSequence );
+    void                  OnPolyInReliableMessageAcknowledged ( const int sessionID, const int logicalMessageID );
     void                  OnReqPolyInCaps ( const int sessionID );
     void                  OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config );
     void                  DumpChannels ( const QString& title );

@@ -327,6 +327,7 @@ signals:
     void PolyInRejected ( uint8_t reason );
     void PolyInActive ( int generation );
     void ReliableMessageSent ( int logicalMessageID );
+    void ReliableMessageAcknowledged ( int logicalMessageID );
     void MuteStateHasChanged ( int iChanID, bool bIsMuted );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void ReqChanInfo();

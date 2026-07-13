@@ -255,6 +255,10 @@ and **MAY** in this section are to be interpreted as normative requirements.
 - A timeout, missing semantic capability reply or rejection MUST leave the
   legacy session usable. A client MUST NOT transmit Poly-in UDP audio before
   receiving a valid `POLY_IN_ACCEPT`.
+- After `POLY_IN_ACCEPT` is acknowledged, a server MUST bound how long the
+  hidden prepared map may remain without first audio. Expiry MUST invalidate
+  that generation and release its hidden sources and ingress state while
+  preserving the ordinary legacy session.
 - Once Poly-in audio is active, both sides MUST reject or ignore data for a
   stale configuration generation. Changing source routing requires a new
   connection in version 1.
@@ -367,7 +371,9 @@ zero/duplicate.
 
 `POLY_IN_ACCEPT` reserves the source map and gives the client permission to
 start sending Poly-in upstream frames for `generation`. It does not yet mean
-that other clients can see the sources.
+that other clients can see the sources. The version-1 server starts a
+five-second prepared-state expiry after the complete logical acceptance has
+been acknowledged. First valid audio cancels that expiry.
 
 #### `POLY_IN_REJECT`
 
@@ -429,8 +435,11 @@ the accepted generation, it atomically retires that temporary source, exposes
 all reserved sources, publishes one connected-client-list update and then
 sends `POLY_IN_ACTIVE` from the server QObject/protocol-owning thread.
 
-A disconnect while the map is prepared MUST release the reservation. A timeout
-or explicit disconnect while active MUST retire every source belonging to the
+If no valid accepted-generation frame arrives before the prepared-state expiry,
+the server MUST release the hidden source bank, clear ingress/generation state
+and return the session to legacy operation. A disconnect while the map is
+prepared MUST do the same as part of full session teardown. A timeout or
+explicit disconnect while active MUST retire every source belonging to the
 physical session, clear Poly-in reassembly/generation state, and reset the
 reliable protocol queue before the session slot can be reused.
 

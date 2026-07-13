@@ -226,6 +226,7 @@ stateDiagram-v2
     AwaitConfig --> LegacyFallback: Refused, disconnected, or timeout
     AwaitConfig --> Prepared: Map accepted
     Prepared --> Active: First valid Poly-in frame
+    Prepared --> LegacyFallback: No first frame / prepared expiry
     Active --> [*]: Disconnect
     LegacyFallback --> [*]: Ordinary disconnect
 ```
@@ -236,7 +237,7 @@ stateDiagram-v2
 | New client with Poly-in unselected | Existing one-source behaviour. |
 | New client with Poly-in selected, old/unsupported server | No compatible reply; standard audio continues. |
 | New client with capable server, rejected map | Server rejects the map; standard audio continues. |
-| New client with capable server, accepted map | Temporary legacy source is atomically replaced after the first valid Poly-in frame. |
+| New client with capable server, accepted map | Temporary legacy source is atomically replaced after the first valid Poly-in frame; if no frame arrives, the hidden reservation expires and legacy operation remains. |
 
 The active source map is deliberately immutable. Changing channel assignment,
 source shape, tag, icon, codec policy or source count requires disconnect and
@@ -258,8 +259,9 @@ The implementation should be judged against these properties:
   ingress clock and return mix.
 - A Poly-in session has many source-local faders/decoders/meters/recorders, but
   no cloned full client machinery.
-- Source maps become visible and disappear atomically; a disconnect retires all
-  sources, reservations, ingress state and endpoint lookup together.
+- Source maps become visible and disappear atomically. Prepared maps expire
+  without disturbing the legacy placeholder; disconnect retires all sources,
+  reservations, ingress state and endpoint lookup together.
 - Records share a session sequence, never span fragments and are bounded by
   negotiated configuration. Malformed, duplicate, stale or wrong-generation
   input is rejected before it affects source decode or loss-concealment state.

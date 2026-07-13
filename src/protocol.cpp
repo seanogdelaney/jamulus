@@ -521,7 +521,7 @@ void CProtocol::Reset()
     SendMessQueue.clear();
 }
 
-void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID )
+void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID, const bool bLastLogicalPart )
 {
     bool bListWasEmpty;
 
@@ -531,7 +531,7 @@ void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, c
         bListWasEmpty = SendMessQueue.empty();
 
         // create send message object for the queue
-        CSendMessage SendMessageObj ( vecMessage, iCnt, iID, iLogicalID );
+        CSendMessage SendMessageObj ( vecMessage, iCnt, iID, iLogicalID, bLastLogicalPart );
 
         // we want to have a FIFO: we add at the end and take from the beginning
         SendMessQueue.push_back ( SendMessageObj );
@@ -628,7 +628,7 @@ void CProtocol::CreateAndSendMessage ( const int iID, const CVector<uint8_t>& ve
             GenMessageFrame ( vecNewMessage, iCurCounter, PROTMESSID_SPECIAL_SPLIT_MESSAGE, vecNewSplitMessage );
 
             // enqueue message
-            EnqueueMessage ( vecNewMessage, iCurCounter, PROTMESSID_SPECIAL_SPLIT_MESSAGE, iID );
+            EnqueueMessage ( vecNewMessage, iCurCounter, PROTMESSID_SPECIAL_SPLIT_MESSAGE, iID, iSplitCnt == iNumParts - 1 );
         }
     }
     else
@@ -647,7 +647,7 @@ void CProtocol::CreateAndSendMessage ( const int iID, const CVector<uint8_t>& ve
         GenMessageFrame ( vecNewMessage, iCurCounter, iID, vecData );
 
         // enqueue message
-        EnqueueMessage ( vecNewMessage, iCurCounter, iID, iID );
+        EnqueueMessage ( vecNewMessage, iCurCounter, iID, iID, true );
     }
 }
 
@@ -711,9 +711,10 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
             }
 
             // extract data from stream and emit signal for received value
-            bool      bSendNextMess = false;
-            int       iPos          = 0;
-            const int iData         = static_cast<int> ( GetValFromStream ( vecbyMesBodyData, iPos, 2 ) );
+            bool      bSendNextMess               = false;
+            int       iAcknowledgedLogicalMessage = PROTMESSID_ILLEGAL;
+            int       iPos                        = 0;
+            const int iData                       = static_cast<int> ( GetValFromStream ( vecbyMesBodyData, iPos, 2 ) );
 
             Mutex.lock();
             {
@@ -722,6 +723,9 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                 {
                     if ( ( SendMessQueue.front().iCnt == iRecCounter ) && ( SendMessQueue.front().iID == iData ) )
                     {
+                        if ( SendMessQueue.front().bLastLogicalPart )
+                            iAcknowledgedLogicalMessage = SendMessQueue.front().iLogicalID;
+
                         // message acknowledged, remove from queue
                         SendMessQueue.pop_front();
 
@@ -731,6 +735,9 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                 }
             }
             Mutex.unlock();
+
+            if ( iAcknowledgedLogicalMessage != PROTMESSID_ILLEGAL )
+                emit ReliableMessageAcknowledged ( iAcknowledgedLogicalMessage );
 
             if ( bSendNextMess )
             {
