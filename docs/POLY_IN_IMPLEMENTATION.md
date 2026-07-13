@@ -147,10 +147,10 @@ sequenceDiagram
     end
 ```
 
-Thus an old server, a policy refusal and a client which never emits Poly-in
-audio all retain the ordinary session path. The accepted-but-unused map returns
-to `ST_LEGACY` without leaving hidden reservations behind, and no fallback case
-requires converting partially visible Poly-in sources back into a legacy fader.
+All fallback paths preserve the active legacy placeholder. An
+accepted-but-unused map returns to `ST_LEGACY` without leaving hidden
+reservations, and no partially visible Poly-in source bank needs to be rolled
+back.
 
 ### Audio data path
 
@@ -179,11 +179,6 @@ flowchart TB
     PACK -->|Multiplexed Poly-in uplink<br/>on the existing session| INGRESS
     RETURN -->|One ordinary return stream| PLAY
 ```
-
-The client and server therefore share sequence, fragmentation and ingress jitter
-at session level, while codec state, PLC, metering, recording and mixer identity
-remain source-local. The return side continues to operate once per physical
-session.
 
 ### 1. Configuration and capture are fixed before connection
 
