@@ -28,6 +28,8 @@ struct CPolyInSourceConfig
     int           iFaderID = INVALID_INDEX;
 };
 
+// POLY_IN_ACCEPT returns reserved ordinary fader IDs.  Those IDs become
+// visible together only after the server promotes the map on first valid audio.
 struct CPolyInAcceptMap
 {
     uint16_t                     iGeneration = 0;

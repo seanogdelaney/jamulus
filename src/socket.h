@@ -98,6 +98,8 @@ public:
     virtual ~CSocket();
 
     void SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr );
+    // Send directly from FramePacketizer's fixed storage instead of constructing
+    // or resizing a CVector in the real-time audio callback.
     void SendPacket ( const uint8_t* pbySendBuf, int iNumBytes, const CHostAddress& HostAddr );
 
     bool GetAndResetbJitterBufferOKFlag();

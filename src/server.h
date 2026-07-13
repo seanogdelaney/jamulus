@@ -184,6 +184,9 @@ private:
     CStereoSignalLevelMeter SignalLevelMeter;
 };
 
+// Implements the session side of the session/source split in POLY_IN.md.
+// Reserved source IDs remain hidden while prepared; after first valid audio
+// they become active together. Ingress timing and playout stay session-wide.
 class CServerSessionState
 {
 public:
