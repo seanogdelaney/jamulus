@@ -109,7 +109,9 @@ public:
         return strCurDevName;
     }
 
-    virtual int     GetNumInputChannels() { return 2; }
+    virtual int GetNumInputChannels() { return 2; }
+    // Backends opt in only when they can expose their complete capture-channel
+    // view in preallocated storage while preserving the legacy stereo buffer.
     virtual bool    SupportsPolyInCapture() const { return false; }
     virtual QString GetInputChannelName ( const int ) { return "Default"; }
     virtual void    SetLeftInputChannel ( const int ) {}

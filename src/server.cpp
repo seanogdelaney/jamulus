@@ -1039,6 +1039,8 @@ void CServer::DecodeReceiveData ( const int sourceIndex, const int numSources )
 
 void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSources )
 {
+    // The target is one physical session. Mixing every visible source here and
+    // encoding once is what preserves one personal return stream per participant.
     const int           sessionID      = vecSessionIDsCurConSession[sessionIndex];
     CChannel&           target         = vecSessions[sessionID];
     const int           targetChannels = target.GetNumAudioChannels();
@@ -1161,6 +1163,9 @@ int CServer::GetLegacySourceID ( const int sessionID ) const
 
 int CServer::AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& sourceConfig, const bool legacy, const bool active )
 {
+    // sourceID is also the ordinary public mixer/fader ID. Every target
+    // session's gain/pan matrices are indexed by it, so initialise those slots
+    // even while a prepared Poly-in source is still hidden.
     for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
     {
         if ( !vecSources[sourceID].IsAllocated() )
@@ -1211,6 +1216,8 @@ void CServer::FreeAllSourcesForSession ( const int sessionID )
 
 CVector<CChannelInfo> CServer::CreateChannelList()
 {
+    // Reserved Poly-in sources are deliberately absent. Publishing this list
+    // only after promotion makes legacy-placeholder replacement atomic to peers.
     CVector<CChannelInfo> list ( 0 );
     for ( int sourceID = 0; sourceID < MAX_NUM_CHANNELS; ++sourceID )
     {
@@ -1335,6 +1342,9 @@ int CServer::FindChannel ( const CHostAddress& address, const bool allowNew )
 
 void CServer::InitChannel ( const int sessionID, const CHostAddress& address )
 {
+    // Every endpoint enters through the legacy path. This visible placeholder
+    // preserves old-peer startup and is retired only after accepted multiplexed
+    // audio proves that the prepared source map is usable.
     vecSessions[sessionID].SetAddress ( address );
     vecSessions[sessionID].ResetInfo();
     vecSessionState[sessionID].Reset();
@@ -1438,6 +1448,8 @@ bool CServer::PutPolyInAudioData ( const CVector<uint8_t>& packet, const int pac
 bool CServer::PutAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID )
 {
     QMutexLocker locker ( &Mutex );
+    // Dispatch the extension magic before legacy admission; otherwise a Poly-in
+    // datagram from an unknown endpoint could create a standard session.
     if ( packetBytes >= 2 && packet[0] == static_cast<uint8_t> ( PolyIn::kMagic >> 8 ) &&
          packet[1] == static_cast<uint8_t> ( PolyIn::kMagic & 0xff ) )
     {
@@ -1446,6 +1458,8 @@ bool CServer::PutAudioData ( const CVector<uint8_t>& packet, const int packetByt
     sessionID = FindChannel ( address, true );
     if ( sessionID == INVALID_CHANNEL_ID )
         return false;
+    // Once promoted, discard delayed legacy packets from pre-acceptance
+    // startup. Feeding both transports would advance two ingress timelines.
     if ( vecSessionState[sessionID].eState == CServerSessionState::ST_ACTIVE )
         return false;
     return vecSessions[sessionID].PutAudioData ( packet, packetBytes, address ) == PS_NEW_CONNECTION;
@@ -1607,6 +1621,8 @@ bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInS
 
     CServerSessionState&                                         state = vecSessionState[sessionID];
     std::array<PolyIn::SourceDescriptor, PolyIn::kMaxSourceRows> descriptors{};
+    // Reserve the complete public fader map before ACCEPT, but leave it hidden
+    // and keep the legacy source active. Any failure rolls back the whole map.
     state.iNumSources = 0;
     for ( int index = 0; index < config.Size(); ++index )
     {
@@ -1625,6 +1641,8 @@ bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInS
         ++state.iNumSources;
     }
 
+    // A non-zero generation prevents delayed UDP from an earlier map being
+    // accepted after the same endpoint or local source keys are reused.
     static uint16_t nextGeneration = 1;
     if ( nextGeneration == 0 )
         ++nextGeneration;
@@ -1660,6 +1678,9 @@ bool CServer::ActivatePreparedSources ( const int sessionID, const uint16_t gene
     if ( state.eState != CServerSessionState::ST_PREPARED || state.iGeneration != generation )
         return false;
     const int legacySourceID = state.iLegacySourceID;
+    // Activate every reservation before retiring the placeholder. The channel
+    // list is published only after this returns, so peers cannot observe a
+    // partially promoted source bank.
     for ( int index = 0; index < state.iNumSources; ++index )
     {
         const int sourceID = state.vecSourceIDs[index];

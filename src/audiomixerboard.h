@@ -222,7 +222,9 @@ public:
     void    SetDisplayPans ( const bool eNDP );
     void    SetPanIsSupported();
     void    SetRemoteFaderIsMute ( const int iChannelIdx, const bool bIsMute );
-    void    SetMyChannelID ( const int iChannelIdx )
+    // Legacy callers retain a primary own-fader ID; Poly-in supplies the full
+    // owned set so ordering, mute and auto-level policies cover every source.
+    void SetMyChannelID ( const int iChannelIdx )
     {
         bMyChannelIDs.fill ( false );
         vecMyChannelOrder.clear();

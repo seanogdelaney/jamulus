@@ -246,7 +246,10 @@ protected:
         }
 
         CVector<uint8_t> vecMessage;
-        int              iID, iLogicalID, iCnt;
+        // iID is the physical reliable frame ID (SPECIAL_SPLIT_MESSAGE for a
+        // fragment); iLogicalID is the original request whose send starts a
+        // higher-level negotiation deadline.
+        int iID, iLogicalID, iCnt;
     };
 
     void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID );

@@ -144,6 +144,8 @@ bool FramePacketizer::Packetize ( const uint16_t          generation,
         return false;
     }
 
+    // Determine the complete fragment layout first because every header carries
+    // the total fragment count. Records remain indivisible between fragments.
     std::array<size_t, kMaxFragments> firstRecord{};
     std::array<size_t, kMaxFragments> recordsInPacket{};
     size_t                            packetCount = 0;
@@ -346,6 +348,9 @@ bool SessionIngress::Put ( const uint8_t* const data, const size_t length, bool*
         return false;
     }
 
+    // Validate the complete fragment against the immutable descriptor map
+    // before selecting or modifying a ring slot. Malformed input must leave
+    // reassembly and loss-concealment state unchanged.
     std::array<int, kMaxSourceRows> indexes{};
     for ( uint8_t i = 0; i < fragment.recordCount; ++i )
     {
@@ -449,6 +454,8 @@ bool SessionIngress::Read ( const uint32_t sequence, RecordView* const records, 
     {
         return false;
     }
+    // Preserve negotiated descriptor order for the server source bank. Missing
+    // records remain null so each source independently receives PLC/Raw silence.
     for ( size_t i = 0; i < sourceDescriptors.size(); ++i )
     {
         records[i] = RecordView{ sourceDescriptors[i].key, nullptr, 0 };

@@ -1464,6 +1464,8 @@ void CAudioMixerBoard::ApplyNewConClientList ( CVector<CChannelInfo>& vecChanInf
 
 void CAudioMixerBoard::SetMyChannelIDs ( const CVector<int>& channelIndices )
 {
+    // These are client-local mixer indices in negotiated source-map order. The
+    // set serves ownership tests; the order preserves Own Fader First semantics.
     bMyChannelIDs.fill ( false );
     vecMyChannelOrder.clear();
     iMyChannelID = INVALID_INDEX;
