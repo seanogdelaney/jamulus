@@ -8,8 +8,11 @@ client/server session and one return mix**. A poly-in participant might send a
 mono vocal, a mono guitar and stereo keys; fellow participants see ordinary
 mixer faders for those three sources, with a common base name.
 
-This is a review guide for the architecture. Definitive details of the Poly-in
-data-exchange protocol are in [`JAMULUS_PROTOCOL.md`](JAMULUS_PROTOCOL.md).
+This is a review guide for the architecture. The code-level control flow and
+state contracts are mapped in
+[`POLY_IN_IMPLEMENTATION.md`](POLY_IN_IMPLEMENTATION.md). Definitive details of
+the Poly-in data-exchange protocol are in
+[`JAMULUS_PROTOCOL.md`](JAMULUS_PROTOCOL.md).
 
 > **The central model:** one participant, one network session, many visible
 > sources, one downstream return mix.
