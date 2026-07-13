@@ -945,6 +945,9 @@ void CClient::ConfigurePolyInSources()
         return;
 
     const int inputChannels = Sound.GetNumInputChannels();
+    // Each visible source needs source-local encoding/storage so the server can
+    // decode and conceal its loss independently, while all rows retain one
+    // session-wide codec and frame cadence.
     for ( int i = 0; i < vecPolyInAudioChannels.size() && i < static_cast<int> ( PolyIn::kMaxSourceRows ); ++i )
     {
         const CPolyInAudioChannelConfig& route = vecPolyInAudioChannels[i];
@@ -1092,6 +1095,9 @@ bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int capt
 {
     if ( !PolyInNegotiation.CanSendPolyIn() || iPolyInSourceCount == 0 || captureChannels <= 0 )
         return false;
+    // Build one logical session frame: each source contributes one record and
+    // every record shares this codec-boundary sequence. Packetization may split
+    // only between records, never within a source payload.
     std::array<PolyIn::RecordView, PolyIn::kMaxSourceRows> records{};
     for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
     {
@@ -1245,6 +1251,8 @@ QString CClient::PolyInRejectReason ( const uint8_t reason ) const
 
 void CClient::BeginPolyInNegotiation()
 {
+    // This negotiation overlays ordinary startup. Until ACCEPT is validated,
+    // ProcessAudioDataIntern continues the saved legacy upload unchanged.
     StopPolyInDeadline();
     PolyInNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
@@ -1355,6 +1363,9 @@ void CClient::SendPolyInConfigIfReady()
 
 void CClient::SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap )
 {
+    // These are ordinary server fader IDs, not additional client sessions. Map
+    // any already-listed faders now; ApplyNewConClientList repeats the mapping
+    // after the server publishes the atomically promoted source list.
     bOwnedServerFaderIDs.fill ( false );
     CVector<int> clientIDs;
     for ( const CPolyInSourceConfig& mapped : sourceMap )
@@ -2384,6 +2395,8 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     int            iUnused       = 0;
     unsigned char* pCurCodedData = nullptr;
 
+    // Poly-in changes only upstream capture. Downstream decoding and the
+    // pre-acceptance upload retain the single legacy session profile.
     const EAudChanConf      eInputProfile   = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
     const CVector<int16_t>& captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
     const int               captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;

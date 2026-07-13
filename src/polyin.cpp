@@ -76,6 +76,8 @@ bool DecodeCaps ( const CVector<uint8_t>& in ) { return in.Size() == 2 && in[0] 
 
 bool ValidateSourceConfig ( const CVector<CPolyInSourceConfig>& config, QString* const error )
 {
+    // All rows share one session clock and frame cadence, hence one codec/Raw
+    // policy. Exact payload sizes also keep packetizer and ingress storage fixed.
     if ( config.empty() || config.Size() > static_cast<int> ( PolyIn::kMaxSourceRows ) )
     {
         if ( error != nullptr )

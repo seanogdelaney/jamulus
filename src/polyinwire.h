@@ -133,6 +133,9 @@ struct Datagram
     uint16_t                                     length = 0;
 };
 
+// Converts one logical session frame (one record per source, one shared
+// sequence) into bounded UDP fragments. It owns the output storage so the
+// client audio callback can send without allocating.
 class FramePacketizer
 {
 public:
@@ -157,6 +160,9 @@ bool ParseFragment ( const uint8_t* data, size_t length, ParsedFragment& parsed 
 // transport framing allowance as CChannel::GetUploadRateKbps().
 int EstimateUploadRateKbps ( const uint16_t* payloadLengths, size_t recordCount, int frameSamples, int sampleRate );
 
+// One instance belongs to one physical server session. It reassembles shared-
+// sequence frames into descriptor-indexed source records; it is deliberately
+// not one network jitter buffer per visible source.
 class SessionIngress
 {
 public:
@@ -247,6 +253,9 @@ enum class NegotiationState : uint8_t
     Refused
 };
 
+// Shared between protocol callbacks and the audio callback. The accepted
+// generation becomes sendable only in Prepared, so legacy upload remains the
+// sole transport until POLY_IN_ACCEPT has been fully validated.
 class Negotiation
 {
 public:
