@@ -1,3 +1,13 @@
+### 4.0.0sdel7 ###
+
+- Preserve standard-client session lifetime, fade and decoder behaviour after the session/source split, including cleanup of malformed phantom UDP clients.
+
+- Centralise Poly-in input and transport profile selection so legacy fallback retains the saved input mode over a stereo physical session.
+
+- Expand regression coverage for negotiation fallback, stereo transport, atomic source promotion, preparation expiry, capacity limits and reconnect generations.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel6 ###
 
 - Force Poly-in connections to use a stereo session transport while preserving the saved ordinary input profile for fallback processing.
