@@ -135,7 +135,7 @@ public:
     void CreateMuteStateHasChangedMes ( const int iChanID, const bool bIsMuted ) { Protocol.CreateMuteStateHasChangedMes ( iChanID, bIsMuted ); }
 
     void  SetGain ( const int iChanID, const float fNewGain );
-    float GetFadeInGain() { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    float GetFadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
 
     void SetPan ( const int iChanID, const float fNewPan );
 
@@ -170,7 +170,7 @@ public:
         SockBuf.GetErrorRates ( vecErrRates, dLimit, dMaxUpLimit );
     }
 
-    EAudComprType GetAudioCompressionType() { return eAudioCompressionType; }
+    EAudComprType GetAudioCompressionType() const { return eAudioCompressionType; }
     int           GetNumAudioChannels() const { return iNumAudioChannels; }
 
     // network protocol interface

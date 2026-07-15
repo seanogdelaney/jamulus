@@ -1129,20 +1129,27 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
     CVector<int16_t>& out = vecvecsSendData[sessionIndex];
     mix.Reset ( 0 );
 
+    // Snapshot this target's gain and pan settings once. This preserves the
+    // upstream compacted-fill optimization for Poly-in's source-based mixer.
+    target.GetGainsAndPannings ( vecChanIDsCurConChan,
+                                 numSources,
+                                 vecvecfGains[sessionIndex],
+                                 vecvecfPannings[sessionIndex] );
+
     for ( int sourceIndex = 0; sourceIndex < numSources; ++sourceIndex )
     {
         const int               sourceID      = vecChanIDsCurConChan[sourceIndex];
         const CServerSource&    source        = vecSources[sourceID];
         const CVector<int16_t>& input         = vecvecsData[sourceIndex];
         const int               inputChannels = vecNumAudioChannels[sourceIndex];
-        const float             sourceFade    = source.IsLegacy() ? vecSessions[source.ParentSessionID()].GetFadeInGain() : source.FadeInGain();
-        float                   gain          = target.GetGain ( sourceID ) * sourceFade;
+        const float             sourceFade    = GetSourceFadeInGain ( sourceID );
+        float                   gain          = vecvecfGains[sessionIndex][sourceIndex] * sourceFade;
         // Preserve legacy join behaviour: a target session's own sources use
         // their source fade only, while other sessions are also attenuated by
         // the target session's join fade.
         if ( source.ParentSessionID() != sessionID )
             gain *= target.GetFadeInGain();
-        const float pan = target.GetPan ( sourceID );
+        const float pan = vecvecfPannings[sessionIndex][sourceIndex];
 
         if ( targetChannels == 1 )
         {
@@ -1255,6 +1262,19 @@ int CServer::GetPrimarySourceID ( const int sessionID ) const
             return sourceID;
     }
     return INVALID_INDEX;
+}
+
+float CServer::GetSourceFadeInGain ( const int sourceID ) const
+{
+    if ( !MathUtils::InRange<int> ( sourceID, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[sourceID].IsActive() )
+        return 0.0f;
+
+    const CServerSource& source = vecSources[sourceID];
+    if ( !source.IsLegacy() )
+        return source.FadeInGain();
+
+    const int sessionID = source.ParentSessionID();
+    return MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ? vecSessions[sessionID].GetFadeInGain() : 0.0f;
 }
 
 int CServer::AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& sourceConfig, const bool legacy, const bool active )

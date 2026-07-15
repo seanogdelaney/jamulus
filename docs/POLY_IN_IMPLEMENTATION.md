@@ -523,6 +523,19 @@ full audio engine:
 - upload-rate estimation;
 - routing validation.
 
+`tests/server_legacy_test.cpp` builds the production headless server sources
+under Qt Test and protects the standard-client path changed by the session/source
+split:
+
+- malformed, unconfigured UDP admissions still expire independently of decode;
+- mute-state notifications carry the muting participant's public source ID;
+- legacy fade remains packet-driven and ignores source-local timer progress;
+- mono and stereo OPUS, OPUS64 and Raw payloads still traverse the legacy decoder.
+
+Build it in a shadow directory with
+`qmake ../Jamulus.pro CONFIG+=serverlegacytests`, followed by `make` and
+`./server_legacy_tests`.
+
 Integration review should additionally follow these end-to-end cases through
 the functions above:
 
