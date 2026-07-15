@@ -620,7 +620,7 @@ void CClientSettings::ReadSettingsFromXML ( const QDomDocument& IniXMLDocument, 
         }
     }
 
-    // Audio routing. Keep the ordinary return/fallback profile separate from
+    // Audio routing. Keep the ordinary fallback input profile separate from
     // the Poly-in capture table so an old/refusing server remains usable.
     int requestedAudioChannels = CC_MONO;
     GetNumericIniSet ( IniXMLDocument, "client", "audiochannels", 0, 3 /* CC_POLY_IN */, requestedAudioChannels );

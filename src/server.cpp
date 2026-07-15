@@ -1646,6 +1646,14 @@ bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInS
         rejectReason = PolyInProtocol::kRejectInvalidSessionState;
         return false;
     }
+    if ( vecSessions[sessionID].GetNumAudioChannels() != 2 )
+    {
+        // Poly-in source descriptors affect only the uplink. The one ordinary
+        // session return must already be stereo before the source map is
+        // accepted; promotion cannot safely change its codec/buffer geometry.
+        rejectReason = PolyInProtocol::kRejectStereoReturnRequired;
+        return false;
+    }
     if ( bDisableRaw && config[0].bRaw )
     {
         rejectReason = PolyInProtocol::kRejectUnsupported;

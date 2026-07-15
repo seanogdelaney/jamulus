@@ -191,9 +191,13 @@ or network connection. `CClient::Init()` then allocates all source-local PCM,
 codec and packet storage. A setting that would invalidate those allocations or
 the accepted descriptors is rejected until disconnect.
 
-The ordinary sound callback still carries the selected legacy stereo pair used
-for standard mode and for the single return path. Poly-in-capable backends also
-publish a preallocated interleaved view of every physical capture channel
+The ordinary sound callback still carries the selected legacy pair used for
+fallback input and for the single return path. Selecting Poly-in fixes the
+physical session to a stereo transport before connection. Unsupported, refused
+or timed-out negotiation therefore falls back to an ordinary stereo session;
+the saved standard-mode setting still determines the fallback input signal.
+Poly-in-capable backends also publish a preallocated interleaved view of every
+physical capture channel
 through `CSoundBase::SetCapturedInputAudio()`:
 
 - ASIO, CoreAudio and JACK advertise `SupportsPolyInCapture()` and populate that
@@ -449,7 +453,7 @@ ordinary server mixer channels with a shared parent session.
 | `CClient::ConfigurePolyInSources()` | Disconnected/reinitialising; fixed routing rows and audio profile available | Valid source rows have all callback-time PCM, codec and payload storage allocated; invalid rows cannot enter negotiation. |
 | `CClient::BeginPolyInNegotiation()` | Ordinary connection established | Legacy upload continues while semantic split and Poly-in capability are tested. |
 | `CClient::SendPolyInFrame()` | Negotiation is sendable; captured input and source storage match the accepted map | One complete shared-sequence frame is packetised and sent without dynamic allocation. |
-| `CServer::PreparePolyInSources()` | Connected legacy session; split support confirmed; valid fixed source map | Complete hidden source bank, stable fader IDs, generation and ingress storage exist, so `POLY_IN_ACCEPT` is safe to send. |
+| `CServer::PreparePolyInSources()` | Connected stereo legacy session; split support confirmed; valid fixed source map | Complete hidden source bank, stable fader IDs, generation and ingress storage exist, so `POLY_IN_ACCEPT` is safe to send. |
 | `CServer::ReleasePreparedPolyInSources()` | Prepared state, no queued first-frame promotion, acceptance deadline expired | Hidden sources, ingress and generation are released while the physical session and legacy placeholder remain active. |
 | `CServer::PutPolyInAudioData()` | Existing prepared/active session and matching generation | Valid fragment is owned by the session ingress ring; no visible state is changed in the socket thread. |
 | `CServer::ActivatePreparedSources()` | Prepared state and matching generation, called from the queued server event | Every reserved source is active, the placeholder is retired and the session playout cursor starts at the first accepted sequence. |
@@ -513,15 +517,18 @@ full audio engine:
 Integration review should additionally follow these end-to-end cases through
 the functions above:
 
-1. **Unsupported server:** legacy startup, no semantic capability response,
-   timeout, continued legacy audio and no reserved server sources.
-2. **Accepted map, no Poly-in audio:** the client falls back after three seconds;
+1. **Saved standard mode is mono:** selecting Poly-in still establishes a
+   stereo physical session; fallback carries the saved mono input over that
+   stereo transport and active Poly-in receives one stereo return stream.
+2. **Unsupported server:** legacy startup, no semantic capability response,
+   timeout, continued stereo legacy audio and no reserved server sources.
+3. **Accepted map, no Poly-in audio:** the client falls back after three seconds;
    the server's acknowledged-accept deadline then releases the hidden map,
    ingress and generation without disturbing the legacy session.
-3. **Successful promotion:** first frame is stored, queued promotion swaps the
+4. **Successful promotion:** first frame is stored, queued promotion swaps the
    complete source bank, client list resolves all owned faders, and one return
    stream continues.
-4. **Partial fragment loss:** available source records decode normally while
+5. **Partial fragment loss:** available source records decode normally while
    only missing sources receive PLC/silence.
-5. **Reconnect:** old generation, ingress contents, fader ownership and reliable
+6. **Reconnect:** old generation, ingress contents, fader ownership and reliable
    messages cannot survive slot reuse.
