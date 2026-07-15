@@ -1934,8 +1934,9 @@ void CClient::Init()
     // Poly-in/Stereo-out fixes the physical session to a stereo transport
     // before connection. Negotiation can therefore fall back to ordinary
     // legacy audio without changing codec, packet or return-buffer geometry.
-    const EAudChanConf eInputChannelConf = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
-    const EAudChanConf eTransportChannelConf = eAudioChannelConf == CC_POLY_IN ? CC_STEREO : eAudioChannelConf;
+    const PolyIn::ChannelProfiles channelProfiles       = PolyIn::ResolveChannelProfiles ( eAudioChannelConf, eLegacyAudioChannelConf );
+    const EAudChanConf            eInputChannelConf     = channelProfiles.input;
+    const EAudChanConf            eTransportChannelConf = channelProfiles.transport;
 
     // check if possible frame size factors are supported
     const int iFraSizePreffered = SYSTEM_FRAME_SIZE_SAMPLES * FRAME_SIZE_FACTOR_PREFERRED;
@@ -2305,10 +2306,11 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     // The saved standard mode controls fallback input processing. The
     // network transport is nevertheless stereo for the lifetime of a Poly-in
     // connection, including unsupported, refused and timed-out negotiation.
-    const EAudChanConf      eInputProfile   = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
-    const CVector<int16_t>& captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
-    const int               captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
-    const bool              polyInActive =
+    const PolyIn::ChannelProfiles channelProfiles = PolyIn::ResolveChannelProfiles ( eAudioChannelConf, eLegacyAudioChannelConf );
+    const EAudChanConf            eInputProfile   = channelProfiles.input;
+    const CVector<int16_t>&       captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
+    const int                     captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
+    const bool                    polyInActive =
         eAudioChannelConf == CC_POLY_IN && PolyInNegotiation.CanSendPolyIn() && Sound.SupportsPolyInCapture() && iPolyInSourceCount > 0;
     const bool  muteOutStream     = bMuteOutStream.load ( std::memory_order_relaxed );
     const float muteOutStreamGain = fMuteOutStreamGain.load ( std::memory_order_relaxed );

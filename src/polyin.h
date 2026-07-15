@@ -40,6 +40,23 @@ Q_DECLARE_METATYPE ( CPolyInSourceConfig )
 Q_DECLARE_METATYPE ( CVector<CPolyInSourceConfig> )
 Q_DECLARE_METATYPE ( CPolyInAcceptMap )
 
+namespace PolyIn
+{
+struct ChannelProfiles
+{
+    EAudChanConf input;
+    EAudChanConf transport;
+};
+
+// Poly-in keeps the saved standard input profile, but fixes the physical
+// connection to stereo before negotiation so every fallback preserves the
+// same packet and return-buffer geometry.
+inline ChannelProfiles ResolveChannelProfiles ( const EAudChanConf selected, const EAudChanConf savedLegacy )
+{
+    return selected == CC_POLY_IN ? ChannelProfiles{ savedLegacy, CC_STEREO } : ChannelProfiles{ selected, selected };
+}
+} // namespace PolyIn
+
 namespace PolyInProtocol
 {
 constexpr uint8_t kProtocolVersion            = PolyIn::kVersion;

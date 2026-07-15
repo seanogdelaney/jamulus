@@ -354,6 +354,7 @@ protected:
     CChannelCoreInfo      GetSourceInfo ( const int sourceID ) const;
     int                   GetLegacySourceID ( const int sessionID ) const;
     int                   GetPrimarySourceID ( const int sessionID ) const;
+    float                 GetSourceFadeInGain ( const int sourceID ) const;
     bool                  PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason );
     void                  ReleasePreparedPolyInSources ( const int sessionID );
     bool                  PutPolyInAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );

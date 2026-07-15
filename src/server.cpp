@@ -1135,7 +1135,7 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
         const CServerSource&    source        = vecSources[sourceID];
         const CVector<int16_t>& input         = vecvecsData[sourceIndex];
         const int               inputChannels = vecNumAudioChannels[sourceIndex];
-        const float             sourceFade    = source.IsLegacy() ? vecSessions[source.ParentSessionID()].GetFadeInGain() : source.FadeInGain();
+        const float             sourceFade    = GetSourceFadeInGain ( sourceID );
         float                   gain          = target.GetGain ( sourceID ) * sourceFade;
         // Preserve legacy join behaviour: a target session's own sources use
         // their source fade only, while other sessions are also attenuated by
@@ -1255,6 +1255,19 @@ int CServer::GetPrimarySourceID ( const int sessionID ) const
             return sourceID;
     }
     return INVALID_INDEX;
+}
+
+float CServer::GetSourceFadeInGain ( const int sourceID ) const
+{
+    if ( !MathUtils::InRange<int> ( sourceID, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[sourceID].IsActive() )
+        return 0.0f;
+
+    const CServerSource& source = vecSources[sourceID];
+    if ( !source.IsLegacy() )
+        return source.FadeInGain();
+
+    const int sessionID = source.ParentSessionID();
+    return MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ? vecSessions[sessionID].GetFadeInGain() : 0.0f;
 }
 
 int CServer::AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& sourceConfig, const bool legacy, const bool active )
