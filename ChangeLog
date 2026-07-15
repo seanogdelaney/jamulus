@@ -1,3 +1,11 @@
+### 4.0.0sdel6 ###
+
+- Force Poly-in connections to use a stereo session transport while preserving the saved ordinary input profile for fallback processing.
+
+- Reject Poly-in configuration on mono-return sessions so promotion cannot change established codec or buffer geometry.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel5 ###
 
 - Expire accepted but unactivated Poly-in preparations after acknowledged negotiation, preventing stale hidden source reservations.
