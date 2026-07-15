@@ -70,6 +70,23 @@ case "${TARGET_ARCH}" in
         ;;
 esac
 
+apt_get_with_retry() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if sudo apt-get -qq \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            "$@"; then
+            return 0
+        fi
+        if [[ "${attempt}" -eq 5 ]]; then
+            return 1
+        fi
+        sleep $((attempt * 10))
+    done
+}
+
 setup() {
     export DEBIAN_FRONTEND="noninteractive"
 
@@ -79,8 +96,8 @@ setup() {
     setup_cross_compilation_apt_sources
 
     echo "Installing dependencies..."
-    sudo apt-get -qq update
-    sudo apt-get -qq --no-install-recommends -y install devscripts build-essential debhelper fakeroot libjack-jackd2-dev qtbase5-dev qttools5-dev-tools qtmultimedia5-dev
+    apt_get_with_retry -o APT::Update::Error-Mode=any update
+    apt_get_with_retry --no-install-recommends -y install devscripts build-essential debhelper fakeroot libjack-jackd2-dev qtbase5-dev qttools5-dev-tools qtmultimedia5-dev
 
     setup_cross_compiler
 }
@@ -94,7 +111,7 @@ setup_cross_compilation_apt_sources() {
 
     if [[ "${APT_ARCH}" == "amd64"  ]]; then
         # Duplicate the original Ubuntu sources and modify them to refer to the TARGET_ARCH:
-        sed -rne "s|^deb.*/ ([^ -]+(-updates)?) main.*|deb [arch=${TARGET_ARCH}] http://ports.ubuntu.com/ubuntu-ports \1 main universe multiverse restricted|p" /etc/apt/sources.list | sudo dd of=/etc/apt/sources.list.d/"${TARGET_ARCH}".list
+        sed -rne "s|^deb.*/ ([^ -]+(-updates)?) main.*|deb [arch=${TARGET_ARCH}] https://ports.ubuntu.com/ubuntu-ports \1 main universe multiverse restricted|p" /etc/apt/sources.list | sudo dd of=/etc/apt/sources.list.d/"${TARGET_ARCH}".list
         # Now take the original Ubuntu sources and limit those to the build host (i.e. non-TARGET_ARCH) architectures:
         sudo sed -re 's/^deb /deb [arch=amd64,i386] /' -i /etc/apt/sources.list
     fi
@@ -105,7 +122,7 @@ setup_cross_compiler() {
         return
     fi
     local GCC_VERSION=9  # 9 is the default on 20.04, there is no reason not to update once 20.04 is out of support
-    sudo apt install -qq -y --no-install-recommends "g++-${GCC_VERSION}-${ABI_NAME}" "qt5-qmake:${TARGET_ARCH}" "qtbase5-dev:${TARGET_ARCH}" "libjack-jackd2-dev:${TARGET_ARCH}" "qtmultimedia5-dev:${TARGET_ARCH}"
+    apt_get_with_retry -y --no-install-recommends install "g++-${GCC_VERSION}-${ABI_NAME}" "qt5-qmake:${TARGET_ARCH}" "qtbase5-dev:${TARGET_ARCH}" "libjack-jackd2-dev:${TARGET_ARCH}" "qtmultimedia5-dev:${TARGET_ARCH}"
     sudo update-alternatives --install "/usr/bin/${ABI_NAME}-g++" g++ "/usr/bin/${ABI_NAME}-g++-${GCC_VERSION}" 10
     sudo update-alternatives --install "/usr/bin/${ABI_NAME}-gcc" gcc "/usr/bin/${ABI_NAME}-gcc-${GCC_VERSION}" 10
 
