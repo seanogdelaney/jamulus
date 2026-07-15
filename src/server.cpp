@@ -718,27 +718,29 @@ void CServer::OnTimer()
     {
         QMutexLocker locker ( &Mutex );
 
-        // Legacy sessions consume their timeout through CChannel::GetData().
-        // Poly-in sessions bypass that legacy socket buffer, so consume the
-        // same sample-based timeout once per physical session here. This is a
-        // recovery path for a lost connectionless disconnect packet; the normal
-        // explicit disconnect path above is immediate.
+        // Connection lifetime belongs to the physical session, not to a source
+        // decoder. Age every connected session exactly once per timer tick so
+        // codec setup, conversion-buffer shortcuts and Poly-in ingress cannot
+        // accidentally bypass timeout processing.
         for ( int sessionID = 0; sessionID < MAX_NUM_CHANNELS; ++sessionID )
         {
             CServerSessionState& state = vecSessionState[sessionID];
+
+            if ( !vecSessions[sessionID].IsConnected() )
+                continue;
+
+            if ( vecSessions[sessionID].AdvanceTimeOutCounter ( iServerFrameSizeSamples ) )
+            {
+                FreeChannel ( sessionID );
+                bChannelIsNowDisconnected = true;
+                continue;
+            }
 
             if ( state.eState == CServerSessionState::ST_PREPARED && state.iPreparedExpirySamplesRemaining > 0 && !state.bPromotionQueued )
             {
                 state.iPreparedExpirySamplesRemaining -= iServerFrameSizeSamples;
                 if ( state.iPreparedExpirySamplesRemaining <= 0 )
                     ReleasePreparedPolyInSources ( sessionID );
-            }
-
-            if ( state.eState == CServerSessionState::ST_ACTIVE && vecSessions[sessionID].IsConnected() &&
-                 vecSessions[sessionID].AdvanceTimeOutCounter ( iServerFrameSizeSamples ) )
-            {
-                FreeChannel ( sessionID );
-                bChannelIsNowDisconnected = true;
             }
         }
 
@@ -960,10 +962,93 @@ void CServer::DecodeReceiveData ( const int sourceIndex, const int numSources )
     const int      sourceID  = vecChanIDsCurConChan[sourceIndex];
     CServerSource& source    = vecSources[sourceID];
     const int      sessionID = source.ParentSessionID();
-    CChannel&      session   = vecSessions[sessionID];
 
-    vecNumAudioChannels[sourceIndex] = source.IsLegacy() ? session.GetNumAudioChannels() : source.GetConfig().iNumChannels;
-    vecAudioComprType[sourceIndex]   = source.IsLegacy() ? session.GetAudioCompressionType() : source.GetConfig().eCodec;
+    // Keep the untouched-client path visibly separate from Poly-in ingress.
+    // This makes it harder for a source-local extension shortcut to suppress a
+    // legacy CChannel behaviour such as buffer consumption or codec handling.
+    if ( source.IsLegacy() )
+        DecodeLegacySource ( sourceIndex, sourceID, sessionID );
+    else
+        DecodePolyInSource ( sourceIndex, sourceID );
+}
+
+void CServer::DecodeLegacySource ( const int sourceIndex, const int sourceID, const int sessionID )
+{
+    CChannel& session = vecSessions[sessionID];
+
+    // This is the upstream single-channel receive/decode path with only the
+    // session/source index split applied. Session timeout is intentionally not
+    // coupled to GetData(); OnTimer() advances it once per physical session.
+    vecNumAudioChannels[sourceIndex] = session.GetNumAudioChannels();
+    vecAudioComprType[sourceIndex]   = session.GetAudioCompressionType();
+
+    if ( vecAudioComprType[sourceIndex] != CT_OPUS && vecAudioComprType[sourceIndex] != CT_OPUS64 )
+    {
+        // Preserve the legacy path's buffer-consumption side effect while
+        // transport properties are still being negotiated. Lifetime no longer
+        // depends on this read, but stale pre-configuration packets must not be
+        // decoded later under a newly installed codec profile.
+        session.GetData ( vecvecbyCodedData[sourceIndex], session.GetCeltNumCodedBytes() );
+        vecvecsData[sourceIndex].Reset ( 0 );
+        return;
+    }
+
+    const bool useDoubleConversion             = !bUseDoubleSystemFrameSize && vecAudioComprType[sourceIndex] == CT_OPUS;
+    const int  blocks                          = bUseDoubleSystemFrameSize && vecAudioComprType[sourceIndex] == CT_OPUS64 ? 2 : 1;
+    vecUseDoubleSysFraSizeConvBuf[sourceIndex] = useDoubleConversion;
+    vecNumFrameSizeConvBlocks[sourceIndex]     = blocks;
+
+    CConvBuf<int16_t>& inputConversion = DoubleFrameSizeConvBufIn[sourceID];
+    if ( useDoubleConversion )
+    {
+        inputConversion.SetBufferSize ( DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex] );
+        if ( inputConversion.Get ( vecvecsData[sourceIndex], SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex] ) )
+            return;
+    }
+
+    const int          frameSamples = vecAudioComprType[sourceIndex] == CT_OPUS ? DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES : SYSTEM_FRAME_SIZE_SAMPLES;
+    OpusCustomDecoder* decoder      = nullptr;
+    if ( vecAudioComprType[sourceIndex] == CT_OPUS )
+        decoder = vecNumAudioChannels[sourceIndex] == 1 ? OpusDecoderMono[sourceID] : OpusDecoderStereo[sourceID];
+    else
+        decoder = vecNumAudioChannels[sourceIndex] == 1 ? Opus64DecoderMono[sourceID] : Opus64DecoderStereo[sourceID];
+
+    const int  codedBytes = session.GetCeltNumCodedBytes();
+    const bool raw        = codedBytes == static_cast<int> ( sizeof ( int16_t ) * frameSamples * vecNumAudioChannels[sourceIndex] );
+
+    for ( int block = 0; block < blocks; ++block )
+    {
+        const EGetDataStat status = session.GetData ( vecvecbyCodedData[sourceIndex], codedBytes );
+        const uint8_t*     coded  = status == GS_BUFFER_OK ? &vecvecbyCodedData[sourceIndex][0] : nullptr;
+        const int          offset = block * SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex];
+
+        if ( raw )
+        {
+            if ( coded != nullptr )
+                std::memcpy ( &vecvecsData[sourceIndex][offset], coded, codedBytes );
+            else
+                std::memset ( &vecvecsData[sourceIndex][offset], 0, codedBytes );
+        }
+        else
+        {
+            opus_custom_decode ( decoder, coded, codedBytes, &vecvecsData[sourceIndex][offset], frameSamples );
+        }
+    }
+
+    if ( useDoubleConversion )
+    {
+        inputConversion.PutAll ( vecvecsData[sourceIndex] );
+        inputConversion.Get ( vecvecsData[sourceIndex], SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex] );
+    }
+}
+
+void CServer::DecodePolyInSource ( const int sourceIndex, const int sourceID )
+{
+    CServerSource&             source = vecSources[sourceID];
+    const CPolyInSourceConfig& config = source.GetConfig();
+
+    vecNumAudioChannels[sourceIndex] = config.iNumChannels;
+    vecAudioComprType[sourceIndex]   = config.eCodec;
     if ( vecAudioComprType[sourceIndex] != CT_OPUS && vecAudioComprType[sourceIndex] != CT_OPUS64 )
     {
         vecvecsData[sourceIndex].Reset ( 0 );
@@ -980,10 +1065,7 @@ void CServer::DecodeReceiveData ( const int sourceIndex, const int numSources )
     {
         inputConversion.SetBufferSize ( DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex] );
         if ( inputConversion.Get ( vecvecsData[sourceIndex], SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex] ) )
-        {
-            source.AdvanceFade();
             return;
-        }
     }
 
     const int          frameSamples = vecAudioComprType[sourceIndex] == CT_OPUS ? DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES : SYSTEM_FRAME_SIZE_SAMPLES;
@@ -993,53 +1075,30 @@ void CServer::DecodeReceiveData ( const int sourceIndex, const int numSources )
     else
         decoder = vecNumAudioChannels[sourceIndex] == 1 ? Opus64DecoderMono[sourceID] : Opus64DecoderStereo[sourceID];
 
+    int receivedBlocks = 0;
     for ( int block = 0; block < blocks; ++block )
     {
+        const size_t   presentIndex = static_cast<size_t> ( sourceID ) * 2 + static_cast<size_t> ( block );
         const uint8_t* coded        = nullptr;
-        int            codedBytes   = 0;
-        bool           raw          = false;
-        bool           disconnected = false;
-
-        if ( source.IsLegacy() )
+        if ( vecSourceIngressPresent[presentIndex] != 0 )
         {
-            codedBytes                = session.GetCeltNumCodedBytes();
-            const EGetDataStat status = session.GetData ( vecvecbyCodedData[sourceIndex], codedBytes );
-            if ( status == GS_CHAN_NOW_DISCONNECTED )
-                disconnected = true;
-            else if ( status == GS_BUFFER_OK )
-                coded = &vecvecbyCodedData[sourceIndex][0];
-            raw = codedBytes == static_cast<int> ( sizeof ( int16_t ) * frameSamples * vecNumAudioChannels[sourceIndex] );
-        }
-        else
-        {
-            const size_t presentIndex = static_cast<size_t> ( sourceID ) * 2 + static_cast<size_t> ( block );
-            codedBytes                = source.GetConfig().iPayloadBytes;
-            if ( vecSourceIngressPresent[presentIndex] != 0 )
-            {
-                coded = &vecSourceIngressPayload[sourceID][static_cast<int> ( block * PolyIn::kMaxRawStereoPayloadBytes )];
-            }
-            raw = source.GetConfig().bRaw;
-        }
-
-        if ( disconnected )
-        {
-            FreeChannel ( sessionID );
-            bChannelIsNowDisconnected = true;
-            return;
+            coded = &vecSourceIngressPayload[sourceID][static_cast<int> ( block * PolyIn::kMaxRawStereoPayloadBytes )];
+            ++receivedBlocks;
         }
 
         const int offset = block * SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex];
-        if ( raw )
+        if ( config.bRaw )
         {
             if ( coded != nullptr )
-                std::memcpy ( &vecvecsData[sourceIndex][offset], coded, codedBytes );
+                std::memcpy ( &vecvecsData[sourceIndex][offset], coded, config.iPayloadBytes );
             else
-                std::memset ( &vecvecsData[sourceIndex][offset], 0, codedBytes );
+                std::memset ( &vecvecsData[sourceIndex][offset], 0, config.iPayloadBytes );
         }
         else
         {
-            // Null input intentionally invokes Opus PLC for a missing fragment/source.
-            opus_custom_decode ( decoder, coded, codedBytes, &vecvecsData[sourceIndex][offset], frameSamples );
+            // Null input intentionally invokes Opus PLC for a missing
+            // fragment/source, without treating PLC output as new fade input.
+            opus_custom_decode ( decoder, coded, config.iPayloadBytes, &vecvecsData[sourceIndex][offset], frameSamples );
         }
     }
 
@@ -1048,7 +1107,11 @@ void CServer::DecodeReceiveData ( const int sourceIndex, const int numSources )
         inputConversion.PutAll ( vecvecsData[sourceIndex] );
         inputConversion.Get ( vecvecsData[sourceIndex], SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex] );
     }
-    source.AdvanceFade();
+
+    // Match the legacy packet-driven fade semantics: only received source
+    // records advance the source fade. Timer ticks, PLC and buffered second
+    // halves do not make a silent or stalled source reach full gain.
+    source.AdvanceFade ( receivedBlocks );
 }
 
 void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSources )
@@ -1072,7 +1135,8 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
         const CServerSource&    source        = vecSources[sourceID];
         const CVector<int16_t>& input         = vecvecsData[sourceIndex];
         const int               inputChannels = vecNumAudioChannels[sourceIndex];
-        float                   gain          = target.GetGain ( sourceID ) * source.FadeInGain();
+        const float             sourceFade    = source.IsLegacy() ? vecSessions[source.ParentSessionID()].GetFadeInGain() : source.FadeInGain();
+        float                   gain          = target.GetGain ( sourceID ) * sourceFade;
         // Preserve legacy join behaviour: a target session's own sources use
         // their source fade only, while other sessions are also attenuated by
         // the target session's join fade.
@@ -1173,6 +1237,24 @@ CChannelCoreInfo CServer::GetSourceInfo ( const int sourceID ) const
 int CServer::GetLegacySourceID ( const int sessionID ) const
 {
     return MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ? vecSessionState[sessionID].iLegacySourceID : INVALID_INDEX;
+}
+
+int CServer::GetPrimarySourceID ( const int sessionID ) const
+{
+    if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
+        return INVALID_INDEX;
+
+    const CServerSessionState& state = vecSessionState[sessionID];
+    if ( state.iLegacySourceID != INVALID_INDEX && vecSources[state.iLegacySourceID].IsActive() )
+        return state.iLegacySourceID;
+
+    for ( int index = 0; index < state.iNumSources; ++index )
+    {
+        const int sourceID = state.vecSourceIDs[index];
+        if ( MathUtils::InRange<int> ( sourceID, 0, MAX_NUM_CHANNELS - 1 ) && vecSources[sourceID].IsActive() )
+            return sourceID;
+    }
+    return INVALID_INDEX;
 }
 
 int CServer::AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& sourceConfig, const bool legacy, const bool active )
@@ -1298,14 +1380,24 @@ void CServer::CreateAndSendRecorderStateForAllConChannels()
     }
 }
 
-void CServer::CreateOtherMuteStateChanged ( const int targetSessionID, const int sourceID, const bool isMuted )
+void CServer::CreateOtherMuteStateChanged ( const int mutingSessionID, const int mutedSourceID, const bool isMuted )
 {
-    Q_UNUSED ( targetSessionID )
-    if ( !MathUtils::InRange<int> ( sourceID, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[sourceID].IsActive() )
+    if ( !MathUtils::InRange<int> ( mutedSourceID, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[mutedSourceID].IsActive() )
         return;
-    const int ownerSessionID = vecSources[sourceID].ParentSessionID();
+
+    const int mutingSourceID = GetPrimarySourceID ( mutingSessionID );
+    if ( mutingSourceID == INVALID_INDEX )
+        return;
+
+    const int ownerSessionID = vecSources[mutedSourceID].ParentSessionID();
     if ( vecSessions[ownerSessionID].IsConnected() )
-        vecSessions[ownerSessionID].CreateMuteStateHasChangedMes ( sourceID, isMuted );
+    {
+        // The payload identifies who changed the mute state. In the legacy
+        // one-session/one-source model that was the muting channel ID, not the
+        // source which was muted. Use the session's primary visible source as
+        // the corresponding public identity after the session/source split.
+        vecSessions[ownerSessionID].CreateMuteStateHasChangedMes ( mutingSourceID, isMuted );
+    }
 }
 
 int CServer::GetNumberOfConnectedClients()

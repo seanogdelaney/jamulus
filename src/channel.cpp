@@ -551,9 +551,9 @@ void CChannel::Disconnect()
     // we only have to disconnect the channel if it is actually connected
     if ( IsConnected() )
     {
-        // set time out counter to a small value > 0 so that the next time a
-        // received audio block is queried, the disconnection is performed
-        // (assuming that no audio packet is received in the meantime)
+        // Set the timeout to a small value > 0 so that the next lifetime tick
+        // performs the disconnection (CServer::OnTimer on the server, GetData
+        // on the client), assuming no audio packet arrives in the meantime.
         iConTimeOut = 1; // a small number > 0
     }
 }
@@ -565,9 +565,9 @@ bool CChannel::AdvanceTimeOutCounter ( const int iNumSamples )
     if ( iConTimeOut <= 0 )
         return false;
 
-    // Keep the timeout unit identical to GetData(): audio samples, rather
-    // than timer callbacks. The caller supplies one server-frame duration,
-    // once per physical Poly-in session.
+    // Keep the timeout unit identical to the client-side GetData() path:
+    // audio samples, rather than timer callbacks. CServer supplies exactly
+    // one server-frame duration per connected physical session.
     iConTimeOut -= qMax ( 1, iNumSamples );
     if ( iConTimeOut > 0 )
         return false;
@@ -710,8 +710,20 @@ EGetDataStat CChannel::GetData ( CVector<uint8_t>& vecbyData, const int iNumByte
         // the socket access must be inside a mutex
         const bool bSockBufState = SockBuf.Get ( vecbyData, iNumBytes );
 
-        // decrease time-out counter
-        if ( iConTimeOut > 0 )
+        if ( bIsServer )
+        {
+            // Server timeout progression is deliberately independent of this
+            // buffer read. A legacy decoder may return early because codec or
+            // conversion state is not ready; that must not keep the physical
+            // session alive forever. CServer ages every session once per tick.
+            if ( iConTimeOut > 0 )
+                eGetStatus = bSockBufState ? GS_BUFFER_OK : GS_BUFFER_UNDERRUN;
+            else
+                eGetStatus = GS_CHAN_NOT_CONNECTED;
+        }
+        // The client still owns one channel and historically advances its
+        // timeout when consuming audio from the server.
+        else if ( iConTimeOut > 0 )
         {
             // subtract the number of samples of the current block since the
             // time out counter is based on samples not on blocks (definition:

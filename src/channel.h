@@ -102,9 +102,9 @@ public:
     bool IsConnected() const { return iConTimeOut > 0; }
     void Disconnect();
 
-    // Server-side Poly-in sessions do not call GetData(), so they need an
-    // explicit one-per-session timeout tick. The caller owns the CServer
-    // session mutex and performs the full teardown if this returns true.
+    // Server connection lifetime is advanced once per physical session by
+    // CServer, independently of whether any particular decoder reads audio.
+    // Client channels retain the historical GetData()-driven timeout.
     bool AdvanceTimeOutCounter ( int iNumSamples );
 
     // Poly-in uplink bypasses PutAudioData(). Advance the same physical
