@@ -241,6 +241,9 @@ and **MAY** in this section are to be interpreted as normative requirements.
 
 - A Poly-in client MUST begin as an ordinary legacy client and MUST continue
   ordinary legacy upload until it has received `POLY_IN_ACCEPT`.
+- Selecting Poly-in MUST establish a two-channel ordinary session transport
+  before connection. Unsupported, refused or timed-out negotiation therefore
+  continues as an ordinary stereo legacy session.
 - A server MUST NOT probe or reinterpret a legacy client. An old client never
   sends `REQ_POLY_IN_CAPS` and therefore remains legacy.
 - A generic acknowledgement of an unknown reliable message is **not** evidence
@@ -391,6 +394,7 @@ Defined version-1 reasons are:
 | 3 | unsupported | Requested feature/policy is not available. |
 | 4 | split message not ready | The required existing split-message support was not complete. |
 | 5 | invalid session state | The session was not in a state that permits configuration. |
+| 6 | stereo return required | The physical session had not negotiated a two-channel return profile. |
 
 A client receiving a syntactically valid reject MUST stop the pending Poly-in
 negotiation and retain/return to legacy upload for that connection.
@@ -522,9 +526,11 @@ loss handling and session-level timing are deliberate.
 
 ### Return stream and cadence
 
-The downstream stream remains the ordinary legacy transport profile negotiated
-at connection start. There is exactly one return encoder and return stream per
-physical session, regardless of number of sources.
+The downstream stream remains the ordinary transport negotiated at connection
+start. A Poly-in client negotiates that physical session as stereo before
+capability discovery, and a server MUST reject `POLY_IN_CONFIG` on a mono
+session. There is exactly one stereo return encoder and return stream per
+Poly-in session, regardless of number of sources.
 
 The server MUST send return packets at the negotiated return codec cadence. In
 particular, a 128-sample server callback feeding a 64-sample `CT_OPUS64` return

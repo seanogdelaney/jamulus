@@ -467,9 +467,9 @@ protected:
     int                iOPUSFrameSizeSamples;
     EAudioQuality      eAudioQuality;
     EAudChanConf       eAudioChannelConf;
-    // Poly-in adds independent uplink sources, not extra client sessions. This
-    // remains the one negotiated return and pre-acceptance fallback profile; the
-    // source array below owns only source-local capture/codec state.
+    // Poly-in adds independent uplink sources, not extra client sessions.
+    // This retains the saved ordinary input routing for fallback; the physical
+    // session transport is forced to stereo while Poly-in is selected.
     EAudChanConf                                           eLegacyAudioChannelConf;
     QVector<CPolyInAudioChannelConfig>                     vecPolyInAudioChannels;
     CClientPolyInSource                                    PolyInSources[PolyIn::kMaxSourceRows];
