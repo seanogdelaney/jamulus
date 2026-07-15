@@ -83,7 +83,7 @@ public:
 
     void OnChatTextReceivedCh ( QString strChatText ) { CreateAndSendChatTextForAllConChannels ( slotId - 1, strChatText ); }
 
-    void OnMuteStateHasChangedCh ( int iChanID, bool bIsMuted ) { CreateOtherMuteStateChanged ( slotId - 1, iChanID, bIsMuted ); }
+    void OnMuteStateHasChangedCh ( int mutedSourceID, bool bIsMuted ) { CreateOtherMuteStateChanged ( slotId - 1, mutedSourceID, bIsMuted ); }
 
     void OnServerAutoSockBufSizeChangeCh ( int iNNumFra ) { CreateAndSendJitBufMessage ( slotId - 1, iNNumFra ); }
 
@@ -94,7 +94,7 @@ protected:
 
     virtual void CreateAndSendChatTextForAllConChannels ( const int iCurChanID, const QString& strChatText ) = 0;
 
-    virtual void CreateOtherMuteStateChanged ( const int iCurChanID, const int iOtherChanID, const bool bIsMuted ) = 0;
+    virtual void CreateOtherMuteStateChanged ( const int mutingSessionID, const int mutedSourceID, const bool bIsMuted ) = 0;
 
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra ) = 0;
 };
@@ -151,12 +151,8 @@ public:
     const CPolyInSourceConfig& GetConfig() const { return Config; }
     CPolyInSourceConfig&       GetConfig() { return Config; }
 
-    float FadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
-    void  AdvanceFade()
-    {
-        if ( iFadeInCnt < iFadeInCntMax )
-            ++iFadeInCnt;
-    }
+    float  FadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    void   AdvanceFade ( const int frames = 1 ) { iFadeInCnt = std::min ( iFadeInCntMax, iFadeInCnt + std::max ( 0, frames ) ); }
     double UpdateAndGetLevelForMeterdB ( const CVector<int16_t>& data, const int samples, const bool stereo )
     {
         SignalLevelMeter.Update ( data, samples, stereo );
@@ -356,6 +352,7 @@ protected:
     void                  FreeAllSourcesForSession ( const int sessionID );
     CChannelCoreInfo      GetSourceInfo ( const int sourceID ) const;
     int                   GetLegacySourceID ( const int sessionID ) const;
+    int                   GetPrimarySourceID ( const int sessionID ) const;
     bool                  PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason );
     void                  ReleasePreparedPolyInSources ( const int sessionID );
     bool                  PutPolyInAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );
@@ -371,7 +368,7 @@ protected:
 
     virtual void CreateAndSendChatTextForAllConChannels ( const int iCurChanID, const QString& strChatText );
 
-    virtual void CreateOtherMuteStateChanged ( const int iCurChanID, const int iOtherChanID, const bool bIsMuted );
+    virtual void CreateOtherMuteStateChanged ( const int mutingSessionID, const int mutedSourceID, const bool bIsMuted );
 
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra );
 
@@ -385,6 +382,8 @@ protected:
     static void MixEncodeTransmitDataBlocks ( CServer* pServer, const int startSession, const int stopSession, const int numSources );
 
     void DecodeReceiveData ( const int sourceIndex, const int numSources );
+    void DecodeLegacySource ( int sourceIndex, int sourceID, int sessionID );
+    void DecodePolyInSource ( int sourceIndex, int sourceID );
 
     void MixEncodeTransmitData ( const int sessionIndex, const int numSources );
     bool ReadPolyInFrame ( const int sessionID, const int blockIndex );
