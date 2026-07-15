@@ -292,8 +292,43 @@ jobs:
         if:                         matrix.config.building_container == 'ubuntu:20.04'
         run:                        |
           set -eu
-          apt-get -qq update
-          apt-get install -y software-properties-common sudo curl
+          apt_get_with_retry() {
+            attempt=1
+            while [ "$attempt" -le 5 ]; do
+              if apt-get -qq \
+                  -o Acquire::Retries=3 \
+                  -o Acquire::http::Timeout=30 \
+                  -o Acquire::https::Timeout=30 \
+                  "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                return 1
+              fi
+              sleep $((attempt * 10))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          # The ARM Ubuntu image defaults to ports.ubuntu.com over plain HTTP,
+          # which is intermittently unreachable from hosted ARM runners.
+          # Bootstrap CA certificates over the signed Ubuntu archive if the
+          # minimal image does not contain them, then require verified HTTPS.
+          if grep -q 'http://ports.ubuntu.com/ubuntu-ports' /etc/apt/sources.list; then
+            sed -i 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list
+            if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then
+              apt_get_with_retry \
+                -o Acquire::https::Verify-Peer=false \
+                -o APT::Update::Error-Mode=any \
+                update
+              apt_get_with_retry \
+                -o Acquire::https::Verify-Peer=false \
+                --no-install-recommends -y install ca-certificates
+            fi
+          fi
+
+          apt_get_with_retry -o APT::Update::Error-Mode=any update
+          apt_get_with_retry --no-install-recommends -y install software-properties-common sudo curl
           # Launchpad key retrieval occasionally times out on hosted runners.
           for attempt in 1 2 3; do
             if add-apt-repository -y ppa:git-core/ppa; then
@@ -307,8 +342,8 @@ jobs:
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          apt-get -qq update
-          apt-get -qq -y install git-core gh
+          apt_get_with_retry -o APT::Update::Error-Mode=any update
+          apt_get_with_retry -y install git-core gh
           # Github Runner environments usually whitelist the default checkout directory for git.
           # However, when using containers, we have to do that manually in order for git commands to work
           # (e.g. in Jamulus.pro's VERSION logic):
