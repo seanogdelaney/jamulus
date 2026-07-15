@@ -823,8 +823,8 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
         Sound.Stop();
     }
 
-    // Preserve the last normal input profile. Poly-in is an uplink routing
-    // mode and must not overwrite the established return/fallback profile.
+    // Preserve the last ordinary input profile. Poly-in forces a stereo
+    // session transport but still needs this profile for fallback processing.
     if ( eNAudChanConf != CC_POLY_IN )
         eLegacyAudioChannelConf = eNAudChanConf;
     eAudioChannelConf = eNAudChanConf;
@@ -1235,6 +1235,8 @@ QString CClient::PolyInRejectReason ( const uint8_t reason ) const
         return tr ( "split-message setup was incomplete" );
     case PolyInProtocol::kRejectInvalidSessionState:
         return tr ( "the session was no longer in legacy startup" );
+    case PolyInProtocol::kRejectStereoReturnRequired:
+        return tr ( "the session return profile was not stereo" );
     default:
         return tr ( "an unspecified server policy rejected it" );
     }
@@ -1243,7 +1245,8 @@ QString CClient::PolyInRejectReason ( const uint8_t reason ) const
 void CClient::BeginPolyInNegotiation()
 {
     // This negotiation overlays ordinary startup. Until ACCEPT is validated,
-    // ProcessAudioDataIntern continues the saved legacy upload unchanged.
+    // ProcessAudioDataIntern continues ordinary legacy upload on the stereo
+    // session transport selected for Poly-in.
     StopPolyInDeadline();
     PolyInNegotiation.Reset();
     bOwnedServerFaderIDs.fill ( false );
@@ -1928,9 +1931,11 @@ void CClient::Stop()
 
 void CClient::Init()
 {
-    // Poly-in changes only the uplink.  Keep this legacy shape as the stable
-    // return-mix/fallback CNetworkTransportProps profile throughout promotion.
-    const EAudChanConf eTransportChannelConf = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
+    // Poly-in/Stereo-out fixes the physical session to a stereo transport
+    // before connection. Negotiation can therefore fall back to ordinary
+    // legacy audio without changing codec, packet or return-buffer geometry.
+    const EAudChanConf eInputChannelConf = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
+    const EAudChanConf eTransportChannelConf = eAudioChannelConf == CC_POLY_IN ? CC_STEREO : eAudioChannelConf;
 
     // check if possible frame size factors are supported
     const int iFraSizePreffered = SYSTEM_FRAME_SIZE_SAMPLES * FRAME_SIZE_FACTOR_PREFERRED;
@@ -2186,11 +2191,12 @@ void CClient::Init()
     Channel.SetAudioStreamProperties ( eAudioCompressionType, iCeltNumCodedBytes, iSndCrdFrameSizeFactor, iNumAudioChannels );
 
     // Allocate and configure all Poly-in source-local codec/PCM state here,
-    // never in the callback. The return channel above deliberately remains legacy.
+    // never in the callback. The return still uses the ordinary session codec.
     ConfigurePolyInSources();
 
-    // init reverberation
-    AudioReverb.Init ( eTransportChannelConf, iStereoBlockSizeSam, SYSTEM_SAMPLE_RATE_HZ );
+    // Reverb follows the saved fallback input routing, not the forced stereo
+    // transport used while Poly-in is selected.
+    AudioReverb.Init ( eInputChannelConf, iStereoBlockSizeSam, SYSTEM_SAMPLE_RATE_HZ );
 
     // init the sound card conversion buffers
     if ( bSndCrdConversionBufferRequired )
@@ -2296,8 +2302,9 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     int            iUnused       = 0;
     unsigned char* pCurCodedData = nullptr;
 
-    // Poly-in changes only upstream capture. Downstream decoding and the
-    // pre-acceptance upload retain the single legacy session profile.
+    // The saved standard mode controls fallback input processing. The
+    // network transport is nevertheless stereo for the lifetime of a Poly-in
+    // connection, including unsupported, refused and timed-out negotiation.
     const EAudChanConf      eInputProfile   = eAudioChannelConf == CC_POLY_IN ? eLegacyAudioChannelConf : eAudioChannelConf;
     const CVector<int16_t>& captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
     const int               captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
@@ -2370,7 +2377,9 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
                 }
             }
         }
-        if ( eInputProfile == CC_MONO_IN_STEREO_OUT )
+        // A Poly-in connection always has a stereo legacy transport. Expand
+        // a saved mono fallback only after its normal mono processing.
+        if ( iNumAudioChannels == 2 && eInputProfile != CC_STEREO )
         {
             for ( i = iMonoBlockSizeSam - 1, j = iStereoBlockSizeSam - 2; i >= 0; i--, j -= 2 )
             {
@@ -2468,7 +2477,7 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     // check if channel is connected and if we do not have the initialization phase
     if ( Channel.IsConnected() && ( !bIsInitializationPhase ) )
     {
-        if ( eInputProfile == CC_MONO )
+        if ( iNumAudioChannels == 1 )
         {
             // copy mono data in stereo sound card buffer (note that since the input
             // and output is the same buffer, we have to start from the end not to

@@ -48,6 +48,7 @@ constexpr uint8_t kRejectCapacity             = 2;
 constexpr uint8_t kRejectUnsupported          = 3;
 constexpr uint8_t kRejectSplitMessageNotReady = 4;
 constexpr uint8_t kRejectInvalidSessionState  = 5;
+constexpr uint8_t kRejectStereoReturnRequired = 6;
 
 bool EncodeCaps ( CVector<uint8_t>& out );
 bool DecodeCaps ( const CVector<uint8_t>& in );
