@@ -95,6 +95,37 @@ void TestNegotiationFallback()
     client.OnTimeout();
     assert ( client.State() == NegotiationState::Legacy && !client.CanSendPolyIn() );
 
+    Negotiation incompatibleVersion;
+    assert ( incompatibleVersion.Begin() );
+    assert ( incompatibleVersion.OnSplitCapabilityReceived() );
+    assert ( incompatibleVersion.OnCapabilityRequestSent() );
+    assert ( !incompatibleVersion.OnCapabilityResponse ( static_cast<uint8_t> ( kVersion + 1 ) ) );
+    assert ( incompatibleVersion.State() == NegotiationState::AwaitingCapabilityResponse );
+    incompatibleVersion.OnTimeout();
+    assert ( incompatibleVersion.State() == NegotiationState::Legacy && !incompatibleVersion.CanSendPolyIn() );
+
+    Negotiation configurationTimeout;
+    assert ( configurationTimeout.Begin() );
+    assert ( configurationTimeout.OnSplitCapabilityReceived() );
+    assert ( configurationTimeout.OnCapabilityRequestSent() );
+    assert ( configurationTimeout.OnCapabilityResponse ( kVersion ) );
+    assert ( configurationTimeout.OnConfigurationRequestSent() );
+    configurationTimeout.OnTimeout();
+    assert ( configurationTimeout.State() == NegotiationState::Legacy && !configurationTimeout.CanSendPolyIn() );
+
+    Negotiation refused;
+    assert ( refused.Begin() );
+    assert ( refused.OnSplitCapabilityReceived() );
+    assert ( refused.OnCapabilityRequestSent() );
+    assert ( refused.OnCapabilityResponse ( kVersion ) );
+    assert ( refused.OnConfigurationRequestSent() );
+    refused.OnReject();
+    assert ( refused.State() == NegotiationState::Refused && !refused.CanSendPolyIn() );
+    // Refused is a legacy-upload state, but a later connection may start a new
+    // negotiation after the state object is reused.
+    assert ( refused.Begin() );
+    assert ( refused.State() == NegotiationState::AwaitingSplitCapability );
+
     assert ( client.Begin() );
     assert ( client.OnSplitCapabilityReceived() );
     assert ( client.State() == NegotiationState::CapabilityQueued );
@@ -124,6 +155,10 @@ void TestNegotiationFallback()
     assert ( !client.OnActivation ( 6 ) );
     assert ( client.OnActivation ( 7 ) );
     assert ( client.State() == NegotiationState::Active );
+    client.OnTimeout();
+    assert ( client.State() == NegotiationState::Active && client.CanSendPolyIn() );
+    client.Reset();
+    assert ( client.State() == NegotiationState::Legacy && client.Generation() == 0 );
 }
 
 void TestIngressAutoJitterAndReanchor()

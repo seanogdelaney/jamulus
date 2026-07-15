@@ -140,7 +140,7 @@ public:
 
     void  SetGain ( const int iChanID, const float fNewGain );
     float GetGain ( const int iChanID );
-    float GetFadeInGain() { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    float GetFadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
 
     void  SetPan ( const int iChanID, const float fNewPan );
     float GetPan ( const int iChanID );
@@ -174,7 +174,7 @@ public:
         SockBuf.GetErrorRates ( vecErrRates, dLimit, dMaxUpLimit );
     }
 
-    EAudComprType GetAudioCompressionType() { return eAudioCompressionType; }
+    EAudComprType GetAudioCompressionType() const { return eAudioCompressionType; }
     int           GetNumAudioChannels() const { return iNumAudioChannels; }
 
     // network protocol interface

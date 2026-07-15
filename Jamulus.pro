@@ -36,6 +36,16 @@ QT += network \
     xml \
     concurrent
 
+# Focused server regression tests reuse the production server-only source set.
+# Build in a shadow directory with:
+#   qmake ../Jamulus.pro CONFIG+=serverlegacytests
+contains(CONFIG, serverlegacytests) {
+    CONFIG += serveronly headless nojsonrpc console testcase
+    CONFIG -= debug_and_release lrelease embed_translations
+    QT += testlib
+    TARGET = server_legacy_tests
+}
+
 contains(CONFIG, "nosound") {
     CONFIG -= "nosound"
     CONFIG += "serveronly"
@@ -515,6 +525,20 @@ SOURCES += src/plugins/audioreverb.cpp \
     src/recorder/jamrecorder.cpp \
     src/recorder/creaperproject.cpp \
     src/recorder/cwavestream.cpp
+
+contains(CONFIG, serverlegacytests) {
+    HEADERS -= src/settings.h
+    SOURCES -= src/main.cpp \
+        src/settings.cpp
+    SOURCES += tests/server_legacy_test.cpp
+    macx {
+        # The focused server tests do not instantiate an audio backend. A
+        # normal macOS build adds CoreAudio before this server-only source
+        # selection, so remove it explicitly to keep the test target headless.
+        HEADERS -= src/sound/coreaudio-mac/sound.h
+        SOURCES -= src/sound/coreaudio-mac/sound.cpp
+    }
+}
 
 !contains(CONFIG, "serveronly") {
     SOURCES += src/client.cpp \
