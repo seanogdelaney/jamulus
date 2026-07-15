@@ -412,10 +412,18 @@ The timer builds two independent active lists:
 - `vecChanIDsCurConChan`: active source/fader IDs;
 - `vecSessionIDsCurConSession`: connected physical session IDs.
 
-`DecodeReceiveData()` iterates the source list. For legacy sources it reads the
-existing `CChannel` socket buffer; for Poly-in sources it consumes the payload
-staged by `ReadPolyInFrame()`. The resulting PCM then follows the ordinary
-metering, recording, fade and mixing path.
+Before either list is processed, `OnTimer()` advances the sample-based timeout
+once for every connected physical session. Session lifetime therefore cannot be
+skipped by a decoder early-return, conversion-buffer shortcut or absent codec
+configuration.
+
+`DecodeReceiveData()` then dispatches visibly to two input paths. The legacy
+helper retains the existing `CChannel` socket-buffer and decode behaviour; the
+Poly-in helper consumes payloads staged by `ReadPolyInFrame()` and applies
+source-local PLC/silence. Both produce ordinary source PCM for metering,
+recording and mixing. Legacy fade remains driven by valid legacy packet arrival;
+Poly-in source fade advances only for source records actually received, not for
+timer ticks or PLC output.
 
 `MixEncodeTransmitData()` iterates the target-session list. For one target
 session it mixes every active source using that session's existing gain/pan
@@ -458,7 +466,7 @@ ordinary server mixer channels with a shared parent session.
 | `CServer::PutPolyInAudioData()` | Existing prepared/active session and matching generation | Valid fragment is owned by the session ingress ring; no visible state is changed in the socket thread. |
 | `CServer::ActivatePreparedSources()` | Prepared state and matching generation, called from the queued server event | Every reserved source is active, the placeholder is retired and the session playout cursor starts at the first accepted sequence. |
 | `CServer::ReadPolyInFrame()` | Active session; one logical sequence due for playout | Per-source payload-presence slots represent that sequence; shared jitter/sequence state advances once. |
-| `CServer::DecodeReceiveData()` | Active source ID selected by the timer | One source produces PCM through normal decode/PLC, metering, fade and recording semantics. |
+| `CServer::DecodeReceiveData()` | Active source ID selected by the timer | Legacy and Poly-in ingress are dispatched to separate helpers; one source produces PCM through the appropriate decode/PLC semantics. |
 | `CServer::MixEncodeTransmitData()` | Connected target session and decoded active-source PCM | All source faders are mixed through the target's gain/pan matrix and one return stream is encoded for that session. |
 | `CServer::FreeChannel()` | Valid physical session slot | Protocol/endpoint state, every active or reserved child source, ingress generation and lookup order are retired together. |
 
@@ -489,7 +497,8 @@ otherwise expiry releases the complete hidden map and restores `ST_LEGACY`.
 `CServer::FreeChannel()` resets the parent `CChannel`, frees every source whose
 `ParentSessionID()` matches, resets `CServerSessionState` and returns the session
 slot to endpoint-order lookup. This same path covers explicit disconnect and
-sample-based timeout recovery.
+sample-based timeout recovery. Timeout progression occurs once per physical
+session in `OnTimer()`, independently of source decode.
 
 The two configured limits intentionally count different resources:
 
@@ -532,3 +541,10 @@ the functions above:
    only missing sources receive PLC/silence.
 6. **Reconnect:** old generation, ingress contents, fader ownership and reliable
    messages cannot survive slot reuse.
+7. **Unconfigured or malformed legacy input:** a temporary legacy placeholder
+   still reaches session timeout even if codec setup never completes and no
+   decoder consumes its socket buffer.
+8. **Legacy regression matrix:** mono/stereo and OPUS/OPUS64/Raw standard clients
+   retain their existing receive/decode path; fade advances only on valid input,
+   and mute-state notifications identify the muting participant rather than the
+   source which was muted.
