@@ -1104,7 +1104,12 @@ bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int capt
         }
         else
         {
-            opus_custom_encode ( source.pEncoder, &encodedPCM[0], iOPUSFrameSizeSamples, &source.vecCoded[0], source.Config.iPayloadBytes );
+            // Each Poly-in source record has a fixed payload size. Do not
+            // publish a partial logical frame if one source encode fails.
+            const int encodedBytes =
+                opus_custom_encode ( source.pEncoder, &encodedPCM[0], iOPUSFrameSizeSamples, &source.vecCoded[0], source.Config.iPayloadBytes );
+            if ( encodedBytes != source.Config.iPayloadBytes )
+                return false;
         }
         records[sourceIndex] = { source.Config.iKey, &source.vecCoded[0], source.Config.iPayloadBytes };
     }
