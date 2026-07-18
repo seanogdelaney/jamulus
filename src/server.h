@@ -52,6 +52,7 @@
 #include <QFileInfo>
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #ifdef USE_OPUS_SHARED_LIB
 #    include "opus/opus_custom.h"
 #else
@@ -423,8 +424,10 @@ protected:
     int    iCurNumSources;                    // active plus temporary source-map reservations
     QMutex MutexChanOrder;
 
-    CProtocol         ConnLessProtocol;
-    QMutex            Mutex;
+    CProtocol ConnLessProtocol;
+    // Guards session and source state shared by socket, event and JSON-RPC
+    // threads.
+    std::mutex        Mutex;
     QMutex            MutexWelcomeMessage;
     std::atomic<bool> bChannelIsNowDisconnected;
 
