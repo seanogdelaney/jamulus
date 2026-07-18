@@ -1031,7 +1031,11 @@ void CServer::DecodeLegacySource ( const int sourceIndex, const int sourceID, co
         }
         else
         {
-            opus_custom_decode ( decoder, coded, codedBytes, &vecvecsData[sourceIndex][offset], frameSamples );
+            // A failed or short fixed-size decode contributes silence rather
+            // than uninitialised or stale PCM.
+            const int decodedSamples = opus_custom_decode ( decoder, coded, codedBytes, &vecvecsData[sourceIndex][offset], frameSamples );
+            if ( decodedSamples != frameSamples )
+                std::memset ( &vecvecsData[sourceIndex][offset], 0, frameSamples * vecNumAudioChannels[sourceIndex] * sizeof ( int16_t ) );
         }
     }
 
@@ -1098,7 +1102,9 @@ void CServer::DecodePolyInSource ( const int sourceIndex, const int sourceID )
         {
             // Null input intentionally invokes Opus PLC for a missing
             // fragment/source, without treating PLC output as new fade input.
-            opus_custom_decode ( decoder, coded, config.iPayloadBytes, &vecvecsData[sourceIndex][offset], frameSamples );
+            const int decodedSamples = opus_custom_decode ( decoder, coded, config.iPayloadBytes, &vecvecsData[sourceIndex][offset], frameSamples );
+            if ( decodedSamples != frameSamples )
+                std::memset ( &vecvecsData[sourceIndex][offset], 0, frameSamples * vecNumAudioChannels[sourceIndex] * sizeof ( int16_t ) );
         }
     }
 
@@ -1218,7 +1224,11 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
         }
         else
         {
-            opus_custom_encode ( encoder, &out[offset], frameSamples, &coded[0], codedBytes );
+            // Drop a failed or short fixed-size return encode rather than
+            // sending stale trailing bytes as a valid packet.
+            const int encodedBytes = opus_custom_encode ( encoder, &out[offset], frameSamples, &coded[0], codedBytes );
+            if ( encodedBytes != codedBytes )
+                continue;
         }
         target.PrepAndSendPacket ( &Socket, coded, codedBytes );
     }
