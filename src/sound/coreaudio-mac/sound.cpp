@@ -1009,15 +1009,15 @@ OSStatus CSound::callbackIO ( AudioDeviceID inDevice,
     // both, the input and output device use the same callback function
     QMutexLocker locker ( &pSound->MutexAudioProcessCallback );
 
-    const int           iCoreAudioBufferSizeMono = pSound->iCoreAudioBufferSizeMono;
+    const int iCoreAudioBufferSizeMono = pSound->iCoreAudioBufferSizeMono;
     // Multichannel input routing is derived below while this callback mutex
     // remains held; only the output selection needs a local snapshot.
-    const int           iSelOutBufferLeft        = pSound->iSelOutBufferLeft;
-    const int           iSelOutBufferRight       = pSound->iSelOutBufferRight;
-    const int           iSelOutInterlChLeft      = pSound->iSelOutInterlChLeft;
-    const int           iSelOutInterlChRight     = pSound->iSelOutInterlChRight;
-    const CVector<int>& vecNumInBufChan          = pSound->vecNumInBufChan;
-    const CVector<int>& vecNumOutBufChan         = pSound->vecNumOutBufChan;
+    const int           iSelOutBufferLeft    = pSound->iSelOutBufferLeft;
+    const int           iSelOutBufferRight   = pSound->iSelOutBufferRight;
+    const int           iSelOutInterlChLeft  = pSound->iSelOutInterlChLeft;
+    const int           iSelOutInterlChRight = pSound->iSelOutInterlChRight;
+    const CVector<int>& vecNumInBufChan      = pSound->vecNumInBufChan;
+    const CVector<int>& vecNumOutBufChan     = pSound->vecNumOutBufChan;
 
     if ( ( inDevice == pSound->CurrentAudioInputDeviceID ) && inInputData && pSound->bRun )
     {

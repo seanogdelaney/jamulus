@@ -429,8 +429,8 @@ protected:
     // Guards session and source state shared by socket, event and JSON-RPC
     // threads.
     std::mutex Mutex;
-    QMutex MutexWelcomeMessage;
-    bool   bChannelIsNowDisconnected;
+    QMutex     MutexWelcomeMessage;
+    bool       bChannelIsNowDisconnected;
 
     // audio encoder/decoder
     OpusCustomMode*    Opus64Mode[MAX_NUM_CHANNELS];

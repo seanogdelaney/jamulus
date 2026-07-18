@@ -1540,7 +1540,7 @@ void CServer::OnProtocolCLMessageReceived ( int iRecID, CVector<uint8_t> data, C
 void CServer::OnProtocolMessageReceived ( int counter, int id, CVector<uint8_t> data, CHostAddress address )
 {
     std::lock_guard<std::mutex> locker ( Mutex );
-    const int    sessionID = FindChannel ( address );
+    const int                   sessionID = FindChannel ( address );
     if ( sessionID != INVALID_CHANNEL_ID )
         vecSessions[sessionID].PutProtocolData ( counter, id, data, address );
 }
@@ -1949,7 +1949,7 @@ void CServer::customEvent ( QEvent* pEvent )
     case kServerEventPolyInPromotion:
     {
         std::lock_guard<std::mutex> locker ( Mutex );
-        const int    sessionID = event->iChanNum;
+        const int                   sessionID = event->iChanNum;
         if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
             break;
 
@@ -1978,7 +1978,7 @@ void CServer::customEvent ( QEvent* pEvent )
     case kServerEventPolyInJitterReport:
     {
         std::lock_guard<std::mutex> locker ( Mutex );
-        const int    sessionID = event->iChanNum;
+        const int                   sessionID = event->iChanNum;
         if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
             break;
 
