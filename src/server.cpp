@@ -414,6 +414,10 @@ void CServer::CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNum
 
 CServer::~CServer()
 {
+    // The UDP worker enters Poly-in ingress and codec paths, so join it before
+    // destroying the state used by those paths.
+    Socket.Stop();
+
     for ( int i = 0; i < MAX_NUM_CHANNELS; i++ )
     {
         // free audio encoders and decoders
