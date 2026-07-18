@@ -442,7 +442,7 @@ void CServer::SendProtMessage ( int iChID, CVector<uint8_t> vecMessage )
 
 void CServer::OnNewConnection ( int iChID, int iTotChans, CHostAddress RecHostAddr )
 {
-    QMutexLocker locker ( &Mutex );
+    std::lock_guard<std::mutex> locker ( Mutex );
 
     // inform the client about its own ID at the server (note that this
     // must be the first message to be sent for a new connection)
@@ -629,7 +629,7 @@ void CServer::OnAboutToQuit()
     // if enabled, disconnect all clients on quit
     if ( bDisconnectAllClientsOnQuit )
     {
-        QMutexLocker locker ( &Mutex );
+        std::lock_guard<std::mutex> locker ( Mutex );
         for ( int i = 0; i < MAX_NUM_CHANNELS; i++ )
         {
             if ( vecSessions[i].IsConnected() )
@@ -716,7 +716,7 @@ void CServer::OnTimer()
     bChannelIsNowDisconnected = false;
 
     {
-        QMutexLocker locker ( &Mutex );
+        std::lock_guard<std::mutex> locker ( Mutex );
 
         // Connection lifetime belongs to the physical session, not to a source
         // decoder. Age every connected session exactly once per timer tick so
@@ -1530,13 +1530,13 @@ void CServer::DumpChannels ( const QString& title )
 
 void CServer::OnProtocolCLMessageReceived ( int iRecID, CVector<uint8_t> data, CHostAddress address )
 {
-    QMutexLocker locker ( &Mutex );
+    std::lock_guard<std::mutex> locker ( Mutex );
     ConnLessProtocol.ParseConnectionLessMessageBody ( data, iRecID, address );
 }
 
 void CServer::OnProtocolMessageReceived ( int counter, int id, CVector<uint8_t> data, CHostAddress address )
 {
-    QMutexLocker locker ( &Mutex );
+    std::lock_guard<std::mutex> locker ( Mutex );
     const int    sessionID = FindChannel ( address );
     if ( sessionID != INVALID_CHANNEL_ID )
         vecSessions[sessionID].PutProtocolData ( counter, id, data, address );
@@ -1576,7 +1576,7 @@ bool CServer::PutPolyInAudioData ( const CVector<uint8_t>& packet, const int pac
 
 bool CServer::PutAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID )
 {
-    QMutexLocker locker ( &Mutex );
+    std::lock_guard<std::mutex> locker ( Mutex );
     // Dispatch the extension magic before legacy admission; otherwise a Poly-in
     // datagram from an unknown endpoint could create a standard session.
     if ( packetBytes >= 2 && packet[0] == static_cast<uint8_t> ( PolyIn::kMagic >> 8 ) &&
@@ -1600,6 +1600,9 @@ void CServer::GetConCliParam ( CVector<CHostAddress>&     addresses,
                                CVector<int>&              networkFactors,
                                CVector<CChannelCoreInfo>& info )
 {
+    // Source allocation runs on the socket worker; serialize this JSON-RPC
+    // snapshot with updates to the same session state.
+    std::lock_guard<std::mutex> locker ( Mutex );
     addresses.Init ( MAX_NUM_CHANNELS );
     names.Init ( MAX_NUM_CHANNELS );
     jitterFrames.Init ( MAX_NUM_CHANNELS );
@@ -1942,7 +1945,7 @@ void CServer::customEvent ( QEvent* pEvent )
 
     case kServerEventPolyInPromotion:
     {
-        QMutexLocker locker ( &Mutex );
+        std::lock_guard<std::mutex> locker ( Mutex );
         const int    sessionID = event->iChanNum;
         if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
             break;
@@ -1971,7 +1974,7 @@ void CServer::customEvent ( QEvent* pEvent )
 
     case kServerEventPolyInJitterReport:
     {
-        QMutexLocker locker ( &Mutex );
+        std::lock_guard<std::mutex> locker ( Mutex );
         const int    sessionID = event->iChanNum;
         if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
             break;

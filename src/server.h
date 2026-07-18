@@ -51,6 +51,7 @@
 #include <QHostAddress>
 #include <QFileInfo>
 #include <algorithm>
+#include <mutex>
 #ifdef USE_OPUS_SHARED_LIB
 #    include "opus/opus_custom.h"
 #else
@@ -423,9 +424,11 @@ protected:
     QMutex MutexChanOrder;
 
     CProtocol ConnLessProtocol;
-    QMutex    Mutex;
-    QMutex    MutexWelcomeMessage;
-    bool      bChannelIsNowDisconnected;
+    // Guards session and source state shared by socket, event and JSON-RPC
+    // threads.
+    std::mutex Mutex;
+    QMutex MutexWelcomeMessage;
+    bool   bChannelIsNowDisconnected;
 
     // audio encoder/decoder
     OpusCustomMode*    Opus64Mode[MAX_NUM_CHANNELS];
