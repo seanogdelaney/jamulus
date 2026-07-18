@@ -1,3 +1,15 @@
+### 4.0.0sdel8 ###
+
+- Reject failed or short fixed-size Opus encode/decode results instead of publishing partial Poly-in frames or mixing stale PCM.
+
+- Serialize JSON-RPC source snapshots with session/source allocation and stop UDP ingress before destroying Poly-in codec and session state.
+
+- Make socket-worker shutdown atomic, idempotent and fully joined before owners destroy shared state.
+
+- Remove stale CoreAudio multichannel input snapshots left behind by the current callback routing path.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel7 ###
 
 - Preserve standard-client session lifetime, fade and decoder behaviour after the session/source split, including cleanup of malformed phantom UDP clients.
