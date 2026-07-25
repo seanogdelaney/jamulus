@@ -63,6 +63,8 @@
 #include "socket.h"
 #include "channel.h"
 #include "polyin.h"
+#include "polyinplayout.h"
+#include "polysession.h"
 #include "util.h"
 #include "serverlogging.h"
 #include "serverlist.h"
@@ -187,53 +189,18 @@ private:
 class CServerSessionState
 {
 public:
-    enum EState
-    {
-        ST_LEGACY,
-        ST_PREPARED,
-        ST_ACTIVE
-    };
-
-    CServerSessionState() : vecSourceIDs ( MAX_NUM_CHANNELS ) {}
-
     void Reset()
     {
-        eState                          = ST_LEGACY;
-        iLegacySourceID                 = INVALID_INDEX;
-        iNumSources                     = 0;
-        iGeneration                     = 0;
-        bHaveNextSequence               = false;
-        iNextSequence                   = 0;
-        iFirstSequence                  = 0;
-        bIngressPrimed                  = false;
-        iIngressTargetFrames            = DEF_NET_BUF_SIZE_NUM_BL;
-        bIngressAuto                    = false;
-        bPolyInHalfFramePending         = false;
-        bPromotionQueued                = false;
-        iPromotionFirstSequence         = 0;
-        iPreparedExpirySamplesRemaining = 0;
-        Ingress.Reset();
+        Sources.Reset();
+        Playout.Reset();
+        Cadence.Reset();
+        bIngressAuto = false;
     }
 
-    EState       eState          = ST_LEGACY;
-    int          iLegacySourceID = INVALID_INDEX;
-    CVector<int> vecSourceIDs; // reserved while prepared; active after first frame
-    int          iNumSources             = 0;
-    uint16_t     iGeneration             = 0;
-    bool         bHaveNextSequence       = false;
-    uint32_t     iNextSequence           = 0;
-    uint32_t     iFirstSequence          = 0;
-    bool         bIngressPrimed          = false;
-    int          iIngressTargetFrames    = DEF_NET_BUF_SIZE_NUM_BL;
-    bool         bIngressAuto            = false;
-    bool         bPolyInHalfFramePending = false;
-    // The first multiplexed packet is received in the high-priority socket
-    // thread.  Promotion, protocol messages and recorder/UI signals must be
-    // deferred to CServer's QObject thread.
-    bool                   bPromotionQueued                = false;
-    uint32_t               iPromotionFirstSequence         = 0;
-    int                    iPreparedExpirySamplesRemaining = 0;
-    PolyIn::SessionIngress Ingress;
+    PolyIn::SessionSourceMap Sources;
+    PolyIn::SessionPlayout   Playout;
+    PolyIn::FrameCadence     Cadence;
+    bool                     bIngressAuto = false;
 };
 
 class CServer : public QObject, public CServerSlots<MAX_NUM_CHANNELS>
