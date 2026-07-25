@@ -806,7 +806,7 @@ void CServer::OnTimer()
         return;
     }
 
-    const bool bSendChannelLevels = CreateLevelsForAllConChannels ( iNumSources, vecNumAudioChannels, vecvecsData, vecChannelLevels );
+    const bool bSendChannelLevels = CreateLevelsForAllConChannels ( iNumSources );
     for ( int sourceIndex = 0; sourceIndex < iNumSources; ++sourceIndex )
     {
         const int sourceID  = vecChanIDsCurConChan[sourceIndex];

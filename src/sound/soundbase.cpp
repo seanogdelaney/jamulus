@@ -52,10 +52,10 @@ CSoundBase::CSoundBase ( const QString& strNewSystemDriverTechniqueName,
                          void* pParg ) :
     fpProcessCallback ( fpNewProcessCallback ),
     pProcessCallbackArg ( pParg ),
-    bRun ( false ),
-    bCallbackEntered ( false ),
     iCapturedInputChannels ( 0 ),
     bCaptureProvidedForCallback ( false ),
+    bRun ( false ),
+    bCallbackEntered ( false ),
     strSystemDriverTechniqueName ( strNewSystemDriverTechniqueName ),
     iCtrlMIDIChannel ( INVALID_MIDI_CH ),
     aMidiCtls ( 128 )
