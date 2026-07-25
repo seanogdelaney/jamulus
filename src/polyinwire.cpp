@@ -342,10 +342,15 @@ EPlayoutDiscontinuity SessionIngress::GetPlayoutDiscontinuity ( const uint32_t n
     return haveHighestSequence ? DetectPlayoutDiscontinuity ( nextPlayoutSequence, highestSequence, ringSlots.size() ) : EPlayoutDiscontinuity::None;
 }
 
-bool SessionIngress::Put ( const uint8_t* const data, const size_t length, bool* const firstFragmentForSequence )
+bool SessionIngress::Put ( const uint8_t* const data,
+                           const size_t         length,
+                           bool* const          firstFragmentForSequence,
+                           uint32_t* const      acceptedSequence )
 {
     if ( firstFragmentForSequence != nullptr )
         *firstFragmentForSequence = false;
+    if ( acceptedSequence != nullptr )
+        *acceptedSequence = 0;
     ParsedFragment fragment;
     if ( !ParseFragment ( data, length, fragment ) || ( fragment.generation != configuredGeneration ) ||
          ( ( fragment.flags & 1 ) != ( rawSession ? 1 : 0 ) ) || ringSlots.empty() || IsTooOld ( fragment.sequence ) )
@@ -405,6 +410,8 @@ bool SessionIngress::Put ( const uint8_t* const data, const size_t length, bool*
     }
     if ( firstFragmentForSequence != nullptr )
         *firstFragmentForSequence = firstFragment;
+    if ( acceptedSequence != nullptr )
+        *acceptedSequence = fragment.sequence;
     return true;
 }
 

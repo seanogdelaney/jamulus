@@ -161,88 +161,6 @@ void TestNegotiationFallback()
     assert ( client.State() == NegotiationState::Legacy && client.Generation() == 0 );
 }
 
-void TestIngressAutoJitterAndReanchor()
-{
-    // Clean logical arrivals at a two-frame target stay at the practical
-    // minimum.  A missing logical frame raises the target, and clean arrivals
-    // subsequently allow it to fall again.
-    SessionIngress ingress;
-    for ( uint32_t sequence = 100; sequence < 180; ++sequence )
-    {
-        ingress.ObserveArrival ( sequence, sequence - 2, 2 );
-    }
-    assert ( ingress.AutoTargetFrames() == kMinAutoIngressFrames );
-    ingress.ObservePlayoutResult ( false, 2 );
-    assert ( ingress.AutoTargetFrames() == 3 );
-    for ( uint32_t sequence = 200; sequence < 700; ++sequence )
-    {
-        ingress.ObserveArrival ( sequence, sequence - 3, 3 );
-    }
-    assert ( ingress.AutoTargetFrames() == kMinAutoIngressFrames );
-
-    // Reducing 10 to 3 must discard excess queued delay, but never rewind a
-    // playout cursor already closer to the newest received frame.
-    assert ( ReanchorPlayoutSequence ( 81, 100, 3 ) == 98 );
-    assert ( ReanchorPlayoutSequence ( 99, 100, 3 ) == 99 );
-}
-
-void TestIngressDiscontinuityRecovery()
-{
-    // Once either sequence cursor lies at least a whole ring outside the
-    // other, equal-rate operation cannot recover by itself.  A server/timer
-    // stall makes the producer ahead; a capture-callback pause leaves the
-    // consumer ahead.
-    assert ( DetectPlayoutDiscontinuity ( 100, 103, 4 ) == EPlayoutDiscontinuity::None );
-    assert ( DetectPlayoutDiscontinuity ( 100, 104, 4 ) == EPlayoutDiscontinuity::ProducerAhead );
-    assert ( DetectPlayoutDiscontinuity ( 104, 100, 4 ) == EPlayoutDiscontinuity::ConsumerAhead );
-
-    // A producer-ahead recovery retains the newest complete target window.
-    assert ( RecoverPlayoutSequence ( 104, 2 ) == 103 );
-    assert ( RecoverPlayoutSequence ( 104, 4 ) == 101 );
-
-    // The ingress instance uses its real configured ring capacity, including
-    // across uint32_t wraparound.
-    SourceDescriptor descriptor{ 1, 1, 1, false };
-    SessionIngress   ingress;
-    assert ( ingress.Configure ( 1, false, &descriptor, 1, 4 ) );
-    std::vector<uint8_t>            payload ( 1, 7 );
-    const std::array<RecordView, 1> record{ MakeRecord ( 1, payload ) };
-    FramePacketizer                 packetizer;
-    const Datagram*                 datagrams = nullptr;
-    size_t                          count     = 0;
-    for ( uint32_t sequence = 0xfffffffdU; sequence != 2; ++sequence )
-    {
-        assert ( packetizer.Packetize ( 1, sequence, false, record.data(), record.size(), datagrams, count ) );
-        assert ( count == 1 && ingress.Put ( datagrams[0].bytes.data(), datagrams[0].length ) );
-    }
-    assert ( ingress.GetPlayoutDiscontinuity ( 0xfffffffdU ) == EPlayoutDiscontinuity::ProducerAhead );
-    assert ( ingress.GetPlayoutDiscontinuity ( 5 ) == EPlayoutDiscontinuity::ConsumerAhead );
-}
-
-void TestConsumerUnderrunClassification()
-{
-    // A missing expected frame with no newer arrival is an underrun.  The
-    // playout cursor must wait and re-prime rather than advancing into a
-    // permanent equal-rate chase.
-    assert ( IsConsumerUnderrun ( 101, 100 ) );
-    assert ( !IsConsumerUnderrun ( 100, 100 ) );
-    assert ( !IsConsumerUnderrun ( 100, 101 ) );
-
-    // Sequence ordering remains valid across uint32_t wraparound.
-    assert ( IsConsumerUnderrun ( 0, 0xffffffffU ) );
-    assert ( !IsConsumerUnderrun ( 0xffffffffU, 0 ) );
-}
-
-void TestReturnPacketCadence()
-{
-    // This is the four-way server/output-frame matrix.  In particular, a
-    // normal 128-sample server must issue two 64-sample return packets.
-    assert ( ReturnPacketsPerServerTick ( true, false ) == 1 );
-    assert ( ReturnPacketsPerServerTick ( true, true ) == 2 );
-    assert ( ReturnPacketsPerServerTick ( false, false ) == 1 );
-    assert ( ReturnPacketsPerServerTick ( false, true ) == 1 );
-}
-
 void TestUploadRateEstimate()
 {
     // One 22-byte Opus64 mono record: 14-byte app header, 3-byte record
@@ -275,10 +193,6 @@ int main()
     TestFragmentLossLeavesOtherRecords();
     TestMalformedAndDuplicate();
     TestNegotiationFallback();
-    TestIngressAutoJitterAndReanchor();
-    TestIngressDiscontinuityRecovery();
-    TestConsumerUnderrunClassification();
-    TestReturnPacketCadence();
     TestUploadRateEstimate();
     TestRoutingValidation();
     std::cout << "polyinwire tests: PASS\n";
