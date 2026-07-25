@@ -911,10 +911,11 @@ bool CServer::ReadPolyInFrame ( const int sessionID, const int blockIndex )
         break;
 
     case PolyIn::EPlayoutDiscontinuity::ConsumerAhead:
-        // The newest sequence is the first trustworthy post-hiatus frame.
-        // Re-prime from it instead of rewinding into slots which may retain
-        // audio already played before the producer stopped.
-        state.iFirstSequence = state.Ingress.HighestSequence();
+        // The newest sequence has already been played.  Re-prime from the
+        // first sequence not yet observed instead of rewinding into slots
+        // which may retain audio played before the producer stopped.
+        state.Ingress.ObservePlayoutResult ( false, state.iIngressTargetFrames );
+        state.iFirstSequence = state.Ingress.HighestSequence() + 1;
         state.iNextSequence  = state.iFirstSequence;
         state.bIngressPrimed = false;
         break;
@@ -955,7 +956,24 @@ bool CServer::ReadPolyInFrame ( const int sessionID, const int blockIndex )
             vecSourceIngressPresent[presentIndex] = 1;
         }
     }
-    ++state.iNextSequence;
+    if ( !haveFrame && state.Ingress.HasHighestSequence() &&
+         PolyIn::IsConsumerUnderrun ( state.iNextSequence, state.Ingress.HighestSequence() ) )
+    {
+        // Do not chase a producer which missed this deadline.  Advancing the
+        // cursor here leaves it one frame ahead forever when both sides then
+        // resume at the same rate.  Refill the configured window beginning at
+        // the first sequence which can still arrive.
+        state.iFirstSequence = state.Ingress.HighestSequence() + 1;
+        state.iNextSequence  = state.iFirstSequence;
+        state.bIngressPrimed = false;
+    }
+    else
+    {
+        // A newer sequence is already present, so this specific hole is packet
+        // loss rather than an underrun.  Advance and let source-local PLC
+        // conceal it.
+        ++state.iNextSequence;
+    }
     return haveFrame;
 }
 
