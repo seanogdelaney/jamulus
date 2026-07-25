@@ -1,3 +1,13 @@
+### 4.0.0sdel9 ###
+
+- Recover Poly-in playout after producer underruns without leaving the consumer permanently one frame ahead.
+
+- Move Poly-in session playout, cadence and negotiated source ownership into dedicated, independently tested components.
+
+- Rebase the fork onto the latest upstream Jamulus fixes and apply clang-format 14 to fork-added and modified code.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel8 ###
 
 - Reject failed or short fixed-size Opus encode/decode results instead of publishing partial Poly-in frames or mixing stale PCM.
