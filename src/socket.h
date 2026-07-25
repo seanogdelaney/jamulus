@@ -233,11 +233,9 @@ protected:
                 return;
             }
 
-            // to leave blocking wait for receive
-            pSocket->Close();
-
-            // Close() unblocks receive; wait without a timeout because owners
-            // may destroy state shared with the worker immediately afterward.
+            // OnDataReceived() polls with a bounded timeout and observes bRun,
+            // so joining here waits for the receive loop without closing the
+            // upstream-owned IPv4/IPv6 sockets out from under it.
             wait();
             // Apple TSan does not model QThread::wait() as a join, so retain
             // an explicit completion handoff for the worker's lifetime edge.
