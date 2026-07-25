@@ -1156,10 +1156,10 @@ void CAudioMixerBoard::HideAll()
     }
 
     // initialize flags and other parameters
-    bIsPanSupported      = false;
-    bNoFaderVisible      = true;
-    eRecorderState       = RS_UNDEFINED;
-    iMyChannelID         = INVALID_INDEX;
+    bIsPanSupported = false;
+    bNoFaderVisible = true;
+    eRecorderState  = RS_UNDEFINED;
+    iMyChannelID    = INVALID_INDEX;
     bMyChannelIDs.fill ( false );
     vecMyChannelOrder.clear();
     iRunningNewClientCnt = 0; // reset running counter on new server connection

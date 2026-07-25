@@ -128,7 +128,7 @@ void CSound::OpenJack ( const bool bNoAutoJackConnect, const char* jackClientNam
         input_ports.append ( pInputPort );
     }
 
-    output_port_left = jack_port_register ( pJackClient, "output left", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0 );
+    output_port_left  = jack_port_register ( pJackClient, "output left", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0 );
     output_port_right = jack_port_register ( pJackClient, "output right", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0 );
 
     if ( ( output_port_left == nullptr ) || ( output_port_right == nullptr ) )

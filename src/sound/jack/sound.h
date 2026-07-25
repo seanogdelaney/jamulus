@@ -127,9 +127,9 @@ public:
     bool           bJackWasShutDown;
 
     QVector<jack_port_t*> input_ports;
-    jack_port_t* output_port_left;
-    jack_port_t* output_port_right;
-    jack_port_t* input_port_midi;
+    jack_port_t*          output_port_left;
+    jack_port_t*          output_port_right;
+    jack_port_t*          input_port_midi;
 
 protected:
     void OpenJack ( const bool bNoAutoJackConnect, const char* jackClientName );
