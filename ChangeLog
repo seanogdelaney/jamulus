@@ -1,4 +1,4 @@
-### 4.0.0sdel9 ###
+### 4.0.0sdel10 ###
 
 - Recover Poly-in playout after producer underruns without leaving the consumer permanently one frame ahead.
 
