@@ -1,4 +1,4 @@
-VERSION = 4.0.0sdel9
+VERSION = 4.0.0sdel10
 
 # Using lrelease and embed_translations only works for Qt 5.12 or later.
 # See https://github.com/jamulussoftware/jamulus/pull/3288 for these changes.
