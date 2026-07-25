@@ -233,7 +233,7 @@ protected:
             SetCapturedInputAudio ( psData, 2 );
         }
         bCaptureProvidedForCallback = false;
-        bCallbackEntered = true;
+        bCallbackEntered            = true;
         ( *fpProcessCallback ) ( psData, pProcessCallbackArg );
     }
 

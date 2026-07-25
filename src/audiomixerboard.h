@@ -296,23 +296,23 @@ protected:
     void UpdateSoloStates();
     void UpdateTitle();
 
-    CClientSettings*        pSettings;
-    CVector<CChannelFader*> vecpChanFader;
-    CMixerBoardScrollArea*  pScrollArea;
-    QGridLayout*            pMainLayout;
-    bool                    bDisplayPans;
-    bool                    bIsPanSupported;
-    bool                    bNoFaderVisible;
+    CClientSettings*                   pSettings;
+    CVector<CChannelFader*>            vecpChanFader;
+    CMixerBoardScrollArea*             pScrollArea;
+    QGridLayout*                       pMainLayout;
+    bool                               bDisplayPans;
+    bool                               bIsPanSupported;
+    bool                               bNoFaderVisible;
     int                                iMyChannelID; // first owned fader; retained for legacy callers
     std::array<bool, MAX_NUM_CHANNELS> bMyChannelIDs;
     CVector<int>                       vecMyChannelOrder;    // source-map order for Own Fader First
     int                                iRunningNewClientCnt; // integer type is sufficient, will never overrun for its purpose
     int                                iNumMixerPanelRows;
     QString                            strServerName;
-    ERecorderState          eRecorderState;
-    QMutex                  Mutex;
-    EChSortType             eChSortType;
-    CVector<float>          vecAvgLevels;
+    ERecorderState                     eRecorderState;
+    QMutex                             Mutex;
+    EChSortType                        eChSortType;
+    CVector<float>                     vecAvgLevels;
 
     virtual void UpdateGainValue ( const int    iChannelIdx,
                                    const float  fValue,
