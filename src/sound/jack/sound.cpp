@@ -415,7 +415,7 @@ int CSound::process ( jack_nframes_t nframes, void* arg )
         // Retain the original selected first stereo pair for non-Poly-in mode.
         for ( i = 0; i < pSound->iJACKBufferSizeMono; ++i )
         {
-            pSound->vecsTmpAudioSndCrdStereo[2 * i] = pSound->vecInputAudio[i * pSound->iNumInputChannels];
+            pSound->vecsTmpAudioSndCrdStereo[2 * i]     = pSound->vecInputAudio[i * pSound->iNumInputChannels];
             pSound->vecsTmpAudioSndCrdStereo[2 * i + 1] = pSound->vecInputAudio[i * pSound->iNumInputChannels + 1];
         }
         pSound->SetCapturedInputAudio ( pSound->vecInputAudio, pSound->iNumInputChannels );

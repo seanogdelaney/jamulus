@@ -342,10 +342,7 @@ EPlayoutDiscontinuity SessionIngress::GetPlayoutDiscontinuity ( const uint32_t n
     return haveHighestSequence ? DetectPlayoutDiscontinuity ( nextPlayoutSequence, highestSequence, ringSlots.size() ) : EPlayoutDiscontinuity::None;
 }
 
-bool SessionIngress::Put ( const uint8_t* const data,
-                           const size_t         length,
-                           bool* const          firstFragmentForSequence,
-                           uint32_t* const      acceptedSequence )
+bool SessionIngress::Put ( const uint8_t* const data, const size_t length, bool* const firstFragmentForSequence, uint32_t* const acceptedSequence )
 {
     if ( firstFragmentForSequence != nullptr )
         *firstFragmentForSequence = false;

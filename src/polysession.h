@@ -56,15 +56,15 @@ public:
 private:
     void ClearNegotiatedSources();
 
-    State                          state                  = State::Legacy;
-    int                            legacySourceID         = kInvalidSourceID;
+    State                           state          = State::Legacy;
+    int                             legacySourceID = kInvalidSourceID;
     std::array<int, kMaxSourceRows> sourceIDs{};
-    size_t                         sourceCount            = 0;
-    uint16_t                       generation             = 0;
-    uint64_t                       preparedAge            = 0;
-    bool                           preparedTimeoutArmed   = false;
-    bool                           promotionQueued        = false;
-    uint32_t                       promotionFirstSequence = 0;
+    size_t                          sourceCount            = 0;
+    uint16_t                        generation             = 0;
+    uint64_t                        preparedAge            = 0;
+    bool                            preparedTimeoutArmed   = false;
+    bool                            promotionQueued        = false;
+    uint32_t                        promotionFirstSequence = 0;
 };
 
 } // namespace PolyIn

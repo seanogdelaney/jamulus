@@ -31,10 +31,7 @@ void SessionPlayout::Reset()
     targetFrames  = 1;
 }
 
-bool SessionPlayout::Put ( const uint8_t* const data,
-                           const size_t         length,
-                           bool* const          firstFragmentForSequence,
-                           uint32_t* const      sequence )
+bool SessionPlayout::Put ( const uint8_t* const data, const size_t length, bool* const firstFragmentForSequence, uint32_t* const sequence )
 {
     if ( firstFragmentForSequence != nullptr )
         *firstFragmentForSequence = false;
@@ -151,8 +148,8 @@ int FrameCadence::FramesToRead ( const bool serverUsesDoubleSystemFrameSize, con
 {
     if ( !serverUsesDoubleSystemFrameSize && !sourceUses64SampleFrames )
     {
-        const int result       = opusHalfFramePending ? 0 : 1;
-        opusHalfFramePending   = !opusHalfFramePending;
+        const int result     = opusHalfFramePending ? 0 : 1;
+        opusHalfFramePending = !opusHalfFramePending;
         return result;
     }
     return serverUsesDoubleSystemFrameSize && sourceUses64SampleFrames ? 2 : 1;

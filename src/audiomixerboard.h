@@ -237,10 +237,7 @@ public:
     }
     void SetMyChannelIDs ( const CVector<int>& channelIndices );
     int  GetMyChannelID() const { return iMyChannelID; }
-    bool IsMyChannelID ( int iChannelIdx ) const
-    {
-        return iChannelIdx >= 0 && iChannelIdx < MAX_NUM_CHANNELS && bMyChannelIDs[iChannelIdx];
-    }
+    bool IsMyChannelID ( int iChannelIdx ) const { return iChannelIdx >= 0 && iChannelIdx < MAX_NUM_CHANNELS && bMyChannelIDs[iChannelIdx]; }
 
     void SetFaderLevel ( const int iChannelIdx, const int iValue );
 
@@ -306,12 +303,12 @@ protected:
     bool                    bDisplayPans;
     bool                    bIsPanSupported;
     bool                    bNoFaderVisible;
-    int                     iMyChannelID;         // first owned fader; retained for legacy callers
+    int                                iMyChannelID; // first owned fader; retained for legacy callers
     std::array<bool, MAX_NUM_CHANNELS> bMyChannelIDs;
-    CVector<int>               vecMyChannelOrder; // source-map order for Own Fader First
-    int                     iRunningNewClientCnt; // integer type is sufficient, will never overrun for its purpose
-    int                     iNumMixerPanelRows;
-    QString                 strServerName;
+    CVector<int>                       vecMyChannelOrder;    // source-map order for Own Fader First
+    int                                iRunningNewClientCnt; // integer type is sufficient, will never overrun for its purpose
+    int                                iNumMixerPanelRows;
+    QString                            strServerName;
     ERecorderState          eRecorderState;
     QMutex                  Mutex;
     EChSortType             eChSortType;

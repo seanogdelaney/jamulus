@@ -28,7 +28,7 @@ public:
 
     void Put ( const uint32_t sequence )
     {
-        std::array<uint8_t, kMaxSourceRows> payload{};
+        std::array<uint8_t, kMaxSourceRows>    payload{};
         std::array<RecordView, kMaxSourceRows> records{};
         for ( size_t i = 0; i < sourceCount; ++i )
         {
@@ -57,10 +57,10 @@ public:
     SessionPlayout playout;
 
 private:
-    static constexpr uint16_t generation = 9;
-    size_t sourceCount = 0;
+    static constexpr uint16_t                    generation  = 9;
+    size_t                                       sourceCount = 0;
     std::array<SourceDescriptor, kMaxSourceRows> descriptors{};
-    FramePacketizer packetizer;
+    FramePacketizer                              packetizer;
 };
 
 void TestUnderrunRecoveryAtLowTargets()
@@ -73,7 +73,7 @@ void TestUnderrunRecoveryAtLowTargets()
             harness.Put ( sequence );
 
         std::array<RecordView, kMaxSourceRows> records{};
-        uint32_t sequence = 0;
+        uint32_t                               sequence = 0;
         assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable );
         assert ( sequence == 100 && records[0].data[0] == 100 );
 
@@ -102,7 +102,7 @@ void TestLossAdvancesWithoutRepriming()
     harness.Put ( 102 );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 100 );
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::MissingFrame && sequence == 101 );
     assert ( harness.playout.Primed() );
@@ -122,7 +122,7 @@ void TestReorderingAndBurstLossRemainSynchronized()
     harness.Put ( 105 );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 100 );
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 101 );
 
@@ -144,7 +144,7 @@ void TestWraparoundUnderrunRecovery()
     harness.Put ( 0xffffffffU );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 0xfffffffeU );
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 0xffffffffU );
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::MissingFrame && sequence == 0 );
@@ -161,7 +161,7 @@ void TestProducerOverrunReanchorsToRecentWindow()
         harness.Put ( sequence );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable );
     assert ( sequence == 105 );
     assert ( records[0].data[0] == 105 );
@@ -175,7 +175,7 @@ void TestTargetChangesDoNotReplay()
         harness.Put ( sequence );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 100 );
     assert ( harness.playout.SetTargetFrames ( 1 ) );
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 104 );
@@ -195,7 +195,7 @@ void TestMultipleSourceRecordsRemainAligned()
     harness.Put ( 77 );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable );
     assert ( sequence == 77 );
     for ( size_t source = 0; source < 3; ++source )
@@ -215,7 +215,7 @@ void TestAutoJitterStatistic()
     assert ( harness.playout.AutoTargetFrames() == kMinAutoIngressFrames );
 
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     while ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable )
     {}
     assert ( harness.playout.AutoTargetFrames() >= 3 );
@@ -228,10 +228,10 @@ void CheckCadenceConsumption ( const bool serverDouble, const bool source64, con
     for ( int frame = 0; frame < expectedFrames; ++frame )
         harness.Put ( 10U + static_cast<uint32_t> ( frame ) );
 
-    FrameCadence cadence;
+    FrameCadence                           cadence;
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
-    int consumed = 0;
+    uint32_t                               sequence = 0;
+    int                                    consumed = 0;
     for ( int tick = 0; tick < ticks; ++tick )
     {
         const int frames = cadence.FramesToRead ( serverDouble, source64 );
@@ -260,21 +260,21 @@ void TestDescriptorFormatMatrix()
         for ( const uint8_t channels : { uint8_t ( 1 ), uint8_t ( 2 ) } )
         {
             const SourceDescriptor descriptor{ 1, channels, 4, raw };
-            SessionPlayout playout;
+            SessionPlayout         playout;
             assert ( playout.Configure ( 3, raw, &descriptor, 1, 4 ) );
             assert ( playout.SetTargetFrames ( 1 ) );
             playout.Start ( 20, 1 );
 
             const std::array<uint8_t, 4> payload{ 1, 2, 3, 4 };
-            const RecordView record{ 1, payload.data(), static_cast<uint16_t> ( payload.size() ) };
-            FramePacketizer packetizer;
-            const Datagram* datagrams = nullptr;
-            size_t count = 0;
+            const RecordView             record{ 1, payload.data(), static_cast<uint16_t> ( payload.size() ) };
+            FramePacketizer              packetizer;
+            const Datagram*              datagrams = nullptr;
+            size_t                       count     = 0;
             assert ( packetizer.Packetize ( 3, 20, raw, &record, 1, datagrams, count ) );
             assert ( count == 1 && playout.Put ( datagrams[0].bytes.data(), datagrams[0].length ) );
 
             std::array<RecordView, kMaxSourceRows> records{};
-            uint32_t sequence = 0;
+            uint32_t                               sequence = 0;
             assert ( playout.GetNext ( records.data(), records.size(), &sequence ) == EPlayoutResult::FrameAvailable );
             assert ( sequence == 20 && records[0].length == payload.size() );
             for ( size_t i = 0; i < payload.size(); ++i )
@@ -285,11 +285,11 @@ void TestDescriptorFormatMatrix()
 
 void TestFrameCadenceMatrix()
 {
-    FrameCadence cadence;
+    FrameCadence             cadence;
     const std::array<int, 4> opusOn64{ cadence.FramesToRead ( false, false ),
-                                      cadence.FramesToRead ( false, false ),
-                                      cadence.FramesToRead ( false, false ),
-                                      cadence.FramesToRead ( false, false ) };
+                                       cadence.FramesToRead ( false, false ),
+                                       cadence.FramesToRead ( false, false ),
+                                       cadence.FramesToRead ( false, false ) };
     assert ( ( opusOn64 == std::array<int, 4>{ 1, 0, 1, 0 } ) );
 
     cadence.Reset();

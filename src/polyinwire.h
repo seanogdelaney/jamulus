@@ -185,10 +185,7 @@ public:
     // valid fragment accepted for one logical session frame.  This lets the
     // session-level jitter estimator count one timing observation per frame,
     // rather than one per UDP fragment.
-    bool Put ( const uint8_t* data,
-               size_t         length,
-               bool*          firstFragmentForSequence = nullptr,
-               uint32_t*      acceptedSequence         = nullptr );
+    bool Put ( const uint8_t* data, size_t length, bool* firstFragmentForSequence = nullptr, uint32_t* acceptedSequence = nullptr );
 
     // Feed the shared ingress auto-jitter estimator.  Arrival is called once
     // for a logical frame; playout is called once for every consumed sequence.
