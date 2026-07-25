@@ -65,6 +65,12 @@ enum class EPlayoutDiscontinuity : uint8_t
 
 EPlayoutDiscontinuity DetectPlayoutDiscontinuity ( uint32_t nextPlayoutSequence, uint32_t highestReceivedSequence, size_t ringFrames );
 
+// A failed read is ordinary packet loss when a newer sequence has already
+// arrived.  If the newest arrival is still behind the requested sequence, the
+// consumer has outrun the producer and advancing again would preserve that
+// lead indefinitely at equal producer/consumer rates.
+bool IsConsumerUnderrun ( uint32_t nextPlayoutSequence, uint32_t highestReceivedSequence );
+
 // Unlike ReanchorPlayoutSequence(), recovery intentionally may move in either
 // direction.  It is used only after DetectPlayoutDiscontinuity() has proved
 // that the old cursor is unrecoverable.
