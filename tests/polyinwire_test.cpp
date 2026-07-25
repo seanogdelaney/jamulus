@@ -219,6 +219,20 @@ void TestIngressDiscontinuityRecovery()
     assert ( ingress.GetPlayoutDiscontinuity ( 5 ) == EPlayoutDiscontinuity::ConsumerAhead );
 }
 
+void TestConsumerUnderrunClassification()
+{
+    // A missing expected frame with no newer arrival is an underrun.  The
+    // playout cursor must wait and re-prime rather than advancing into a
+    // permanent equal-rate chase.
+    assert ( IsConsumerUnderrun ( 101, 100 ) );
+    assert ( !IsConsumerUnderrun ( 100, 100 ) );
+    assert ( !IsConsumerUnderrun ( 100, 101 ) );
+
+    // Sequence ordering remains valid across uint32_t wraparound.
+    assert ( IsConsumerUnderrun ( 0, 0xffffffffU ) );
+    assert ( !IsConsumerUnderrun ( 0xffffffffU, 0 ) );
+}
+
 void TestReturnPacketCadence()
 {
     // This is the four-way server/output-frame matrix.  In particular, a
@@ -263,6 +277,7 @@ int main()
     TestNegotiationFallback();
     TestIngressAutoJitterAndReanchor();
     TestIngressDiscontinuityRecovery();
+    TestConsumerUnderrunClassification();
     TestReturnPacketCadence();
     TestUploadRateEstimate();
     TestRoutingValidation();

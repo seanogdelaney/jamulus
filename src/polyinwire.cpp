@@ -86,6 +86,11 @@ EPlayoutDiscontinuity DetectPlayoutDiscontinuity ( const uint32_t nextPlayoutSeq
     return EPlayoutDiscontinuity::None;
 }
 
+bool IsConsumerUnderrun ( const uint32_t nextPlayoutSequence, const uint32_t highestReceivedSequence )
+{
+    return SequenceBefore ( highestReceivedSequence, nextPlayoutSequence );
+}
+
 uint32_t RecoverPlayoutSequence ( const uint32_t highestReceivedSequence, const int targetFrames )
 {
     return targetFrames <= 1 ? highestReceivedSequence : highestReceivedSequence - static_cast<uint32_t> ( targetFrames - 1 );
