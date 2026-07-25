@@ -92,7 +92,7 @@ void TestResetFromEveryLifecycleState()
 
 void TestInvalidMapsAndResetCleanup()
 {
-    SessionSourceMap map;
+    SessionSourceMap         map;
     const std::array<int, 2> duplicate{ 4, 4 };
     assert ( !map.Prepare ( 1, duplicate.data(), duplicate.size() ) );
     assert ( map.SetLegacySource ( 1 ) );

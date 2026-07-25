@@ -86,11 +86,11 @@ bool SessionSourceMap::Activate ( const uint16_t acceptedGeneration )
 {
     if ( state != State::Prepared || acceptedGeneration == 0 || acceptedGeneration != generation )
         return false;
-    state                  = State::Active;
-    legacySourceID         = kInvalidSourceID;
-    preparedAge            = 0;
-    preparedTimeoutArmed   = false;
-    promotionQueued        = false;
+    state                = State::Active;
+    legacySourceID       = kInvalidSourceID;
+    preparedAge          = 0;
+    preparedTimeoutArmed = false;
+    promotionQueued      = false;
     return true;
 }
 
@@ -119,10 +119,7 @@ void SessionSourceMap::CancelPreparation()
     ClearNegotiatedSources();
 }
 
-int SessionSourceMap::SourceAt ( const size_t index ) const
-{
-    return index < sourceCount ? sourceIDs[index] : kInvalidSourceID;
-}
+int SessionSourceMap::SourceAt ( const size_t index ) const { return index < sourceCount ? sourceIDs[index] : kInvalidSourceID; }
 
 bool SessionSourceMap::OwnsSource ( const int sourceID ) const
 {

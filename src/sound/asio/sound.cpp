@@ -731,8 +731,8 @@ void CSound::bufferSwitch ( long index, ASIOBool )
 
                     for ( iCurSample = 0; iCurSample < iASIOBufferSizeMono; iCurSample++ )
                     {
-                        vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] =
-                            Float2Short ( (float) vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] + (float) pASIOBufAdd[iCurSample] );
+                        vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] = Float2Short (
+                            (float) vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] + (float) pASIOBufAdd[iCurSample] );
                     }
                 }
                 break;
@@ -757,8 +757,8 @@ void CSound::bufferSwitch ( long index, ASIOBool )
                         memcpy ( &iCurSam, ( (char*) pSound->bufferInfos[iSelAddCH].buffers[index] ) + iCurSample * 3, 3 );
                         iCurSam >>= 8;
 
-                        vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] =
-                            Float2Short ( (float) vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] + (float) static_cast<int16_t> ( iCurSam ) );
+                        vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] = Float2Short (
+                            (float) vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] + (float) static_cast<int16_t> ( iCurSam ) );
                     }
                 }
                 break;
@@ -779,8 +779,9 @@ void CSound::bufferSwitch ( long index, ASIOBool )
 
                     for ( iCurSample = 0; iCurSample < iASIOBufferSizeMono; iCurSample++ )
                     {
-                        vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] = Float2Short ( (float) vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] +
-                                                                                    (float) static_cast<int16_t> ( pASIOBufAdd[iCurSample] >> 16 ) );
+                        vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] =
+                            Float2Short ( (float) vecInputAudioSndCrd[pSound->lNumInChanPlusAddChan * iCurSample + i] +
+                                          (float) static_cast<int16_t> ( pASIOBufAdd[iCurSample] >> 16 ) );
                     }
                 }
                 break;

@@ -433,12 +433,7 @@ void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, con
                     sa4.sin_port        = htons ( HostAddr.iPort );
                     sa4.sin_addr.s_addr = htonl ( HostAddr.InetAddr.toIPv4Address() );
 
-                    status = sendto ( UdpSocket4,
-                                      (const char*) pbySendBuf,
-                                      iVecSizeOut,
-                                      0,
-                                      (struct sockaddr*) &sa4,
-                                      sizeof ( sa4 ) );
+                    status = sendto ( UdpSocket4, (const char*) pbySendBuf, iVecSizeOut, 0, (struct sockaddr*) &sa4, sizeof ( sa4 ) );
                 }
             }
             else if ( HostAddr.InetAddr.protocol() == QAbstractSocket::IPv6Protocol )
@@ -457,12 +452,7 @@ void CSocket::SendPacket ( const uint8_t* pbySendBuf, const int iVecSizeOut, con
                     memcpy ( &sa6.sin6_addr.s6_addr, ip6.c, sizeof ( sa6.sin6_addr.s6_addr ) );
                     sa6.sin6_scope_id = HostAddr.InetAddr.scopeId().toUInt();
 
-                    status = sendto ( UdpSocket6,
-                                      (const char*) pbySendBuf,
-                                      iVecSizeOut,
-                                      0,
-                                      (struct sockaddr*) &sa6,
-                                      sizeof ( sa6 ) );
+                    status = sendto ( UdpSocket6, (const char*) pbySendBuf, iVecSizeOut, 0, (struct sockaddr*) &sa6, sizeof ( sa6 ) );
                 }
             }
 

@@ -740,8 +740,7 @@ void CServer::OnTimer()
                 continue;
             }
 
-            if ( state.Sources.AdvancePreparedAge ( static_cast<uint32_t> ( iServerFrameSizeSamples ),
-                                                    kPolyInPreparedTimeoutSamples ) )
+            if ( state.Sources.AdvancePreparedAge ( static_cast<uint32_t> ( iServerFrameSizeSamples ), kPolyInPreparedTimeoutSamples ) )
             {
                 ReleasePreparedPolyInSources ( sessionID );
             }
@@ -886,13 +885,13 @@ bool CServer::ReadPolyInFrame ( const int sessionID, const int blockIndex )
         return false;
 
     std::array<PolyIn::RecordView, PolyIn::kMaxSourceRows> records{};
-    const PolyIn::EPlayoutResult result    = state.Playout.GetNext ( records.data(), records.size() );
-    const bool                   haveFrame = result == PolyIn::EPlayoutResult::FrameAvailable;
+    const PolyIn::EPlayoutResult                           result    = state.Playout.GetNext ( records.data(), records.size() );
+    const bool                                             haveFrame = result == PolyIn::EPlayoutResult::FrameAvailable;
 
     for ( size_t sourceIndex = 0; sourceIndex < state.Sources.SourceCount(); ++sourceIndex )
     {
-        const int    sourceID     = state.Sources.SourceAt ( sourceIndex );
-        const size_t presentIndex = static_cast<size_t> ( sourceID ) * 2 + static_cast<size_t> ( blockIndex );
+        const int    sourceID                 = state.Sources.SourceAt ( sourceIndex );
+        const size_t presentIndex             = static_cast<size_t> ( sourceID ) * 2 + static_cast<size_t> ( blockIndex );
         vecSourceIngressPresent[presentIndex] = 0;
         if ( haveFrame && records[sourceIndex].data != nullptr )
         {
@@ -1418,12 +1417,12 @@ void CServer::InitChannel ( const int sessionID, const CHostAddress& address )
     vecSessions[sessionID].ResetInfo();
     vecSessionState[sessionID].Reset();
     CPolyInSourceConfig legacy;
-    legacy.iKey                                = 1;
-    legacy.iNumChannels                        = 1;
-    legacy.eCodec                              = CT_OPUS;
-    legacy.bRaw                                = false;
-    legacy.iPayloadBytes                       = CELT_MINIMUM_NUM_BYTES;
-    const int sourceID                         = AllocateSource ( sessionID, legacy, true, true );
+    legacy.iKey          = 1;
+    legacy.iNumChannels  = 1;
+    legacy.eCodec        = CT_OPUS;
+    legacy.bRaw          = false;
+    legacy.iPayloadBytes = CELT_MINIMUM_NUM_BYTES;
+    const int sourceID   = AllocateSource ( sessionID, legacy, true, true );
     vecSessionState[sessionID].Sources.SetLegacySource ( sourceID );
 }
 
@@ -1550,11 +1549,11 @@ void CServer::GetConCliParam ( CVector<CHostAddress>&     addresses,
     {
         if ( !vecSources[sourceID].IsActive() )
             continue;
-        const int sessionID    = vecSources[sourceID].ParentSessionID();
-        addresses[sourceID]    = vecSessions[sessionID].GetAddress();
-        names[sourceID]        = GetSourceInfo ( sourceID ).strName;
-        jitterFrames[sourceID] = vecSessionState[sessionID].Sources.IsActive() ? vecSessionState[sessionID].Playout.TargetFrames()
-                                                                                  : vecSessions[sessionID].GetSockBufNumFrames();
+        const int sessionID      = vecSources[sourceID].ParentSessionID();
+        addresses[sourceID]      = vecSessions[sessionID].GetAddress();
+        names[sourceID]          = GetSourceInfo ( sourceID ).strName;
+        jitterFrames[sourceID]   = vecSessionState[sessionID].Sources.IsActive() ? vecSessionState[sessionID].Playout.TargetFrames()
+                                                                                 : vecSessions[sessionID].GetSockBufNumFrames();
         networkFactors[sourceID] = vecSessions[sessionID].GetNetwFrameSizeFact();
         info[sourceID]           = GetSourceInfo ( sourceID );
     }
@@ -1597,9 +1596,9 @@ void CServer::OnSessionJitterPolicyChanged ( const int sessionID, const int numF
         return;
     }
     CServerSessionState& state = vecSessionState[sessionID];
-    state.bIngressAuto = bAuto;
-    const int target    = bAuto ? state.Playout.AutoTargetFrames() : numFrames;
-    const bool changed  = state.Playout.TargetFrames() != target;
+    state.bIngressAuto         = bAuto;
+    const int  target          = bAuto ? state.Playout.AutoTargetFrames() : numFrames;
+    const bool changed         = state.Playout.TargetFrames() != target;
     if ( state.Playout.SetTargetFrames ( target ) && changed && state.Sources.IsActive() && bAuto )
         QueuePolyInJitterReport ( sessionID, target );
 }
@@ -1695,7 +1694,7 @@ bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInS
         return false;
     }
 
-    std::array<int, PolyIn::kMaxSourceRows>                     sourceIDs{};
+    std::array<int, PolyIn::kMaxSourceRows>                      sourceIDs{};
     std::array<PolyIn::SourceDescriptor, PolyIn::kMaxSourceRows> descriptors{};
     // Reserve the complete public fader map before ACCEPT, but leave it hidden
     // and keep the legacy source active. Any failure rolls back the whole map.
@@ -1725,14 +1724,13 @@ bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInS
     if ( generation == 0 )
         generation = nextGeneration++;
 
-    state.bIngressAuto = vecSessions[sessionID].GetDoAutoSockBufSize();
-    const int targetFrames =
-        state.bIngressAuto ? PolyIn::kMinAutoIngressFrames : vecSessions[sessionID].GetSockBufNumFrames();
+    state.bIngressAuto     = vecSessions[sessionID].GetDoAutoSockBufSize();
+    const int targetFrames = state.bIngressAuto ? PolyIn::kMinAutoIngressFrames : vecSessions[sessionID].GetSockBufNumFrames();
     if ( !state.Playout.Configure ( generation,
-                                   config[0].bRaw,
-                                   descriptors.data(),
-                                   static_cast<size_t> ( sourceCount ),
-                                   static_cast<size_t> ( MAX_NET_BUF_SIZE_NUM_BL ) ) ||
+                                    config[0].bRaw,
+                                    descriptors.data(),
+                                    static_cast<size_t> ( sourceCount ),
+                                    static_cast<size_t> ( MAX_NET_BUF_SIZE_NUM_BL ) ) ||
          !state.Playout.SetTargetFrames ( targetFrames ) ||
          !state.Sources.Prepare ( generation, sourceIDs.data(), static_cast<size_t> ( sourceCount ) ) )
     {
@@ -1849,7 +1847,7 @@ void CServer::customEvent ( QEvent* pEvent )
         if ( !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
             break;
 
-        CServerSessionState& state = vecSessionState[sessionID];
+        CServerSessionState& state         = vecSessionState[sessionID];
         uint32_t             firstSequence = 0;
         if ( !state.Sources.TakeQueuedPromotion ( firstSequence ) )
             break;

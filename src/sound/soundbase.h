@@ -144,7 +144,7 @@ public:
      * return mix.
      */
     const CVector<int16_t>& GetCapturedInputAudio() const { return vecCapturedInputAudio; }
-    int GetCapturedInputChannels() const { return iCapturedInputChannels; }
+    int                     GetCapturedInputChannels() const { return iCapturedInputChannels; }
 
     // TODO this should be protected but since it is used
     // in a callback function it has to be public -> better solution
@@ -216,8 +216,8 @@ protected:
         // to the existing reinitialisation path rather than allocating in RT.
         if ( ( iNumChannels > 0 ) && vecInput.Size() == vecCapturedInputAudio.Size() )
         {
-            vecCapturedInputAudio = vecInput;
-            iCapturedInputChannels = iNumChannels;
+            vecCapturedInputAudio       = vecInput;
+            iCapturedInputChannels      = iNumChannels;
             bCaptureProvidedForCallback = true;
         }
     }
