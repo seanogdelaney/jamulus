@@ -320,7 +320,7 @@ protected:
     int                   AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& config, const bool legacy, const bool active );
     void                  FreeSource ( const int sourceID );
     void                  FreeAllSourcesForSession ( const int sessionID );
-    CChannelCoreInfo      GetSourceInfo ( const int sourceID ) const;
+    CChannelCoreInfo      GetSourceInfo ( const int sourceID );
     int                   GetLegacySourceID ( const int sessionID ) const;
     int                   GetPrimarySourceID ( const int sessionID ) const;
     float                 GetSourceFadeInGain ( const int sourceID ) const;

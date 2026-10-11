@@ -1085,10 +1085,7 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
 
     // Snapshot this target's gain and pan settings once. This preserves the
     // upstream compacted-fill optimization for Poly-in's source-based mixer.
-    target.GetGainsAndPannings ( vecChanIDsCurConChan,
-                                 numSources,
-                                 vecvecfGains[sessionIndex],
-                                 vecvecfPannings[sessionIndex] );
+    target.GetGainsAndPannings ( vecChanIDsCurConChan, numSources, vecvecfGains[sessionIndex], vecvecfPannings[sessionIndex] );
 
     for ( int sourceIndex = 0; sourceIndex < numSources; ++sourceIndex )
     {
@@ -1189,7 +1186,7 @@ void CServer::MixEncodeTransmitData ( const int sessionIndex, const int numSourc
     }
 }
 
-CChannelCoreInfo CServer::GetSourceInfo ( const int sourceID ) const
+CChannelCoreInfo CServer::GetSourceInfo ( const int sourceID )
 {
     if ( !MathUtils::InRange<int> ( sourceID, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[sourceID].IsAllocated() )
         return CChannelCoreInfo();
