@@ -48,6 +48,7 @@
 \******************************************************************************/
 
 #include "buffer.h"
+#include "netreceive.h"
 
 /* Network buffer implementation **********************************************/
 void CNetBuf::Init ( const int iNewBlockSize, const int iNewNumBlocks, const bool bNUseSequenceNumber, const bool bPreserve )
@@ -177,17 +178,8 @@ bool CNetBuf::Put ( const CVector<uint8_t>& vecbyData, int iInSize )
             // the sequence number is appended after the coded audio data)
             const int iCurrentSequenceNumber = vecbyData[iBlockOffset + iBlockSize];
 
-            // calculate the sequence number difference and take care of wrap
-            int iSeqNumDiff = iCurrentSequenceNumber - static_cast<int> ( iSequenceNumberAtGetPos );
-
-            if ( iSeqNumDiff < -128 )
-            {
-                iSeqNumDiff += 256;
-            }
-            else if ( iSeqNumDiff >= 128 )
-            {
-                iSeqNumDiff -= 256;
-            }
+            const int iSeqNumDiff = NetReceive::SequenceDelta ( static_cast<uint8_t> ( iCurrentSequenceNumber ), iSequenceNumberAtGetPos );
+            const NetReceive::WindowPlacement placement = NetReceive::PlaceArrival ( iSeqNumDiff, iNumBlocksMemory );
 
             // The 1-byte sequence number wraps around at a count of 256. So, if a packet is delayed
             // further than this we cannot detect it. But it does not matter since such a packet is
@@ -201,67 +193,22 @@ bool CNetBuf::Put ( const CVector<uint8_t>& vecbyData, int iInSize )
             // packet and then back to the correct place when the next normal packet is received. But
             // tests showed that the new buffer strategy does not perform worse than the old jitter
             // buffer which did not use any sequence number at all.
-            if ( iSeqNumDiff < 0 )
+            // Move the active window exactly as before, invalidating displaced slots.
+            for ( int i = 0; i < placement.backward; ++i )
             {
-                // the received packet comes too late so we shift the "buffer window" to the past
-                // until the received packet is the very first packet in the buffer
-                for ( int i = iSeqNumDiff; i < 0; i++ )
-                {
-                    // insert an invalid block at the shifted position
-                    veciBlockValid[iBlockGetPos] = 0; // invalidate
-
-                    // we decrease the local sequence number and get position and take care of wrap
-                    iSequenceNumberAtGetPos--;
-                    iBlockGetPos--;
-
-                    if ( iBlockGetPos < 0 )
-                    {
-                        iBlockGetPos += iNumBlocksMemory;
-                    }
-                }
-
-                // insert the new packet at the beginning of the buffer since it was delayed
-                iBlockPutPos = iBlockGetPos;
+                veciBlockValid[iBlockGetPos] = 0;
+                --iSequenceNumberAtGetPos;
+                --iBlockGetPos;
+                if ( iBlockGetPos < 0 ) iBlockGetPos += iNumBlocksMemory;
             }
-            else if ( iSeqNumDiff >= iNumBlocksMemory )
+            for ( int i = 0; i < placement.forward; ++i )
             {
-                // the received packet comes too early so we move the "buffer window" in the
-                // future until the received packet is the last packet in the buffer
-                for ( int i = 0; i < iSeqNumDiff - iNumBlocksMemory + 1; i++ )
-                {
-                    // insert an invalid block at the shifted position
-                    veciBlockValid[iBlockGetPos] = 0; // invalidate
-
-                    // we increase the local sequence number and get position and take care of wrap
-                    iSequenceNumberAtGetPos++;
-                    iBlockGetPos++;
-
-                    if ( iBlockGetPos >= iNumBlocksMemory )
-                    {
-                        iBlockGetPos -= iNumBlocksMemory;
-                    }
-                }
-
-                // insert the new packet at the end of the buffer since it is too early (since
-                // we add an offset to the get position, we have to take care of wrapping)
-                iBlockPutPos = iBlockGetPos + iNumBlocksMemory - 1;
-
-                if ( iBlockPutPos >= iNumBlocksMemory )
-                {
-                    iBlockPutPos -= iNumBlocksMemory;
-                }
+                veciBlockValid[iBlockGetPos] = 0;
+                ++iSequenceNumberAtGetPos;
+                ++iBlockGetPos;
+                if ( iBlockGetPos >= iNumBlocksMemory ) iBlockGetPos -= iNumBlocksMemory;
             }
-            else
-            {
-                // this is the regular case: the received packet fits into the buffer so
-                // we will write it at the correct position based on the sequence number
-                iBlockPutPos = iBlockGetPos + iSeqNumDiff;
-
-                if ( iBlockPutPos >= iNumBlocksMemory )
-                {
-                    iBlockPutPos -= iNumBlocksMemory;
-                }
-            }
+            iBlockPutPos = ( iBlockGetPos + placement.offset ) % iNumBlocksMemory;
 
             // for simulation buffer only update pointer, no data copying
             if ( !bIsSimulation )
