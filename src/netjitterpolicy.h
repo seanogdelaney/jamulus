@@ -4,6 +4,7 @@
 \******************************************************************************/
 #pragma once
 #include <cstddef>
+#include <cmath>
 
 namespace NetReceive
 {
@@ -29,12 +30,11 @@ inline AutoDecision SelectAutoSize (const double* errors, const int* sizes, size
     return {normal, emergency, !emergencyFound};
 }
 inline void UpdateSmoothedSize (double& smoothed, int& selected, int decision,
-                                double weightUp, double weightDown, double hysteresis)
+                                double weightUp, double weightDown, double hysteresis, int reference)
 {
-    // Preserve the MathUtils::UpDownIIR1 and DecideWithHysteresis formulas.
-    const double weight = (decision > smoothed) ? weightUp : weightDown;
+    const double weight = decision < smoothed ? weightDown : weightUp;
     smoothed = smoothed * weight + decision * (1.0 - weight);
-    if (smoothed > selected + 0.5 + hysteresis) ++selected;
-    else if (smoothed < selected - 0.5 - hysteresis) --selected;
+    const double input = smoothed > reference ? smoothed - hysteresis : smoothed + hysteresis;
+    selected = static_cast<int>(std::floor(input + 0.5));
 }
 } // namespace NetReceive

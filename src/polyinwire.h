@@ -235,9 +235,15 @@ private:
     std::vector<Slot>             ringSlots;
     std::vector<RecordMeta>       metadata;       // [ring slot][descriptor]
     std::vector<uint8_t>          payloadStorage; // [ring slot][descriptor][max payload]
-    // Exponentially decayed late-arrival rate, scaled by 10000.  This is
-    // fixed-size state; no source or fragment creates another jitter buffer.
+    // Only one session-level logical-frame timing estimator: the per-source
+    // fragments share its cursor. Stock's candidate-selection and IIR policy
+    // are reused here; outcomes are derived from fragment deadlines rather
+    // than copying payload into ten simulated buffers.
     std::array<uint16_t, kMaxAutoIngressFrames + 1> autoLateScores{};
+    int autoTarget = 6;
+    int autoWarmupTicks = 0;
+    double autoSmoothed = 6.0;
+    void UpdateAutoPolicy();
 };
 
 // The client intentionally advances only after each prerequisite has been

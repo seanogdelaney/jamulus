@@ -1701,7 +1701,7 @@ bool CServer::PreparePolyInSources ( const int sessionID, const CVector<CPolyInS
         generation = nextGeneration++;
 
     state.bIngressAuto     = vecSessions[sessionID].GetDoAutoSockBufSize();
-    const int targetFrames = state.bIngressAuto ? PolyIn::kMinAutoIngressFrames : vecSessions[sessionID].GetSockBufNumFrames();
+    const int targetFrames = state.bIngressAuto ? state.Playout.AutoTargetFrames() : vecSessions[sessionID].GetSockBufNumFrames();
     if ( !state.Playout.Configure ( generation,
                                     config[0].bRaw,
                                     descriptors.data(),

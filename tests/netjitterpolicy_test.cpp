@@ -10,5 +10,9 @@ int main()
     for(double &e:errors) e=0.1;
     d=NetReceive::SelectAutoSize(errors,sizes,4,0.001,0.01);
     assert(d.normal==5 && d.emergency==5 && d.noneBelowEmergency);
+    double smoothed=6;
+    int selected=6;
+    NetReceive::UpdateSmoothedSize(smoothed,selected,2,0.9997,0.9995,0.1,6);
+    assert(smoothed < 6 && selected == 6);
     std::cout << "netjitterpolicy: PASS\n";
 }

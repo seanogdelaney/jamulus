@@ -564,7 +564,10 @@ void CNetBufWithStats::UpdateAutoSetting()
     }
 
     // apply non-linear IIR filter
-    MathUtils().UpDownIIR1 ( dCurIIRFilterResult, static_cast<double> ( iCurDecision ), dWeightUp, dWeightDown );
+    // Exactly the stock MathUtils smoothing/hysteresis rules, now also used
+    // by the shared logical-frame receive policy.
+    NetReceive::UpdateSmoothedSize ( dCurIIRFilterResult, iCurAutoBufferSizeSetting, iCurDecision,
+                                     dWeightUp, dWeightDown, dHysteresisValue, iCurDecidedResult );
 
     //### TEST: BEGIN ###//
     // TEST store important detection parameters in file for debugging
@@ -585,7 +588,7 @@ void CNetBufWithStats::UpdateAutoSetting()
     //### TEST: END ###//
 
     // apply a hysteresis
-    iCurAutoBufferSizeSetting = MathUtils().DecideWithHysteresis ( dCurIIRFilterResult, iCurDecidedResult, dHysteresisValue );
+    // Decision already applied by the shared policy above.
 
     // Initialization phase check and correction -------------------------------
     // sometimes in the very first period after a connection we get a bad error

@@ -223,7 +223,7 @@ void TestAutoJitterStatistic()
     harness.Start ( 100 );
     for ( uint32_t sequence = 100; sequence < 180; ++sequence )
         harness.Put ( sequence );
-    assert ( harness.playout.AutoTargetFrames() == kMinAutoIngressFrames );
+    assert ( harness.playout.AutoTargetFrames() == 6 );
 
     std::array<RecordView, kMaxSourceRows> records{};
     uint32_t                               sequence = 0;

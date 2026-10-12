@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
 \******************************************************************************/
 #include "polyinwire.h"
+#include "netjitterpolicy.h"
 
 #include <algorithm>
 #include <cstring>
@@ -304,6 +305,9 @@ void SessionIngress::Reset()
     metadata.clear();
     payloadStorage.clear();
     autoLateScores.fill ( 0 );
+    autoTarget = 6;
+    autoWarmupTicks = 0;
+    autoSmoothed = 6.0;
 }
 
 int SessionIngress::FindDescriptor ( const uint8_t key ) const
@@ -433,29 +437,39 @@ void SessionIngress::ObserveArrival ( const uint32_t sequence, const uint32_t ne
     }
 }
 
-void SessionIngress::ObservePlayoutResult ( const bool frameReceived, const int currentTargetFrames )
+void SessionIngress::ObservePlayoutResult ( const bool completeFrame, const int currentTargetFrames )
 {
-    if ( frameReceived )
-        return;
-    const int target = std::max ( kMinAutoIngressFrames, std::min ( kMaxAutoIngressFrames, currentTargetFrames ) );
-    // A missing logical frame at the current deadline proves that every
-    // smaller/equal target would also have missed it.  Do not charge larger
-    // candidates: they may still receive a late fragment.
-    for ( int candidate = kMinAutoIngressFrames; candidate <= target; ++candidate )
+    if ( !completeFrame )
     {
-        UpdateAutoStatistic ( candidate, true );
+        const int target = std::max ( kMinAutoIngressFrames, std::min ( kMaxAutoIngressFrames, currentTargetFrames ) );
+        // A missing source record is a missed deadline even when a different
+        // source's fragment made the logical session frame available.
+        for ( int candidate = kMinAutoIngressFrames; candidate <= target; ++candidate )
+            UpdateAutoStatistic ( candidate, true );
     }
+    UpdateAutoPolicy();
 }
 
-int SessionIngress::AutoTargetFrames() const
+void SessionIngress::UpdateAutoPolicy()
 {
-    for ( int candidate = kMinAutoIngressFrames; candidate <= kMaxAutoIngressFrames; ++candidate )
-    {
-        if ( autoLateScores[static_cast<size_t> ( candidate )] <= kAutoScoreLimit )
-            return candidate;
-    }
-    return kMaxAutoIngressFrames;
+    // Stock CNetBufWithStats' ten candidate sizes, error thresholds and
+    // fast/normal filtering. Only the underlying deadline-event measurement
+    // differs because there may be many records in one logical frame.
+    constexpr int candidates[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    double errorRates[10];
+    for ( int i = 0; i < 10; ++i )
+        errorRates[i] = static_cast<double> ( autoLateScores[candidates[i]] ) / kAutoScoreScale;
+    const auto decision = NetReceive::SelectAutoSize ( errorRates, candidates, 10, 0.00025, 0.005 );
+    const bool fast = autoWarmupTicks < 5625 || autoTarget < decision.emergency || decision.noneBelowEmergency;
+    if ( autoWarmupTicks < 5625 ) ++autoWarmupTicks;
+    NetReceive::UpdateSmoothedSize ( autoSmoothed, autoTarget, decision.normal,
+                                    fast ? 0.9997499687422 : 0.9999975,
+                                    fast ? 0.999499875 : 0.99994999875,
+                                    0.1, 6 );
+    autoTarget = std::max ( kMinAutoIngressFrames, std::min ( 11, autoTarget ) );
 }
+
+int SessionIngress::AutoTargetFrames() const { return autoTarget; }
 
 bool SessionIngress::Read ( const uint32_t sequence, RecordView* const records, const size_t capacity ) const
 {
