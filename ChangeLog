@@ -1,3 +1,13 @@
+### 4.0.0sdel11 ###
+
+- Add negotiated Poly-in transport for multiple capture sources while preserving compatibility with legacy clients and servers.
+
+- Bound and validate fragmented per-source ingress, codec configuration and physical-session to logical-source mappings.
+
+- Add adaptive Poly-in playout and jitter recovery, incomplete-frame handling, source mixing and transport fault regression coverage.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 3.12.5dev <- NOTE: the release version number will be 4.0.0 ###
 
 - Client: removed double ping from Connect Dialog, improving accuracy of initial ping times displayed (#3847).
