@@ -45,6 +45,7 @@
 \******************************************************************************/
 
 #include "opusprofile.h"
+#include "audioframedecode.h"
 #include "server.h"
 #include "util.h"
 
@@ -962,28 +963,9 @@ void CServer::DecodeReceiveData ( const int iChanCnt, const int iNumClients )
 
             const int iOffset = iB * SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[iChanCnt];
 
-            if ( !bIsRawAudio )
-            {
-                // OPUS decode received data stream
-                if ( CurOpusDecoder != nullptr )
-                {
-                    iUnused = opus_custom_decode ( CurOpusDecoder,
-                                                   pCurCodedData,
-                                                   iCeltNumCodedBytes,
-                                                   &vecvecsData[iChanCnt][iOffset],
-                                                   iClientFrameSizeSamples );
-                }
-            }
-            else if ( pCurCodedData != nullptr )
-            {
-                // copy received raw data stream
-                memcpy ( &vecvecsData[iChanCnt][iOffset], pCurCodedData, iCeltNumCodedBytes );
-            }
-            else
-            {
-                // lost packet - fill with silence
-                memset ( &vecvecsData[iChanCnt][iOffset], 0, iCeltNumCodedBytes );
-            }
+            iUnused = AudioFrameDecode::Decode ( CurOpusDecoder, pCurCodedData, iCeltNumCodedBytes,
+                                                   &vecvecsData[iChanCnt][iOffset], iClientFrameSizeSamples,
+                                                   vecNumAudioChannels[iChanCnt], bIsRawAudio );
         }
 
         // a new large frame is ready, if the conversion buffer is required, put it in the buffer
