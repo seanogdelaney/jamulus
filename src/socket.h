@@ -50,8 +50,8 @@
 #include <QThread>
 #include <QMutex>
 #include <QRandomGenerator>
-#include <vector>
 #include <atomic>
+#include <vector>
 #include "global.h"
 #include "protocol.h"
 #include "util.h"
@@ -99,6 +99,9 @@ public:
     virtual ~CSocket();
 
     void SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr );
+    // Send directly from FramePacketizer's fixed storage instead of constructing
+    // or resizing a CVector in the real-time audio callback.
+    void SendPacket ( const uint8_t* pbySendBuf, int iNumBytes, const CHostAddress& HostAddr );
 
     bool GetAndResetbJitterBufferOKFlag();
 
@@ -186,16 +189,22 @@ public:
         Init();
     }
 
-    virtual ~CHighPrioSocket() { NetworkWorkerThread.Stop(); }
+    virtual ~CHighPrioSocket() { Stop(); }
 
     void Start()
     {
         // starts the high priority socket receive thread (with using blocking
         // socket request call)
-        NetworkWorkerThread.start ( QThread::TimeCriticalPriority );
+        NetworkWorkerThread.Start();
     }
 
+    void Stop() { NetworkWorkerThread.Stop(); }
+
     void SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddress& HostAddr ) { Socket.SendPacket ( vecbySendBuf, HostAddr ); }
+    void SendPacket ( const uint8_t* pbySendBuf, const int iNumBytes, const CHostAddress& HostAddr )
+    {
+        Socket.SendPacket ( pbySendBuf, iNumBytes, HostAddr );
+    }
 
     bool GetAndResetbJitterBufferOKFlag() { return Socket.GetAndResetbJitterBufferOKFlag(); }
 
@@ -208,13 +217,34 @@ protected:
             setObjectName ( "CSocketThread" );
         }
 
+        void Start()
+        {
+            bFinished.store ( false, std::memory_order_relaxed );
+            bStarted.store ( true, std::memory_order_release );
+            start ( QThread::TimeCriticalPriority );
+        }
+
         void Stop()
         {
-            // disable run flag so that the thread loop can be exit
-            bRun = false;
+            // Publish the stop request once. Repeated Stop() calls still join
+            // the worker, but do not need to close the socket again.
+            if ( !bRun.exchange ( false, std::memory_order_acq_rel ) )
+            {
+                wait();
+                return;
+            }
 
-            // give thread some time to terminate
-            wait ( 5000 );
+            // OnDataReceived() polls with a bounded timeout and observes bRun,
+            // so joining here waits for the receive loop without closing the
+            // upstream-owned IPv4/IPv6 sockets out from under it.
+            wait();
+            // Apple TSan does not model QThread::wait() as a join, so retain
+            // an explicit completion handoff for the worker's lifetime edge.
+            if ( bStarted.load ( std::memory_order_acquire ) )
+            {
+                while ( !bFinished.load ( std::memory_order_acquire ) )
+                    QThread::yieldCurrentThread();
+            }
         }
 
         void SetSocket ( CSocket* pNewSocket ) { pSocket = pNewSocket; }
@@ -226,17 +256,20 @@ protected:
             // case)
             if ( pSocket != nullptr )
             {
-                while ( bRun )
+                while ( bRun.load ( std::memory_order_acquire ) )
                 {
                     // this function is a blocking function (waiting for network
                     // packets to be received and processed)
                     pSocket->OnDataReceived ( bRun );
                 }
             }
+            bFinished.store ( true, std::memory_order_release );
         }
 
         CSocket*          pSocket;
-        std::atomic<bool> bRun; // atomic, as it is set and tested by different threads
+        std::atomic<bool> bRun;
+        std::atomic<bool> bStarted{ false };
+        std::atomic<bool> bFinished{ true };
     };
 
     void Init()

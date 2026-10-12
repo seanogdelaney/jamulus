@@ -103,6 +103,20 @@ public:
     bool IsConnected() const { return iConTimeOut > 0; }
     void Disconnect();
 
+    // Server connection lifetime is advanced once per physical session by
+    // CServer, independently of whether any particular decoder reads audio.
+    // Client channels retain the historical GetData()-driven timeout.
+    bool AdvanceTimeOutCounter ( int iNumSamples );
+
+    // Poly-in uplink bypasses PutAudioData(). Advance the same physical
+    // session join fade once for each accepted logical Poly-in frame.
+    void AdvanceFadeInCounter();
+
+    // Reset every per-endpoint state which must not survive a server slot reuse.
+    // This is intentionally server-side only and must be called from the
+    // CChannel/CProtocol QObject thread, not the socket worker.
+    void ResetForServerReuse();
+
     void SetEnable ( const bool bNEnStat );
     bool IsEnabled() { return bIsEnabled; }
 
@@ -121,7 +135,7 @@ public:
     void CreateMuteStateHasChangedMes ( const int iChanID, const bool bIsMuted ) { Protocol.CreateMuteStateHasChangedMes ( iChanID, bIsMuted ); }
 
     void  SetGain ( const int iChanID, const float fNewGain );
-    float GetFadeInGain() { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    float GetFadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
 
     void SetPan ( const int iChanID, const float fNewPan );
 
@@ -156,7 +170,7 @@ public:
         SockBuf.GetErrorRates ( vecErrRates, dLimit, dMaxUpLimit );
     }
 
-    EAudComprType GetAudioCompressionType() { return eAudioCompressionType; }
+    EAudComprType GetAudioCompressionType() const { return eAudioCompressionType; }
     int           GetNumAudioChannels() const { return iNumAudioChannels; }
 
     // network protocol interface
@@ -169,6 +183,12 @@ public:
     }
     void CreateClientIDMes ( const int iChanID ) { Protocol.CreateClientIDMes ( iChanID ); }
     void CreateRawAudioSupportedMes() { Protocol.CreateRawAudioSupportedMes(); }
+    void CreateReqPolyInCapsMes() { Protocol.CreateReqPolyInCapsMes(); }
+    void CreatePolyInCapsMes() { Protocol.CreatePolyInCapsMes(); }
+    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config ) { Protocol.CreatePolyInConfigMes ( config ); }
+    void CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept ) { Protocol.CreatePolyInAcceptMes ( accept ); }
+    void CreatePolyInRejectMes ( uint8_t reason ) { Protocol.CreatePolyInRejectMes ( reason ); }
+    void CreatePolyInActiveMes ( uint16_t generation ) { Protocol.CreatePolyInActiveMes ( generation ); }
     void CreateReqNetwTranspPropsMes() { Protocol.CreateReqNetwTranspPropsMes(); }
     void CreateReqSplitMessSupportMes() { Protocol.CreateReqSplitMessSupportMes(); }
     void CreateReqJitBufMes() { Protocol.CreateReqJitBufMes(); }
@@ -261,6 +281,7 @@ public slots:
     void OnReqNetTranspProps();
     void OnReqSplitMessSupport();
     void OnSplitMessSupported() { Protocol.SetSplitMessageSupported ( true ); }
+    bool IsSplitMessageSupported() const { return Protocol.IsSplitMessageSupported(); }
 
     void OnVersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );
 
@@ -288,11 +309,21 @@ signals:
     void ReqJittBufSize();
     void JittBufSizeChanged ( int iNewJitBufSize );
     void ServerAutoSockBufSizeChange ( int iNNumFra );
+    void ServerJitterPolicyChanged ( int iNumFrames, bool bAuto );
     void ReqConnClientsList();
     void ConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo );
     void ChanInfoHasChanged();
     void ClientIDReceived ( int iChanID );
     void RawAudioSupported();
+    void SplitMessageSupported();
+    void ReqPolyInCaps();
+    void PolyInCapsReceived();
+    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config );
+    void PolyInAcceptReceived ( CPolyInAcceptMap accept );
+    void PolyInRejected ( uint8_t reason );
+    void PolyInActive ( int generation );
+    void ReliableMessageSent ( int logicalMessageID );
+    void ReliableMessageAcknowledged ( int logicalMessageID );
     void MuteStateHasChanged ( int iChanID, bool bIsMuted );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void ReqChanInfo();

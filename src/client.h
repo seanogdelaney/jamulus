@@ -60,6 +60,11 @@
 #include "global.h"
 #include "socket.h"
 #include "channel.h"
+#include "polyin.h"
+
+#include <array>
+#include <atomic>
+#include <cstdint>
 #include "util.h"
 #include "plugins/audioreverb.h"
 #include "buffer.h"
@@ -153,6 +158,41 @@ public:
     // can store here other information about an active channel
 };
 
+/** One configured physical input route in Poly-in mode. */
+class CPolyInAudioChannelConfig
+{
+public:
+    CPolyInAudioChannelConfig ( const QString& strNTag         = QString(),
+                                const int      iNInstrument    = CInstPictures::GetNotUsedInstrument(),
+                                const int      iNInputChannel1 = 0,
+                                const int      iNInputChannel2 = INVALID_INDEX ) :
+        strFaderTag ( strNTag ),
+        iInstrument ( iNInstrument ),
+        iInputChannel1 ( iNInputChannel1 ),
+        iInputChannel2 ( iNInputChannel2 )
+    {}
+
+    QString strFaderTag;
+    int     iInstrument;
+    int     iInputChannel1;
+    int     iInputChannel2; // INVALID_INDEX means mono
+};
+
+/** Source-local codec and reusable PCM storage. It is configured outside the callback. */
+class CClientPolyInSource
+{
+public:
+    CPolyInSourceConfig Config;
+    int                 iInputChannel1 = INVALID_INDEX;
+    int                 iInputChannel2 = INVALID_INDEX;
+    OpusCustomEncoder*  pEncoder       = nullptr;
+    // Keep the captured PCM separate from the all-zero uplink payload used by
+    // Mute Myself. The local monitor must always consume the pre-mute signal.
+    CVector<int16_t> vecPCM;
+    CVector<int16_t> vecMutedPCM;
+    CVector<uint8_t> vecCoded;
+};
+
 class CClientSettings;
 
 class CClient : public QObject
@@ -204,6 +244,16 @@ public:
     EAudChanConf GetAudioChannels() const { return eAudioChannelConf; }
     void         SetAudioChannels ( const EAudChanConf eNAudChanConf );
 
+    const QVector<CPolyInAudioChannelConfig>& GetPolyInAudioChannels() const { return vecPolyInAudioChannels; }
+    void                                      SetPolyInAudioChannels ( const QVector<CPolyInAudioChannelConfig>& vecNewChannels );
+    EAudChanConf                              GetLegacyAudioChannels() const { return eLegacyAudioChannelConf; }
+    QString                                   GetPolyInStatus() const { return strPolyInStatus; }
+    bool                                      IsPolyInCaptureSupported() const { return Sound.SupportsPolyInCapture(); }
+    // Poly-in source descriptors are negotiated once at connection startup.
+    // They remain immutable until disconnect so the audio callback and server
+    // always agree on keys, codec state and source/fader mapping.
+    bool IsPolyInRoutingLocked() const { return eAudioChannelConf == CC_POLY_IN && bPolyInRoutingLocked; }
+
     int  GetAudioInFader() const { return iAudioInFader; }
     void SetAudioInFader ( const int iNV ) { iAudioInFader = iNV; }
 
@@ -235,14 +285,14 @@ public:
     }
     int GetServerSockBufNumFrames() { return iServerSockBufNumFrames; }
 
-    int GetUploadRateKbps() { return Channel.GetUploadRateKbps(); }
+    int GetUploadRateKbps();
 
     // sound card device selection
     QStringList GetSndCrdDevNames() { return Sound.GetDevNames(); }
 
     QString SetSndCrdDev ( const QString strNewDev );
     QString GetSndCrdDev() { return Sound.GetDev(); }
-    void    OpenSndCrdDriverSetup() { Sound.OpenDriverSetup(); }
+    void    OpenSndCrdDriverSetup();
 
     // sound card channel selection
     int     GetSndCrdNumInputChannels() { return Sound.GetNumInputChannels(); }
@@ -297,7 +347,7 @@ public:
     bool GetFraSiFactDefSupported() { return bFraSiFactDefSupported; }
     bool GetFraSiFactSafeSupported() { return bFraSiFactSafeSupported; }
 
-    void SetMuteOutStream ( const bool bDoMute ) { bMuteOutStream = bDoMute; }
+    void SetMuteOutStream ( const bool bDoMute ) { bMuteOutStream.store ( bDoMute, std::memory_order_relaxed ); }
 
     void SetRemoteChanGain ( const int iId, const float fGain, const bool bIsMyOwnFader );
     void SetRemoteChanPan ( const int iId, const float fPan );
@@ -366,6 +416,35 @@ protected:
     void Init();
     void ProcessSndCrdAudioData ( CVector<short>& vecsStereoSndCrd );
     void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd );
+    void ConfigurePolyInSources();
+    void DestroyPolyInSources();
+    void BuildPolyInSourceConfig();
+    void FillPolyInSourcePCM ( CClientPolyInSource& source, const CVector<int16_t>& captured, int captureChannels, int frameOffset );
+    void UpdatePolyInInputLevelMeter ( const CVector<int16_t>& captured, int captureChannels );
+    bool SendPolyInFrame ( const CVector<int16_t>& captured, int captureChannels, int frameOffset, bool muteOutStream );
+    void AccumulatePolyInLocalMonitor ( int frameOffset );
+    bool SetPolyInLocalMonitorGain ( int serverFaderID, float gain );
+    bool SetPolyInLocalMonitorPan ( int serverFaderID, float pan );
+    bool RejectPolyInAudioReinitialization ( const QString& setting );
+    int  GetCodedBytesForPolyInSource ( int audioChannels, bool& raw ) const;
+    enum class EPolyInDeadline : uint8_t
+    {
+        None,
+        SplitCapability,
+        CapabilityResponse,
+        ConfigurationResponse,
+        Activation
+    };
+
+    void    BeginPolyInNegotiation();
+    void    SendPolyInConfigIfReady();
+    void    StartPolyInDeadline ( EPolyInDeadline deadline, int timeoutMs );
+    void    StopPolyInDeadline();
+    void    SetPolyInStatus ( const QString& status );
+    QString PolyInRejectReason ( uint8_t reason ) const;
+    void    SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap );
+    void    RestoreLegacyOwnedSourceID();
+    bool    IsOwnedServerFader ( int serverFaderID ) const;
 
     int  PreparePingMessage();
     int  EvaluatePingMessage ( const int iMs );
@@ -400,28 +479,45 @@ protected:
     QMutex MutexChannels;
 
     // audio encoder/decoder
-    OpusCustomMode*        Opus64Mode;
-    OpusCustomEncoder*     Opus64EncoderMono;
-    OpusCustomDecoder*     Opus64DecoderMono;
-    OpusCustomEncoder*     Opus64EncoderStereo;
-    OpusCustomDecoder*     Opus64DecoderStereo;
-    OpusCustomMode*        OpusMode;
-    OpusCustomEncoder*     OpusEncoderMono;
-    OpusCustomDecoder*     OpusDecoderMono;
-    OpusCustomEncoder*     OpusEncoderStereo;
-    OpusCustomDecoder*     OpusDecoderStereo;
-    OpusCustomEncoder*     CurOpusEncoder;
-    OpusCustomDecoder*     CurOpusDecoder;
-    EAudComprType          eAudioCompressionType;
-    int                    iCeltNumCodedBytes;
-    int                    iOPUSFrameSizeSamples;
-    EAudioQuality          eAudioQuality;
-    EAudChanConf           eAudioChannelConf;
-    int                    iNumAudioChannels;
-    bool                   bIsInitializationPhase;
-    std::atomic<bool>      bMuteOutStream;
-    std::atomic<float>     fMuteOutStreamGain;
-    CVector<unsigned char> vecCeltData;
+    OpusCustomMode*    Opus64Mode;
+    OpusCustomEncoder* Opus64EncoderMono;
+    OpusCustomDecoder* Opus64DecoderMono;
+    OpusCustomEncoder* Opus64EncoderStereo;
+    OpusCustomDecoder* Opus64DecoderStereo;
+    OpusCustomMode*    OpusMode;
+    OpusCustomEncoder* OpusEncoderMono;
+    OpusCustomDecoder* OpusDecoderMono;
+    OpusCustomEncoder* OpusEncoderStereo;
+    OpusCustomDecoder* OpusDecoderStereo;
+    OpusCustomEncoder* CurOpusEncoder;
+    OpusCustomDecoder* CurOpusDecoder;
+    EAudComprType      eAudioCompressionType;
+    int                iCeltNumCodedBytes;
+    int                iOPUSFrameSizeSamples;
+    EAudioQuality      eAudioQuality;
+    EAudChanConf       eAudioChannelConf;
+    // Poly-in adds independent uplink sources, not extra client sessions.
+    // This retains the saved ordinary input routing for fallback; the physical
+    // session transport is forced to stereo while Poly-in is selected.
+    EAudChanConf                                           eLegacyAudioChannelConf;
+    QVector<CPolyInAudioChannelConfig>                     vecPolyInAudioChannels;
+    CClientPolyInSource                                    PolyInSources[PolyIn::kMaxSourceRows];
+    int                                                    iPolyInSourceCount;
+    PolyIn::FramePacketizer                                PolyInPacketizer;
+    PolyIn::Negotiation                                    PolyInNegotiation;
+    uint32_t                                               iPolyInFrameSequence;
+    std::array<bool, MAX_NUM_CHANNELS>                     bOwnedServerFaderIDs;
+    int                                                    iLegacyServerFaderID;
+    std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorGain;
+    std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorPan;
+    QString                                                strPolyInStatus;
+    EPolyInDeadline                                        ePolyInDeadline;
+    bool                                                   bPolyInRoutingLocked;
+    int                                                    iNumAudioChannels;
+    bool                                                   bIsInitializationPhase;
+    std::atomic<bool>                                      bMuteOutStream;
+    std::atomic<float>                                     fMuteOutStreamGain;
+    CVector<unsigned char>                                 vecCeltData;
 
     bool            bIPv6Available; // must be before Socket - passed by reference to Socket
     CHighPrioSocket Socket;
@@ -440,13 +536,19 @@ protected:
     int iSndCrdPrefFrameSizeFactor;
     int iSndCrdFrameSizeFactor;
 
-    bool             bSndCrdConversionBufferRequired;
-    int              iSndCardMonoBlockSizeSamConvBuff;
-    CBuffer<int16_t> SndCrdConversionBufferIn;
-    CBuffer<int16_t> SndCrdConversionBufferOut;
-    CVector<int16_t> vecDataConvBuf;
-    CVector<int16_t> vecsStereoSndCrdMuteStream;
-    CVector<int16_t> vecZeros;
+    bool                    bSndCrdConversionBufferRequired;
+    int                     iSndCardMonoBlockSizeSamConvBuff;
+    CBuffer<int16_t>        SndCrdConversionBufferIn;
+    CBuffer<int16_t>        SndCrdConversionBufferOut;
+    CVector<int16_t>        vecDataConvBuf;
+    CVector<int16_t>        vecInputDataConvBuf;
+    CVector<int16_t>        vecCapturedInputFallback;
+    int                     iCaptureInputChannels;
+    const CVector<int16_t>* pCurrentCaptureInput;
+    int                     iCurrentCaptureInputChannels;
+    CVector<int16_t>        vecsStereoSndCrdMuteStream;
+    CVector<float>          vecfPolyInLocalMonitor;
+    CVector<int16_t>        vecZeros;
 
     bool bFraSiFactPrefSupported;
     bool bFraSiFactDefSupported;
@@ -474,6 +576,7 @@ protected:
     // for gain or pan rate limiting
     QMutex MutexGainOrPan;
     QTimer TimerGainOrPan;
+    QTimer TimerPolyInNegotiation;
     int    minGainOrPanId;
     int    maxGainOrPanId;
     int    iCurPingTime;
@@ -510,6 +613,13 @@ protected slots:
     void OnControllerInFaderIsMute ( int iChannelIdx, bool bIsMute );
     void OnControllerInMuteMyself ( bool bMute );
     void OnClientIDReceived ( int iServerChanID );
+    void OnPolyInCaps();
+    void OnPolyInSplitMessageSupported();
+    void OnPolyInReliableMessageSent ( int logicalMessageID );
+    void OnPolyInAccept ( CPolyInAcceptMap accept );
+    void OnPolyInReject ( uint8_t reason );
+    void OnPolyInActive ( int generation );
+    void OnPolyInNegotiationTimeout();
     void OnRawAudioSupported();
     void OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted );
     void OnCLChannelLevelListReceived ( CHostAddress InetAddr, CVector<uint16_t> vecLevelList );
@@ -519,6 +629,8 @@ signals:
     void ConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo );
     void ChatTextReceived ( QString strChatText );
     void ClientIDReceived ( int iChanID );
+    void OwnedSourceIDsReceived ( CVector<int> vecClientChannelIDs );
+    void PolyInStatusChanged ( QString strStatus );
     void MuteStateHasChangedReceived ( int iChanID, bool bIsMuted );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );

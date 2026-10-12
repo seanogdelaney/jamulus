@@ -85,6 +85,8 @@ CChannel::CChannel ( const bool bNIsServer ) :
     // if we later do not fire vectors in the emits, we can remove this again
     qRegisterMetaType<CVector<uint8_t>> ( "CVector<uint8_t>" );
     qRegisterMetaType<CHostAddress> ( "CHostAddress" );
+    qRegisterMetaType<CVector<CPolyInSourceConfig>> ( "CVector<CPolyInSourceConfig>" );
+    qRegisterMetaType<CPolyInAcceptMap> ( "CPolyInAcceptMap" );
     //### TODO: END ###//
 
     QObject::connect ( &Protocol, &CProtocol::MessReadyForSending, this, &CChannel::OnSendProtMessage );
@@ -107,6 +109,19 @@ CChannel::CChannel ( const bool bNIsServer ) :
 
     QObject::connect ( &Protocol, &CProtocol::RawAudioSupported, this, &CChannel::RawAudioSupported );
 
+    QObject::connect ( &Protocol, &CProtocol::ReqPolyInCaps, this, &CChannel::ReqPolyInCaps );
+
+    QObject::connect ( &Protocol, &CProtocol::PolyInCapsReceived, this, &CChannel::PolyInCapsReceived );
+
+    QObject::connect ( &Protocol, &CProtocol::PolyInConfigReceived, this, &CChannel::PolyInConfigReceived );
+
+    QObject::connect ( &Protocol, &CProtocol::PolyInAcceptReceived, this, &CChannel::PolyInAcceptReceived );
+
+    QObject::connect ( &Protocol, &CProtocol::PolyInRejected, this, &CChannel::PolyInRejected );
+    QObject::connect ( &Protocol, &CProtocol::PolyInActive, this, &CChannel::PolyInActive );
+    QObject::connect ( &Protocol, &CProtocol::ReliableMessageSent, this, &CChannel::ReliableMessageSent );
+    QObject::connect ( &Protocol, &CProtocol::ReliableMessageAcknowledged, this, &CChannel::ReliableMessageAcknowledged );
+
     QObject::connect ( &Protocol, &CProtocol::MuteStateHasChangedReceived, this, &CChannel::MuteStateHasChangedReceived );
 
     QObject::connect ( &Protocol, &CProtocol::ChangeChanInfo, this, &CChannel::OnChangeChanInfo );
@@ -120,6 +135,7 @@ CChannel::CChannel ( const bool bNIsServer ) :
     QObject::connect ( &Protocol, &CProtocol::ReqSplitMessSupport, this, &CChannel::OnReqSplitMessSupport );
 
     QObject::connect ( &Protocol, &CProtocol::SplitMessSupported, this, &CChannel::OnSplitMessSupported );
+    QObject::connect ( &Protocol, &CProtocol::SplitMessSupported, this, &CChannel::SplitMessageSupported );
 
     QObject::connect ( &Protocol, &CProtocol::LicenceRequired, this, &CChannel::LicenceRequired );
 
@@ -227,7 +243,7 @@ void CChannel::SetAudioStreamProperties ( const EAudComprType eNewAudComprType,
         {
             // init socket buffer
             SockBuf.SetUseDoubleSystemFrameSize ( eAudioCompressionType == CT_OPUS ); // NOTE must be set BEFORE the init()
-            SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber ); // stock session receive-state reset
+            SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
         }
         MutexSocketBuf.unlock();
 
@@ -282,13 +298,17 @@ bool CChannel::SetSockBufNumFrames ( const int iNewNumFrames, const bool bPreser
 
     // only in case there is no error, we are the server and auto jitter buffer
     // setting is enabled, we have to report the current setting to the client
-    if ( !ReturnValue && bIsServer && bCurDoAutoSockBufSize )
+    if ( !ReturnValue && bIsServer )
     {
-        // we cannot call the "CreateJitBufMes" function directly since
-        // this would give us problems with different threads (e.g. the
-        // timer thread) and the protocol mechanism (problem with
-        // qRegisterMetaType(), etc.)
-        emit ServerAutoSockBufSizeChange ( iNewNumFrames );
+        if ( bCurDoAutoSockBufSize )
+        {
+            // we cannot call the "CreateJitBufMes" function directly since
+            // this would give us problems with different threads (e.g. the
+            // timer thread) and the protocol mechanism (problem with
+            // qRegisterMetaType(), etc.)
+            emit ServerAutoSockBufSizeChange ( iNewNumFrames );
+        }
+        emit ServerJitterPolicyChanged ( iNewNumFrames, bCurDoAutoSockBufSize );
     }
 
     return ReturnValue; // set error flag
@@ -430,6 +450,7 @@ void CChannel::OnJittBufSizeChange ( int iNewJitBufSize )
         if ( iNewJitBufSize == AUTO_NET_BUF_SIZE_FOR_PROTOCOL )
         {
             SetDoAutoSockBufSize ( true );
+            emit ServerJitterPolicyChanged ( GetSockBufNumFrames(), true );
         }
         else
         {
@@ -556,11 +577,69 @@ void CChannel::Disconnect()
     // we only have to disconnect the channel if it is actually connected
     if ( IsConnected() )
     {
-        // set time out counter to a small value > 0 so that the next time a
-        // received audio block is queried, the disconnection is performed
-        // (assuming that no audio packet is received in the meantime)
+        // Set the timeout to a small value > 0 so that the next lifetime tick
+        // performs the disconnection (CServer::OnTimer on the server, GetData
+        // on the client), assuming no audio packet arrives in the meantime.
         iConTimeOut = 1; // a small number > 0
     }
+}
+
+bool CChannel::AdvanceTimeOutCounter ( const int iNumSamples )
+{
+    QMutexLocker locker ( &MutexSocketBuf );
+
+    if ( iConTimeOut <= 0 )
+        return false;
+
+    // Keep the timeout unit identical to the client-side GetData() path:
+    // audio samples, rather than timer callbacks. CServer supplies exactly
+    // one server-frame duration per connected physical session.
+    iConTimeOut -= qMax ( 1, iNumSamples );
+    if ( iConTimeOut > 0 )
+        return false;
+
+    iConTimeOut = 0;
+    return true;
+}
+
+void CChannel::AdvanceFadeInCounter()
+{
+    QMutexLocker locker ( &MutexSocketBuf );
+
+    // Keep the admission condition and rate identical to PutAudioData().
+    // Poly-in receive is multiplexed, so the caller invokes this once per
+    // accepted logical frame rather than once per UDP fragment.
+    if ( iFadeInCnt < iFadeInCntMax && bIsIdentified )
+        ++iFadeInCnt;
+}
+
+void CChannel::ResetForServerReuse()
+{
+    // CServer serialises this against PutAudioData() with its session mutex.
+    // Protocol owns a QTimer, so this routine is deliberately called from the
+    // server QObject thread rather than the high-priority socket worker.
+    Protocol.Reset();
+
+    QMutexLocker locker ( &Mutex );
+    QMutexLocker socketLocker ( &MutexSocketBuf );
+    QMutexLocker convLocker ( &MutexConvBuf );
+
+    iConTimeOut         = 0;
+    iFadeInCnt          = 0;
+    iFadeInCntMax       = FADE_IN_NUM_FRAMES_DBLE_FRAMESIZE;
+    iSendSequenceNumber = 0;
+    ResetNetworkTransportProperties();
+
+    // Empty both packet-direction conversion stores. Leaving either one live
+    // makes the next endpoint occupying this fixed server slot inherit stale
+    // legacy audio or a half-filled return packet.
+    SockBuf.SetUseDoubleSystemFrameSize ( false );
+    SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, false );
+    ConvBuf.Init ( iNetwFrameSize * iNetwFrameSizeFact, false );
+
+    ResetInfo();
+    InetAddr = CHostAddress();
+    SignalLevelMeter.Reset();
 }
 
 void CChannel::PutProtocolData ( const int iRecCounter, const int iRecID, const CVector<uint8_t>& vecbyMesBodyData, const CHostAddress& RecHostAddr )
@@ -657,8 +736,20 @@ EGetDataStat CChannel::GetData ( CVector<uint8_t>& vecbyData, const int iNumByte
         // the socket access must be inside a mutex
         const bool bSockBufState = SockBuf.Get ( vecbyData, iNumBytes );
 
-        // decrease time-out counter
-        if ( iConTimeOut > 0 )
+        if ( bIsServer )
+        {
+            // Server timeout progression is deliberately independent of this
+            // buffer read. A legacy decoder may return early because codec or
+            // conversion state is not ready; that must not keep the physical
+            // session alive forever. CServer ages every session once per tick.
+            if ( iConTimeOut > 0 )
+                eGetStatus = bSockBufState ? GS_BUFFER_OK : GS_BUFFER_UNDERRUN;
+            else
+                eGetStatus = GS_CHAN_NOT_CONNECTED;
+        }
+        // The client still owns one channel and historically advances its
+        // timeout when consuming audio from the server.
+        else if ( iConTimeOut > 0 )
         {
             // subtract the number of samples of the current block since the
             // time out counter is based on samples not on blocks (definition:

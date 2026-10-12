@@ -52,6 +52,7 @@
 #include <list>
 #include <cmath>
 #include "global.h"
+#include "polyin.h"
 #include "util.h"
 
 /* Definitions ****************************************************************/
@@ -85,6 +86,12 @@
 #define PROTMESSID_REQ_SPLIT_MESS_SUPPORT   34 // request support for split messages
 #define PROTMESSID_SPLIT_MESS_SUPPORTED     35 // split messages are supported
 #define PROTMESSID_RAWAUDIO_SUPPORTED       36 // raw (uncompressed) audio is supported
+#define PROTMESSID_REQ_POLY_IN_CAPS         37 // request Poly-in capability
+#define PROTMESSID_POLY_IN_CAPS             38 // Poly-in capability response
+#define PROTMESSID_POLY_IN_CONFIG           39 // Poly-in source descriptors (split-capable)
+#define PROTMESSID_POLY_IN_ACCEPT           40 // accepted source/fader map and generation
+#define PROTMESSID_POLY_IN_REJECT           41 // rejected Poly-in configuration
+#define PROTMESSID_POLY_IN_ACTIVE           42 // Poly-in source map committed after first audio frame
 
 // message IDs of connection less messages (CLM)
 // DEFINITION -> start at 1000, end at 1999, see IsConnectionLessMessageID
@@ -135,6 +142,7 @@ public:
 
     void Reset();
     void SetSplitMessageSupported ( const bool bIn ) { bSplitMessageSupported = bIn; }
+    bool IsSplitMessageSupported() const { return bSplitMessageSupported; }
 
     void CreateJitBufMes ( const int iJitBufSize );
     void CreateReqJitBufMes();
@@ -152,6 +160,12 @@ public:
     void CreateReqSplitMessSupportMes();
     void CreateSplitMessSupportedMes();
     void CreateRawAudioSupportedMes();
+    void CreateReqPolyInCapsMes();
+    void CreatePolyInCapsMes();
+    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config );
+    void CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept );
+    void CreatePolyInRejectMes ( uint8_t reason );
+    void CreatePolyInActiveMes ( uint16_t generation );
     void CreateLicenceRequiredMes ( const ELicenceType eLicenceType );
     void CreateOpusSupportedMes();
 
@@ -203,15 +217,23 @@ protected:
     class CSendMessage
     {
     public:
-        CSendMessage() : vecMessage ( 0 ), iID ( PROTMESSID_ILLEGAL ), iCnt ( 0 ) {}
-        CSendMessage ( const CVector<uint8_t>& nMess, const int iNCnt, const int iNID ) : vecMessage ( nMess ), iID ( iNID ), iCnt ( iNCnt ) {}
+        CSendMessage() : vecMessage ( 0 ), iID ( PROTMESSID_ILLEGAL ), iLogicalID ( PROTMESSID_ILLEGAL ), iCnt ( 0 ), bLastLogicalPart ( true ) {}
+        CSendMessage ( const CVector<uint8_t>& nMess, const int iNCnt, const int iNID, const int iNLogicalID, const bool bNLastLogicalPart ) :
+            vecMessage ( nMess ),
+            iID ( iNID ),
+            iLogicalID ( iNLogicalID ),
+            iCnt ( iNCnt ),
+            bLastLogicalPart ( bNLastLogicalPart )
+        {}
 
         CSendMessage ( const CSendMessage& SendMess )
         {
             vecMessage.Init ( SendMess.vecMessage.Size() );
-            vecMessage = SendMess.vecMessage;
-            iID        = SendMess.iID;
-            iCnt       = SendMess.iCnt;
+            vecMessage       = SendMess.vecMessage;
+            iID              = SendMess.iID;
+            iLogicalID       = SendMess.iLogicalID;
+            iCnt             = SendMess.iCnt;
+            bLastLogicalPart = SendMess.bLastLogicalPart;
         }
 
         CSendMessage& operator= ( const CSendMessage& NewSendMess )
@@ -219,16 +241,23 @@ protected:
             vecMessage.Init ( NewSendMess.vecMessage.Size() );
             vecMessage = NewSendMess.vecMessage;
 
-            iID  = NewSendMess.iID;
-            iCnt = NewSendMess.iCnt;
+            iID              = NewSendMess.iID;
+            iLogicalID       = NewSendMess.iLogicalID;
+            iCnt             = NewSendMess.iCnt;
+            bLastLogicalPart = NewSendMess.bLastLogicalPart;
             return *this;
         }
 
         CVector<uint8_t> vecMessage;
-        int              iID, iCnt;
+        // iID is the physical reliable frame ID (SPECIAL_SPLIT_MESSAGE for a
+        // fragment); iLogicalID is the original request whose send starts a
+        // higher-level negotiation deadline. The final-part marker lets an
+        // acknowledgement expose completion of the whole logical message.
+        int  iID, iLogicalID, iCnt;
+        bool bLastLogicalPart;
     };
 
-    void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID );
+    void EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID, const bool bLastLogicalPart );
 
     void GenMessageFrame ( CVector<uint8_t>& vecOut, const int iCnt, const int iID, const CVector<uint8_t>& vecData );
 
@@ -289,6 +318,12 @@ protected:
     bool EvaluateReqSplitMessSupportMes();
     bool EvaluateSplitMessSupportedMes();
     bool EvaluateRawAudioSupportedMes();
+    bool EvaluateReqPolyInCapsMes();
+    bool EvaluatePolyInCapsMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInConfigMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInAcceptMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInRejectMes ( const CVector<uint8_t>& vecData );
+    bool EvaluatePolyInActiveMes ( const CVector<uint8_t>& vecData );
     bool EvaluateLicenceRequiredMes ( const CVector<uint8_t>& vecData );
     bool EvaluateVersionAndOSMes ( const CVector<uint8_t>& vecData );
     bool EvaluateRecorderStateMes ( const CVector<uint8_t>& vecData );
@@ -355,6 +390,18 @@ signals:
     void ReqSplitMessSupport();
     void SplitMessSupported();
     void RawAudioSupported();
+    void ReqPolyInCaps();
+    void PolyInCapsReceived();
+    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config );
+    void PolyInAcceptReceived ( CPolyInAcceptMap accept );
+    void PolyInRejected ( uint8_t reason );
+    void PolyInActive ( int generation );
+    // Emitted after a queued reliable protocol frame has actually been handed
+    // to the socket. Split fragments retain their original logical message ID.
+    void ReliableMessageSent ( int logicalMessageID );
+    // Emitted only when the final physical frame belonging to a logical
+    // reliable message has been acknowledged.
+    void ReliableMessageAcknowledged ( int logicalMessageID );
     void LicenceRequired ( ELicenceType eLicenceType );
     void VersionAndOSReceived ( COSUtil::EOpSystemType eOSType, QString strVersion );
     void RecorderStateReceived ( ERecorderState eRecorderState );

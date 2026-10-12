@@ -46,6 +46,205 @@
 
 #include "clientsettingsdlg.h"
 
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QTableWidget>
+#include <QVBoxLayout>
+
+#include <array>
+
+namespace
+{
+class CPolyInAudioChannelsDlg : public QDialog
+{
+public:
+    CPolyInAudioChannelsDlg ( CClient* client, QWidget* parent ) : QDialog ( parent ), pClient ( client )
+    {
+        setWindowTitle ( tr ( "Poly-in" ) );
+        QVBoxLayout* layout = new QVBoxLayout ( this );
+        layout->addWidget ( new QLabel ( tr ( "Each row becomes a separate remote mixer fader. Configure this table before connecting: PolyIn "
+                                              "routing is fixed until disconnect." ),
+                                         this ) );
+        pTable = new QTableWidget ( this );
+        pTable->setColumnCount ( 4 );
+        pTable->setHorizontalHeaderLabels ( { tr ( "Fader icon" ), tr ( "Fader tag" ), tr ( "Ch1" ), tr ( "Ch2" ) } );
+        pTable->horizontalHeader()->setSectionResizeMode ( QHeaderView::Stretch );
+        layout->addWidget ( pTable );
+        QHBoxLayout* controls = new QHBoxLayout;
+        QPushButton* add      = new QPushButton ( tr ( "Add" ), this );
+        QPushButton* remove   = new QPushButton ( tr ( "Remove" ), this );
+        QPushButton* moveUp   = new QPushButton ( tr ( "Up" ), this );
+        QPushButton* moveDown = new QPushButton ( tr ( "Down" ), this );
+        controls->addWidget ( add );
+        controls->addWidget ( remove );
+        controls->addWidget ( moveUp );
+        controls->addWidget ( moveDown );
+        controls->addStretch();
+        layout->addLayout ( controls );
+        QDialogButtonBox* buttons = new QDialogButtonBox ( QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this );
+        layout->addWidget ( buttons );
+        connect ( add, &QPushButton::clicked, this, [this] { AddRow(); } );
+        connect ( remove, &QPushButton::clicked, this, [this] {
+            if ( pTable->currentRow() >= 0 )
+                pTable->removeRow ( pTable->currentRow() );
+        } );
+        connect ( moveUp, &QPushButton::clicked, this, [this] { MoveCurrentRow ( -1 ); } );
+        connect ( moveDown, &QPushButton::clicked, this, [this] { MoveCurrentRow ( 1 ); } );
+        connect ( buttons, &QDialogButtonBox::accepted, this, [this] {
+            QString error;
+            if ( !Validate ( &error ) )
+            {
+                QMessageBox::warning ( this, tr ( "Poly-in" ), error );
+                return;
+            }
+            accept();
+        } );
+        connect ( buttons, &QDialogButtonBox::rejected, this, &QDialog::reject );
+        const QVector<CPolyInAudioChannelConfig>& rows = pClient->GetPolyInAudioChannels();
+        if ( rows.isEmpty() )
+        {
+            AddRow ( CPolyInAudioChannelConfig ( tr ( "Vox" ), pClient->ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
+            AddRow ( CPolyInAudioChannelConfig ( tr ( "Guitar" ), pClient->ChannelInfo.iInstrument, 1, INVALID_INDEX ) );
+        }
+        else
+            for ( const CPolyInAudioChannelConfig& row : rows )
+                AddRow ( row );
+    }
+
+    QVector<CPolyInAudioChannelConfig> GetChannels() const
+    {
+        QVector<CPolyInAudioChannelConfig> rows;
+        for ( int row = 0; row < pTable->rowCount(); ++row )
+        {
+            const auto*             icon = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 0 ) );
+            const auto*             ch1  = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 2 ) );
+            const auto*             ch2  = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 3 ) );
+            const QTableWidgetItem* tag  = pTable->item ( row, 1 );
+            if ( icon == nullptr || ch1 == nullptr || ch2 == nullptr )
+                continue;
+            rows.append ( CPolyInAudioChannelConfig ( tag == nullptr ? QString() : tag->text(),
+                                                      icon->currentData().toInt(),
+                                                      ch1->currentData().toInt(),
+                                                      ch2->currentData().toInt() ) );
+        }
+        return rows;
+    }
+
+private:
+    QComboBox* InstrumentCombo ( int selected ) const
+    {
+        QComboBox* combo = new QComboBox;
+        for ( int instrument = 0; instrument < CInstPictures::GetNumAvailableInst(); ++instrument )
+        {
+            combo->addItem ( QIcon ( CInstPictures::GetResourceReference ( instrument ) ), CInstPictures::GetName ( instrument ), instrument );
+        }
+        const int index = combo->findData ( selected );
+        combo->setCurrentIndex ( index >= 0 ? index : 0 );
+        return combo;
+    }
+    QComboBox* ChannelCombo ( bool optional, int selected ) const
+    {
+        QComboBox* combo = new QComboBox;
+        if ( optional )
+            combo->addItem ( tr ( "" ), INVALID_INDEX );
+        for ( int channel = 0; channel < pClient->GetSndCrdNumInputChannels(); ++channel )
+            combo->addItem ( pClient->GetSndCrdInputChannelName ( channel ), channel );
+        const int index = combo->findData ( selected );
+        combo->setCurrentIndex ( index >= 0 ? index : 0 );
+        return combo;
+    }
+    void AddRow ( const CPolyInAudioChannelConfig& source = CPolyInAudioChannelConfig() )
+    {
+        if ( pTable->rowCount() >= MAX_NUM_IN_OUT_CHANNELS )
+            return;
+        const int row = pTable->rowCount();
+        pTable->insertRow ( row );
+        pTable->setCellWidget ( row, 0, InstrumentCombo ( source.iInstrument ) );
+        pTable->setItem ( row, 1, new QTableWidgetItem ( source.strFaderTag ) );
+        pTable->setCellWidget ( row, 2, ChannelCombo ( false, source.iInputChannel1 ) );
+        pTable->setCellWidget ( row, 3, ChannelCombo ( true, source.iInputChannel2 ) );
+    }
+    void MoveCurrentRow ( const int direction )
+    {
+        const int from = pTable->currentRow();
+        const int to   = from + direction;
+        if ( from < 0 || to < 0 || to >= pTable->rowCount() )
+            return;
+
+        QWidget*          fromWidgets[4] = {};
+        QWidget*          toWidgets[4]   = {};
+        QTableWidgetItem* fromItems[4]   = {};
+        QTableWidgetItem* toItems[4]     = {};
+        for ( int column = 0; column < 4; ++column )
+        {
+            fromWidgets[column] = pTable->cellWidget ( from, column );
+            toWidgets[column]   = pTable->cellWidget ( to, column );
+            if ( fromWidgets[column] != nullptr )
+                pTable->removeCellWidget ( from, column );
+            if ( toWidgets[column] != nullptr )
+                pTable->removeCellWidget ( to, column );
+            fromItems[column] = pTable->takeItem ( from, column );
+            toItems[column]   = pTable->takeItem ( to, column );
+        }
+        for ( int column = 0; column < 4; ++column )
+        {
+            if ( fromWidgets[column] != nullptr )
+                pTable->setCellWidget ( to, column, fromWidgets[column] );
+            if ( toWidgets[column] != nullptr )
+                pTable->setCellWidget ( from, column, toWidgets[column] );
+            if ( fromItems[column] != nullptr )
+                pTable->setItem ( to, column, fromItems[column] );
+            if ( toItems[column] != nullptr )
+                pTable->setItem ( from, column, toItems[column] );
+        }
+        pTable->setCurrentCell ( to, 1 );
+    }
+
+    bool Validate ( QString* error ) const
+    {
+        if ( pTable->rowCount() == 0 )
+        {
+            *error = tr ( "Add at least one source." );
+            return false;
+        }
+        std::array<bool, MAX_NUM_IN_OUT_CHANNELS> used{};
+        QStringList                               tags;
+        for ( int row = 0; row < pTable->rowCount(); ++row )
+        {
+            const QTableWidgetItem* tagItem = pTable->item ( row, 1 );
+            const QString           tag     = tagItem == nullptr ? QString() : tagItem->text().trimmed();
+            const auto*             ch1     = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 2 ) );
+            const auto*             ch2     = qobject_cast<QComboBox*> ( pTable->cellWidget ( row, 3 ) );
+            if ( tag.isEmpty() || tags.contains ( tag, Qt::CaseSensitive ) || ch1 == nullptr || ch2 == nullptr )
+            {
+                *error = tr ( "Tags must be non-empty and unique." );
+                return false;
+            }
+            const int a = ch1->currentData().toInt(), b = ch2->currentData().toInt();
+            if ( a < 0 || a >= MAX_NUM_IN_OUT_CHANNELS || b >= MAX_NUM_IN_OUT_CHANNELS || a == b || used[a] || ( b != INVALID_INDEX && used[b] ) )
+            {
+                *error = tr ( "Each physical input may be used by only one row." );
+                return false;
+            }
+            tags.append ( tag );
+            used[a] = true;
+            if ( b != INVALID_INDEX )
+                used[b] = true;
+        }
+        return true;
+    }
+    CClient*      pClient;
+    QTableWidget* pTable;
+};
+} // namespace
+
 /* Implementation *************************************************************/
 CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSetP, QWidget* parent ) :
     CBaseDlg ( parent, Qt::Window ), // use Qt::Window to get min/max window buttons
@@ -506,10 +705,11 @@ CClientSettingsDlg::CClientSettingsDlg ( CClient* pNCliP, CClientSettings* pNSet
 
     // Audio Channels combo box
     cbxAudioChannels->clear();
-    cbxAudioChannels->addItem ( tr ( "Mono" ) );               // CC_MONO
-    cbxAudioChannels->addItem ( tr ( "Mono-in/Stereo-out" ) ); // CC_MONO_IN_STEREO_OUT
-    cbxAudioChannels->addItem ( tr ( "Stereo" ) );             // CC_STEREO
-    cbxAudioChannels->setCurrentIndex ( static_cast<int> ( pClient->GetAudioChannels() ) );
+    cbxAudioChannels->addItem ( tr ( "Mono" ), CC_MONO );
+    cbxAudioChannels->addItem ( tr ( "Mono-in/Stereo-out" ), CC_MONO_IN_STEREO_OUT );
+    cbxAudioChannels->addItem ( tr ( "Stereo" ), CC_STEREO );
+    cbxAudioChannels->addItem ( tr ( "Poly-in/Stereo-out" ), CC_POLY_IN );
+    cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
 
     // Audio Quality combo box
     cbxAudioQuality->clear();
@@ -1106,10 +1306,17 @@ void CClientSettingsDlg::UpdateSoundCardFrame()
     rbtBufferDelaySafe->setChecked ( bSafeChecked );
     SndCrdBufferDelayButtonGroup.setExclusive ( true );
 
-    // disable radio buttons which are not supported by audio interface
-    rbtBufferDelayPreferred->setEnabled ( pClient->GetFraSiFactPrefSupported() );
-    rbtBufferDelayDefault->setEnabled ( pClient->GetFraSiFactDefSupported() );
-    rbtBufferDelaySafe->setEnabled ( pClient->GetFraSiFactSafeSupported() );
+    // A live Poly-in session has an immutable source encoder/frame contract.
+    // Buffer changes reinitialize it, so require an explicit reconnect.
+    const bool    polyInRoutingLocked = pClient->IsPolyInRoutingLocked();
+    const QString polyInLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Poly-in." );
+    rbtBufferDelayPreferred->setEnabled ( pClient->GetFraSiFactPrefSupported() && !polyInRoutingLocked );
+    rbtBufferDelayDefault->setEnabled ( pClient->GetFraSiFactDefSupported() && !polyInRoutingLocked );
+    rbtBufferDelaySafe->setEnabled ( pClient->GetFraSiFactSafeSupported() && !polyInRoutingLocked );
+    grbSoundCrdBufDelay->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+    rbtBufferDelayPreferred->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+    rbtBufferDelayDefault->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+    rbtBufferDelaySafe->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
 
     // If any of our predefined sizes is chosen, use the regular group box
     // title text. If not, show the actual buffer size. Otherwise the user
@@ -1128,6 +1335,9 @@ void CClientSettingsDlg::UpdateSoundCardFrame()
 
 void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
 {
+    const bool    polyInRoutingLocked = pClient->IsPolyInRoutingLocked();
+    const QString polyInLockToolTip   = tr ( "Disconnect before changing audio device or buffer settings in Poly-in." );
+
     // update combo box containing all available sound cards in the system
     QStringList slSndCrdDevNames = pClient->GetSndCrdDevNames();
     cbxSoundcard->clear();
@@ -1138,6 +1348,12 @@ void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
     }
 
     cbxSoundcard->setCurrentText ( pClient->GetSndCrdDev() );
+    cbxSoundcard->setEnabled ( !polyInRoutingLocked );
+    cbxSoundcard->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+
+#if defined( _WIN32 ) && !defined( WITH_JACK )
+    butDriverSetup->setEnabled ( !polyInRoutingLocked );
+#endif
 
     // update input/output channel selection
 #if defined( _WIN32 ) || defined( __APPLE__ ) || defined( __MACOSX )
@@ -1184,6 +1400,23 @@ void CClientSettingsDlg::UpdateSoundDeviceChannelSelectionFrame()
         {
             cbxLOutChan->setCurrentIndex ( pClient->GetSndCrdLeftOutputChannel() );
             cbxROutChan->setCurrentIndex ( pClient->GetSndCrdRightOutputChannel() );
+        }
+        cbxLOutChan->setEnabled ( !polyInRoutingLocked );
+        cbxROutChan->setEnabled ( !polyInRoutingLocked );
+        cbxLOutChan->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+        cbxROutChan->setToolTip ( polyInRoutingLocked ? polyInLockToolTip : QString() );
+
+        // Poly-in owns its physical capture map. Retain the selected legacy
+        // pair for fallback/return configuration but do not let the normal
+        // stereo transformations suggest that they apply to one source row.
+        const bool polyIn = pClient->GetAudioChannels() == CC_POLY_IN;
+        cbxLInChan->setEnabled ( !polyIn );
+        cbxRInChan->setEnabled ( !polyIn );
+        lblInChannelMapping->setEnabled ( !polyIn );
+        if ( polyIn )
+        {
+            cbxLInChan->setToolTip ( tr ( "Poly-in uses the source table; legacy input mapping is retained for fallback." ) );
+            cbxRInChan->setToolTip ( cbxLInChan->toolTip() );
         }
     }
 #else
@@ -1248,13 +1481,51 @@ void CClientSettingsDlg::OnROutChanActivated ( int iChanIdx )
 
 void CClientSettingsDlg::OnAudioChannelsActivated ( int iChanIdx )
 {
-    pClient->SetAudioChannels ( static_cast<EAudChanConf> ( iChanIdx ) );
+    const EAudChanConf mode = static_cast<EAudChanConf> ( cbxAudioChannels->itemData ( iChanIdx ).toInt() );
+    if ( ( pClient->IsConnected() || pClient->IsPolyInRoutingLocked() ) && ( mode == CC_POLY_IN || pClient->GetAudioChannels() == CC_POLY_IN ) )
+    {
+        QMessageBox::information ( this,
+                                   tr ( "Poly-in" ),
+                                   tr ( "Poly-in is fixed for this connection. Disconnect before changing the source table or audio input mode." ) );
+        QSignalBlocker blocker ( cbxAudioChannels );
+        cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
+        return;
+    }
+    if ( mode == CC_POLY_IN )
+    {
+        if ( !pClient->IsPolyInCaptureSupported() )
+        {
+            QMessageBox::information ( this, tr ( "Poly-in" ), tr ( "Poly-in is currently available with ASIO, CoreAudio macOS, and JACK." ) );
+            QSignalBlocker blocker ( cbxAudioChannels );
+            cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
+            return;
+        }
+        CPolyInAudioChannelsDlg dialog ( pClient, this );
+        if ( dialog.exec() != QDialog::Accepted )
+        {
+            QSignalBlocker blocker ( cbxAudioChannels );
+            cbxAudioChannels->setCurrentIndex ( cbxAudioChannels->findData ( pClient->GetAudioChannels() ) );
+            return;
+        }
+        pClient->SetPolyInAudioChannels ( dialog.GetChannels() );
+    }
+    else
+        pClient->SetAudioChannels ( mode );
     emit AudioChannelsChanged();
     UpdateDisplay(); // upload rate will be changed
 }
 
 void CClientSettingsDlg::OnAudioQualityActivated ( int iQualityIdx )
 {
+    if ( pClient->IsPolyInRoutingLocked() && iQualityIdx != static_cast<int> ( pClient->GetAudioQuality() ) )
+    {
+        QMessageBox::information ( this,
+                                   tr ( "Poly-in" ),
+                                   tr ( "Poly-in is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
+        QSignalBlocker blocker ( cbxAudioQuality );
+        cbxAudioQuality->setCurrentIndex ( static_cast<int> ( pClient->GetAudioQuality() ) );
+        return;
+    }
     pClient->SetAudioQuality ( static_cast<EAudioQuality> ( iQualityIdx ) );
     UpdateDisplay(); // upload rate will be changed
 }
@@ -1283,7 +1554,17 @@ void CClientSettingsDlg::OnAutoJitBufStateChanged ( int value )
 
 void CClientSettingsDlg::OnEnableOPUS64StateChanged ( int value )
 {
-    pClient->SetEnableOPUS64 ( value == Qt::Checked );
+    const bool enabled = value == Qt::Checked;
+    if ( pClient->IsPolyInRoutingLocked() && enabled != pClient->GetEnableOPUS64() )
+    {
+        QMessageBox::information ( this,
+                                   tr ( "Poly-in" ),
+                                   tr ( "Poly-in is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
+        QSignalBlocker blocker ( chbSmallNetworkBuffers );
+        chbSmallNetworkBuffers->setCheckState ( pClient->GetEnableOPUS64() ? Qt::Checked : Qt::Unchecked );
+        return;
+    }
+    pClient->SetEnableOPUS64 ( enabled );
     UpdateDisplay();
 }
 

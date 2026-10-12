@@ -52,6 +52,7 @@
 #include <QFileInfo>
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #ifdef USE_OPUS_SHARED_LIB
 #    include "opus/opus_custom.h"
 #else
@@ -62,6 +63,9 @@
 #include "signalhandler.h"
 #include "socket.h"
 #include "channel.h"
+#include "polyin.h"
+#include "polyinplayout.h"
+#include "polysession.h"
 #include "util.h"
 #include "serverlogging.h"
 #include "serverlist.h"
@@ -83,7 +87,7 @@ public:
 
     void OnChatTextReceivedCh ( QString strChatText ) { CreateAndSendChatTextForAllConChannels ( slotId - 1, strChatText ); }
 
-    void OnMuteStateHasChangedCh ( int iChanID, bool bIsMuted ) { CreateOtherMuteStateChanged ( slotId - 1, iChanID, bIsMuted ); }
+    void OnMuteStateHasChangedCh ( int mutedSourceID, bool bIsMuted ) { CreateOtherMuteStateChanged ( slotId - 1, mutedSourceID, bIsMuted ); }
 
     void OnServerAutoSockBufSizeChangeCh ( int iNNumFra ) { CreateAndSendJitBufMessage ( slotId - 1, iNNumFra ); }
 
@@ -94,7 +98,7 @@ protected:
 
     virtual void CreateAndSendChatTextForAllConChannels ( const int iCurChanID, const QString& strChatText ) = 0;
 
-    virtual void CreateOtherMuteStateChanged ( const int iCurChanID, const int iOtherChanID, const bool bIsMuted ) = 0;
+    virtual void CreateOtherMuteStateChanged ( const int mutingSessionID, const int mutedSourceID, const bool bIsMuted ) = 0;
 
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra ) = 0;
 };
@@ -103,12 +107,110 @@ template<>
 class CServerSlots<0>
 {};
 
+// `CChannel` is deliberately the transport/session object.  The separate
+// source object below is the normal visible mixer/recording primitive and
+// never owns a socket, protocol instance or return encoder.
+class CServerSource
+{
+public:
+    CServerSource() : SignalLevelMeter ( false, 0.5 ) {}
+    enum EState
+    {
+        SS_FREE,
+        SS_RESERVED,
+        SS_ACTIVE
+    };
+
+    void Reset()
+    {
+        eState           = SS_FREE;
+        iParentSessionID = INVALID_INDEX;
+        bLegacy          = false;
+        Config           = CPolyInSourceConfig();
+        iFadeInCnt       = 0;
+        iFadeInCntMax    = 1;
+        SignalLevelMeter.Reset();
+    }
+
+    void Reserve ( const int parentSessionID, const CPolyInSourceConfig& config, const bool legacy, const int fadeInCntMax )
+    {
+        eState           = SS_RESERVED;
+        iParentSessionID = parentSessionID;
+        bLegacy          = legacy;
+        Config           = config;
+        iFadeInCnt       = 0;
+        iFadeInCntMax    = std::max ( 1, fadeInCntMax );
+    }
+
+    void Activate()
+    {
+        eState     = SS_ACTIVE;
+        iFadeInCnt = 0;
+    }
+    bool                       IsAllocated() const { return eState != SS_FREE; }
+    bool                       IsActive() const { return eState == SS_ACTIVE; }
+    bool                       IsReserved() const { return eState == SS_RESERVED; }
+    bool                       IsLegacy() const { return bLegacy; }
+    int                        ParentSessionID() const { return iParentSessionID; }
+    const CPolyInSourceConfig& GetConfig() const { return Config; }
+    CPolyInSourceConfig&       GetConfig() { return Config; }
+
+    float  FadeInGain() const { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    void   AdvanceFade ( const int frames = 1 ) { iFadeInCnt = std::min ( iFadeInCntMax, iFadeInCnt + std::max ( 0, frames ) ); }
+    double UpdateAndGetLevelForMeterdB ( const CVector<int16_t>& data, const int samples, const bool stereo )
+    {
+        SignalLevelMeter.Update ( data, samples, stereo );
+        return SignalLevelMeter.GetLevelForMeterdBLeftOrMono();
+    }
+
+    CChannelCoreInfo MakeVisibleInfo ( const CChannelCoreInfo& owner ) const
+    {
+        CChannelCoreInfo result = owner;
+        if ( !bLegacy )
+        {
+            result.strName     = owner.strName + QStringLiteral ( "\n" ) + Config.strTag;
+            result.iInstrument = Config.iInstrument;
+        }
+        return result;
+    }
+
+private:
+    EState                  eState           = SS_FREE;
+    int                     iParentSessionID = INVALID_INDEX;
+    bool                    bLegacy          = false;
+    CPolyInSourceConfig     Config;
+    int                     iFadeInCnt    = 0;
+    int                     iFadeInCntMax = 1;
+    CStereoSignalLevelMeter SignalLevelMeter;
+};
+
+// Implements the session side of the session/source split in POLY_IN.md.
+// Reserved source IDs remain hidden while prepared; after first valid audio
+// they become active together. Ingress timing and playout stay session-wide.
+class CServerSessionState
+{
+public:
+    void Reset()
+    {
+        Sources.Reset();
+        Playout.Reset();
+        Cadence.Reset();
+        bIngressAuto = false;
+    }
+
+    PolyIn::SessionSourceMap Sources;
+    PolyIn::SessionPlayout   Playout;
+    PolyIn::FrameCadence     Cadence;
+    bool                     bIngressAuto = false;
+};
+
 class CServer : public QObject, public CServerSlots<MAX_NUM_CHANNELS>
 {
     Q_OBJECT
 
 public:
     CServer ( const int          iNewMaxNumChan,
+              const int          iNewMaxNumSessions,
               const QString&     strLoggingFileName,
               const QString&     strServerBindIP4,
               const QString&     strServerBindIP6,
@@ -152,7 +254,19 @@ public:
     bool IsIPv6Available() { return bIPv6Available; }
 
     // GUI settings ------------------------------------------------------------
-    int GetClientNumAudioChannels ( const int iChanNum ) { return vecChannels[iChanNum].GetNumAudioChannels(); }
+    int GetClientNumAudioChannels ( const int iChanNum )
+    {
+        if ( !MathUtils::InRange<int> ( iChanNum, 0, MAX_NUM_CHANNELS - 1 ) || !vecSources[iChanNum].IsActive() )
+            return 0;
+
+        const CServerSource& source = vecSources[iChanNum];
+        if ( !source.IsLegacy() )
+            return source.GetConfig().iNumChannels;
+
+        const int sessionID = source.ParentSessionID();
+        return MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ? vecSessions[sessionID].GetNumAudioChannels() : 0;
+    }
+    int GetNumberOfConnectedSessions();
 
     void           SetDirectoryType ( const EDirectoryType eNCSAT ) { ServerListManager.SetDirectoryType ( eNCSAT ); }
     EDirectoryType GetDirectoryType() { return ServerListManager.GetDirectoryType(); }
@@ -197,12 +311,26 @@ public:
     bool SendChatTextToConChannel ( const int iCurChanID, const QString& strChatText );
 
 protected:
-    // access functions for actual channels
-    bool IsConnected ( const int iChanNum ) { return vecChannels[iChanNum].IsConnected(); }
+    // A session is a CChannel endpoint; a source is an ordinary visible fader.
+    bool IsConnected ( const int iSessionID ) { return vecSessions[iSessionID].IsConnected(); }
 
-    int                   FindChannel ( const CHostAddress& CheckAddr, const bool bAllowNew = false );
-    void                  InitChannel ( const int iNewChanID, const CHostAddress& InetAddr );
-    void                  FreeChannel ( const int iCurChanID );
+    int                   FindChannel ( const CHostAddress& checkAddr, const bool bAllowNew = false );
+    void                  InitChannel ( const int iNewSessionID, const CHostAddress& inetAddr );
+    void                  FreeChannel ( const int iCurSessionID );
+    int                   AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& config, const bool legacy, const bool active );
+    void                  FreeSource ( const int sourceID );
+    void                  FreeAllSourcesForSession ( const int sessionID );
+    CChannelCoreInfo      GetSourceInfo ( const int sourceID );
+    int                   GetLegacySourceID ( const int sessionID ) const;
+    int                   GetPrimarySourceID ( const int sessionID ) const;
+    float                 GetSourceFadeInGain ( const int sourceID ) const;
+    bool                  PreparePolyInSources ( const int sessionID, const CVector<CPolyInSourceConfig>& config, uint8_t& rejectReason );
+    void                  ReleasePreparedPolyInSources ( const int sessionID );
+    bool                  PutPolyInAudioData ( const CVector<uint8_t>& packet, const int packetBytes, const CHostAddress& address, int& sessionID );
+    bool                  ActivatePreparedSources ( const int sessionID, const uint16_t generation, const uint32_t firstSequence );
+    void                  OnPolyInReliableMessageAcknowledged ( const int sessionID, const int logicalMessageID );
+    void                  OnReqPolyInCaps ( const int sessionID );
+    void                  OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config );
     void                  DumpChannels ( const QString& title );
     CVector<CChannelInfo> CreateChannelList();
 
@@ -211,7 +339,7 @@ protected:
 
     virtual void CreateAndSendChatTextForAllConChannels ( const int iCurChanID, const QString& strChatText );
 
-    virtual void CreateOtherMuteStateChanged ( const int iCurChanID, const int iOtherChanID, const bool bIsMuted );
+    virtual void CreateOtherMuteStateChanged ( const int mutingSessionID, const int mutedSourceID, const bool bIsMuted );
 
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra );
 
@@ -220,13 +348,21 @@ protected:
     template<unsigned int slotId>
     inline void connectChannelSignalsToServerSlots();
 
-    static void DecodeReceiveDataBlocks ( CServer* pServer, const int iStartChanCnt, const int iStopChanCnt, const int iNumClients );
+    static void DecodeReceiveDataBlocks ( CServer* pServer, const int startSource, const int stopSource, const int numSources );
 
-    static void MixEncodeTransmitDataBlocks ( CServer* pServer, const int iStartChanCnt, const int iStopChanCnt, const int iNumClients );
+    static void MixEncodeTransmitDataBlocks ( CServer* pServer, const int startSession, const int stopSession, const int numSources );
 
-    void DecodeReceiveData ( const int iChanCnt, const int iNumClients );
+    void DecodeReceiveData ( const int sourceIndex, const int numSources );
+    void DecodeLegacySource ( int sourceIndex, int sourceID, int sessionID );
+    void DecodePolyInSource ( int sourceIndex, int sourceID );
 
-    void MixEncodeTransmitData ( const int iChanCnt, const int iNumClients );
+    void MixEncodeTransmitData ( const int sessionIndex, const int numSources );
+    bool ReadPolyInFrame ( const int sessionID, const int blockIndex );
+    bool SetPolyInIngressTarget ( int sessionID, int numFrames );
+    void UpdatePolyInIngressAutoPolicy ( int sessionID );
+    void OnSessionJitterPolicyChanged ( int sessionID, int numFrames, bool bAuto );
+    void QueuePolyInPromotion ( int sessionID, uint32_t firstSequence );
+    void QueuePolyInJitterReport ( int sessionID, int numFrames );
 
     virtual void customEvent ( QEvent* pEvent );
 
@@ -243,17 +379,22 @@ protected:
 
     bool CreateLevelsForAllConChannels ( const int iNumClients );
 
-    // do not use the vector class since CChannel does not have appropriate
-    // copy constructor/operator
-    CChannel vecChannels[MAX_NUM_CHANNELS];
-    int      iMaxNumChannels;
+    // Session slots retain the established CChannel protocol/socket lifetime.
+    CChannel            vecSessions[MAX_NUM_CHANNELS];
+    CServerSessionState vecSessionState[MAX_NUM_CHANNELS];
+    CServerSource       vecSources[MAX_NUM_CHANNELS];
+    int                 iMaxNumChannels; // configured visible source-fader cap
+    int                 iMaxNumSessions; // configured physical user-session cap
 
-    int    iCurNumChannels;
-    int    vecChannelOrder[MAX_NUM_CHANNELS];
+    int    iCurNumSessions;
+    int    vecSessionOrder[MAX_NUM_CHANNELS]; // address-sorted active session slots
+    int    iCurNumSources;                    // active plus temporary source-map reservations
     QMutex MutexChanOrder;
 
-    CProtocol         ConnLessProtocol;
-    QMutex            Mutex;
+    CProtocol ConnLessProtocol;
+    // Guards session and source state shared by socket, event and JSON-RPC
+    // threads.
+    std::mutex        Mutex;
     QMutex            MutexWelcomeMessage;
     std::atomic<bool> bChannelIsNowDisconnected;
 
@@ -275,7 +416,8 @@ protected:
     bool bDisableRaw;
 
     CVector<QString> vstrChatColors;
-    CVector<int>     vecChanIDsCurConChan;
+    CVector<int>     vecChanIDsCurConChan;       // visible source IDs for current frame
+    CVector<int>     vecSessionIDsCurConSession; // physical target sessions for current frame
 
     CVector<CVector<float>>   vecvecfGains;
     CVector<CVector<float>>   vecvecfPannings;
@@ -288,6 +430,10 @@ protected:
     CVector<CVector<int16_t>> vecvecsSendData;
     CVector<CVector<float>>   vecvecfIntermediateProcBuf;
     CVector<CVector<uint8_t>> vecvecbyCodedData;
+    // Poly-in ingress is stored by actual visible source ID so a session frame
+    // can be decoded once and consumed by several faders without a second jitter buffer.
+    CVector<CVector<uint8_t>> vecSourceIngressPayload;
+    CVector<uint8_t>          vecSourceIngressPresent; // [source id * 2 + codec-frame block]
 
     // Channel levels
     CVector<uint16_t> vecChannelLevels;

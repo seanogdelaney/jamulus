@@ -49,6 +49,9 @@
 #include "settings.h"
 #include "util.h"
 
+#include <algorithm>
+#include <cstring>
+
 /* Implementation *************************************************************/
 CClient::CClient ( const quint16  iPortNumber,
                    const quint16  iQosNumber,
@@ -69,6 +72,14 @@ CClient::CClient ( const quint16  iPortNumber,
     iOPUSFrameSizeSamples ( DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES ),
     eAudioQuality ( AQ_NORMAL ),
     eAudioChannelConf ( CC_MONO ),
+    eLegacyAudioChannelConf ( CC_MONO ),
+    iPolyInSourceCount ( 0 ),
+    iPolyInFrameSequence ( 0 ),
+    bOwnedServerFaderIDs(),
+    iLegacyServerFaderID ( INVALID_INDEX ),
+    strPolyInStatus ( "Poly-in inactive" ),
+    ePolyInDeadline ( EPolyInDeadline::None ),
+    bPolyInRoutingLocked ( false ),
     iNumAudioChannels ( 1 ),
     bIsInitializationPhase ( true ),
     bMuteOutStream ( false ),
@@ -84,6 +95,8 @@ CClient::CClient ( const quint16  iPortNumber,
     iSndCrdFrameSizeFactor ( FRAME_SIZE_FACTOR_DEFAULT ),
     bSndCrdConversionBufferRequired ( false ),
     iSndCardMonoBlockSizeSamConvBuff ( 0 ),
+    pCurrentCaptureInput ( nullptr ),
+    iCurrentCaptureInputChannels ( 2 ),
     bFraSiFactPrefSupported ( false ),
     bFraSiFactDefSupported ( false ),
     bFraSiFactSafeSupported ( false ),
@@ -97,6 +110,12 @@ CClient::CClient ( const quint16  iPortNumber,
     bRawAudioIsSupported ( false )
 {
     int iOpusError;
+    bOwnedServerFaderIDs.fill ( false );
+    for ( size_t i = 0; i < PolyIn::kMaxSourceRows; ++i )
+    {
+        fPolyInLocalMonitorGain[i].store ( 1.0f, std::memory_order_relaxed );
+        fPolyInLocalMonitorPan[i].store ( 0.5f, std::memory_order_relaxed );
+    }
 
     OpusMode = opus_custom_mode_create ( SYSTEM_SAMPLE_RATE_HZ, DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES, &iOpusError );
 
@@ -139,6 +158,13 @@ CClient::CClient ( const quint16  iPortNumber,
     QObject::connect ( &Channel, &CChannel::ChatTextReceived, this, &CClient::ChatTextReceived );
 
     QObject::connect ( &Channel, &CChannel::ClientIDReceived, this, &CClient::OnClientIDReceived );
+
+    QObject::connect ( &Channel, &CChannel::PolyInCapsReceived, this, &CClient::OnPolyInCaps );
+    QObject::connect ( &Channel, &CChannel::SplitMessageSupported, this, &CClient::OnPolyInSplitMessageSupported );
+    QObject::connect ( &Channel, &CChannel::PolyInAcceptReceived, this, &CClient::OnPolyInAccept );
+    QObject::connect ( &Channel, &CChannel::PolyInRejected, this, &CClient::OnPolyInReject );
+    QObject::connect ( &Channel, &CChannel::PolyInActive, this, &CClient::OnPolyInActive );
+    QObject::connect ( &Channel, &CChannel::ReliableMessageSent, this, &CClient::OnPolyInReliableMessageSent );
 
     QObject::connect ( &Channel, &CChannel::RawAudioSupported, this, &CClient::OnRawAudioSupported );
 
@@ -202,6 +228,8 @@ CClient::CClient ( const quint16  iPortNumber,
     TimerGainOrPan.setSingleShot ( true );
 
     QObject::connect ( &TimerGainOrPan, &QTimer::timeout, this, &CClient::OnTimerRemoteChanGainOrPan );
+    TimerPolyInNegotiation.setSingleShot ( true );
+    QObject::connect ( &TimerPolyInNegotiation, &QTimer::timeout, this, &CClient::OnPolyInNegotiationTimeout );
 
     // start the socket (it is important to start the socket after all
     // initializations and connections)
@@ -238,6 +266,8 @@ CClient::~CClient()
     {
         Sound.Stop();
     }
+
+    DestroyPolyInSources();
 
     // free audio encoders and decoders
     opus_custom_encoder_destroy ( OpusEncoderMono );
@@ -318,6 +348,10 @@ void CClient::OnNewConnection()
     // needed for compatibility to old servers >= 3.4.6 and <= 3.5.12
     Channel.CreateReqChannelLevelListMes();
     //### TODO: END ###//
+
+    // Poly-in owns the split handshake and only requests its semantic
+    // capability after the split response has actually arrived.
+    BeginPolyInNegotiation();
 }
 
 void CClient::OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted )
@@ -402,8 +436,27 @@ void CClient::OnConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo )
         Q_ASSERT ( iActiveChannels == iNumConnectedClients );
     }
 
-    // pass the received list onwards, now containing client channel IDs
+    // Resolve every owned server fader after the ordinary list has been mapped.
+    // This keeps all local sources self-owned for UI order, mute and automatic
+    // fader operations rather than retaining the legacy single-ID assumption.
+    CVector<int> ownedClientIDs;
+    for ( int serverID = 0; serverID < MAX_NUM_CHANNELS; ++serverID )
+    {
+        if ( IsOwnedServerFader ( serverID ) )
+        {
+            const int clientID = FindClientChannel ( serverID, false );
+            if ( clientID != INVALID_INDEX )
+            {
+                ownedClientIDs.push_back ( clientID );
+                if ( bMuteMeInPersonalMix )
+                    SetRemoteChanGain ( clientID, 0, false );
+            }
+        }
+    }
+    if ( !ownedClientIDs.empty() )
+        emit OwnedSourceIDsReceived ( ownedClientIDs );
 
+    // pass the received list onwards, now containing client channel IDs
     emit ConClientListMesReceived ( vecChanInfo );
 }
 
@@ -495,10 +548,13 @@ void CClient::SetRemoteChanGain ( const int iId, const float fGain, const bool b
 
     CClientChannel* clientChan = &clientChannels[iId];
 
-    // if this gain is for my own channel, apply the value for the Mute Myself function
-    if ( bIsMyOwnFader )
+    // In Poly-in mode, Mute Myself monitors each owned source directly. Keep
+    // its gain independent from every other owned fader. The legacy path has
+    // only one uplink, so it intentionally retains the shared gain.
+    const bool bPolyInOwnFader = SetPolyInLocalMonitorGain ( clientChan->iServerChannelID, fGain );
+    if ( bIsMyOwnFader && !bPolyInOwnFader )
     {
-        fMuteOutStreamGain = fGain;
+        fMuteOutStreamGain.store ( fGain, std::memory_order_relaxed );
     }
 
     if ( TimerGainOrPan.isActive() )
@@ -582,6 +638,10 @@ void CClient::SetRemoteChanPan ( const int iId, const float fPan )
 
     CClientChannel* clientChan = &clientChannels[iId];
 
+    // Pan does not identify an own fader explicitly, but only a Poly-in
+    // source can match a configured owned server fader ID.
+    SetPolyInLocalMonitorPan ( clientChan->iServerChannelID, fPan );
+
     if ( TimerGainOrPan.isActive() )
     {
         // just update the new value for sending later;
@@ -645,11 +705,29 @@ bool CClient::GetAndResetbJitterBufferOKFlag()
     return bSocketJitBufOKFlag;
 }
 
+int CClient::GetUploadRateKbps()
+{
+    if ( eAudioChannelConf != CC_POLY_IN || !PolyInNegotiation.CanSendPolyIn() || iPolyInSourceCount == 0 )
+        return Channel.GetUploadRateKbps();
+
+    std::array<uint16_t, PolyIn::kMaxSourceRows> payloadLengths{};
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+        payloadLengths[static_cast<size_t> ( sourceIndex )] = PolyInSources[sourceIndex].Config.iPayloadBytes;
+
+    const int estimatedRate = PolyIn::EstimateUploadRateKbps ( payloadLengths.data(),
+                                                               static_cast<size_t> ( iPolyInSourceCount ),
+                                                               iOPUSFrameSizeSamples,
+                                                               SYSTEM_SAMPLE_RATE_HZ );
+    return estimatedRate > 0 ? estimatedRate : Channel.GetUploadRateKbps();
+}
+
 void CClient::SetSndCrdPrefFrameSizeFactor ( const int iNewFactor )
 {
     // first check new input parameter
     if ( ( iNewFactor == FRAME_SIZE_FACTOR_PREFERRED ) || ( iNewFactor == FRAME_SIZE_FACTOR_DEFAULT ) || ( iNewFactor == FRAME_SIZE_FACTOR_SAFE ) )
     {
+        if ( iNewFactor != iSndCrdPrefFrameSizeFactor && RejectPolyInAudioReinitialization ( tr ( "the audio buffer size" ) ) )
+            return;
         // init with new parameter, if client was running then first
         // stop it and restart again after new initialization
         const bool bWasRunning = Sound.IsRunning();
@@ -674,6 +752,12 @@ void CClient::SetSndCrdPrefFrameSizeFactor ( const int iNewFactor )
 
 void CClient::SetEnableOPUS64 ( const bool eNEnableOPUS64 )
 {
+    if ( IsPolyInRoutingLocked() && eNEnableOPUS64 != bEnableOPUS64 )
+    {
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing Small Network Buffers." ) );
+        return;
+    }
+
     // init with new parameter, if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -694,6 +778,12 @@ void CClient::SetEnableOPUS64 ( const bool eNEnableOPUS64 )
 
 void CClient::SetAudioQuality ( const EAudioQuality eNAudioQuality )
 {
+    if ( IsPolyInRoutingLocked() && eNAudioQuality != eAudioQuality )
+    {
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing audio quality or Raw mode." ) );
+        return;
+    }
+
     // init with new parameter, if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -714,6 +804,13 @@ void CClient::SetAudioQuality ( const EAudioQuality eNAudioQuality )
 
 void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
 {
+    if ( ( Channel.IsConnected() || bPolyInRoutingLocked ) && eNAudChanConf != eAudioChannelConf &&
+         ( eAudioChannelConf == CC_POLY_IN || eNAudChanConf == CC_POLY_IN ) )
+    {
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing the audio input mode." ) );
+        return;
+    }
+
     // init with new parameter, if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -722,7 +819,10 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
         Sound.Stop();
     }
 
-    // set new parameter
+    // Preserve the last ordinary input profile. Poly-in forces a stereo
+    // session transport but still needs this profile for fallback processing.
+    if ( eNAudChanConf != CC_POLY_IN )
+        eLegacyAudioChannelConf = eNAudChanConf;
     eAudioChannelConf = eNAudChanConf;
     Init();
 
@@ -732,10 +832,701 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
     }
 }
 
+void CClient::SetPolyInAudioChannels ( const QVector<CPolyInAudioChannelConfig>& vecNewChannels )
+{
+    if ( Channel.IsConnected() || bPolyInRoutingLocked )
+    {
+        SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before editing source rows." ) );
+        return;
+    }
+
+    QVector<CPolyInAudioChannelConfig>        checked;
+    std::array<bool, MAX_NUM_IN_OUT_CHANNELS> usedInputs{};
+
+    for ( const CPolyInAudioChannelConfig& route : vecNewChannels )
+    {
+        const QString tag = route.strFaderTag.trimmed();
+        if ( checked.size() >= static_cast<int> ( PolyIn::kMaxSourceRows ) || tag.isEmpty() || route.iInputChannel1 < 0 ||
+             route.iInputChannel1 >= Sound.GetNumInputChannels() || route.iInputChannel1 >= MAX_NUM_IN_OUT_CHANNELS ||
+             ( route.iInputChannel2 != INVALID_INDEX && ( route.iInputChannel2 < 0 || route.iInputChannel2 >= Sound.GetNumInputChannels() ||
+                                                          route.iInputChannel2 >= MAX_NUM_IN_OUT_CHANNELS ) ) ||
+             route.iInputChannel1 == route.iInputChannel2 || usedInputs[route.iInputChannel1] ||
+             ( route.iInputChannel2 != INVALID_INDEX && usedInputs[route.iInputChannel2] ) )
+        {
+            continue;
+        }
+        bool duplicateTag = false;
+        for ( const CPolyInAudioChannelConfig& earlier : checked )
+            duplicateTag |= earlier.strFaderTag.trimmed() == tag;
+        if ( duplicateTag )
+            continue;
+        CPolyInAudioChannelConfig normalised ( tag, route.iInstrument, route.iInputChannel1, route.iInputChannel2 );
+        checked.append ( normalised );
+        usedInputs[route.iInputChannel1] = true;
+        if ( route.iInputChannel2 != INVALID_INDEX )
+            usedInputs[route.iInputChannel2] = true;
+    }
+
+    if ( checked.isEmpty() )
+    {
+        checked.append ( CPolyInAudioChannelConfig ( tr ( "Vox" ), ChannelInfo.iInstrument, 0, INVALID_INDEX ) );
+    }
+    vecPolyInAudioChannels = checked;
+    SetAudioChannels ( CC_POLY_IN );
+}
+
+int CClient::GetCodedBytesForPolyInSource ( const int audioChannels, bool& raw ) const
+{
+    raw = eAudioQuality == AQ_RAW && bRawAudioIsSupported;
+    if ( raw )
+        return static_cast<int> ( sizeof ( int16_t ) * audioChannels * iOPUSFrameSizeSamples );
+    const EAudioQuality quality = eAudioQuality == AQ_RAW ? AQ_HIGH : eAudioQuality;
+    if ( eAudioCompressionType == CT_OPUS )
+    {
+        if ( audioChannels == 1 )
+        {
+            if ( quality == AQ_LOW )
+                return OPUS_NUM_BYTES_MONO_LOW_QUALITY_DBLE_FRAMESIZE;
+            if ( quality == AQ_NORMAL )
+                return OPUS_NUM_BYTES_MONO_NORMAL_QUALITY_DBLE_FRAMESIZE;
+            return OPUS_NUM_BYTES_MONO_HIGH_QUALITY_DBLE_FRAMESIZE;
+        }
+        if ( quality == AQ_LOW )
+            return OPUS_NUM_BYTES_STEREO_LOW_QUALITY_DBLE_FRAMESIZE;
+        if ( quality == AQ_NORMAL )
+            return OPUS_NUM_BYTES_STEREO_NORMAL_QUALITY_DBLE_FRAMESIZE;
+        return OPUS_NUM_BYTES_STEREO_HIGH_QUALITY_DBLE_FRAMESIZE;
+    }
+    if ( audioChannels == 1 )
+    {
+        if ( quality == AQ_LOW )
+            return OPUS_NUM_BYTES_MONO_LOW_QUALITY;
+        if ( quality == AQ_NORMAL )
+            return OPUS_NUM_BYTES_MONO_NORMAL_QUALITY;
+        return OPUS_NUM_BYTES_MONO_HIGH_QUALITY;
+    }
+    if ( quality == AQ_LOW )
+        return OPUS_NUM_BYTES_STEREO_LOW_QUALITY;
+    if ( quality == AQ_NORMAL )
+        return OPUS_NUM_BYTES_STEREO_NORMAL_QUALITY;
+    return OPUS_NUM_BYTES_STEREO_HIGH_QUALITY;
+}
+
+void CClient::DestroyPolyInSources()
+{
+    for ( size_t i = 0; i < PolyIn::kMaxSourceRows; ++i )
+    {
+        if ( PolyInSources[i].pEncoder != nullptr )
+            opus_custom_encoder_destroy ( PolyInSources[i].pEncoder );
+        PolyInSources[i] = CClientPolyInSource();
+        fPolyInLocalMonitorGain[i].store ( 1.0f, std::memory_order_relaxed );
+        fPolyInLocalMonitorPan[i].store ( 0.5f, std::memory_order_relaxed );
+    }
+    iPolyInSourceCount = 0;
+}
+
+void CClient::ConfigurePolyInSources()
+{
+    DestroyPolyInSources();
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return;
+
+    const int inputChannels = Sound.GetNumInputChannels();
+    // Each visible source needs source-local encoding/storage so the server can
+    // decode and conceal its loss independently, while all rows retain one
+    // session-wide codec and frame cadence.
+    for ( int i = 0; i < vecPolyInAudioChannels.size() && i < static_cast<int> ( PolyIn::kMaxSourceRows ); ++i )
+    {
+        const CPolyInAudioChannelConfig& route = vecPolyInAudioChannels[i];
+        if ( route.strFaderTag.trimmed().isEmpty() || route.iInputChannel1 < 0 || route.iInputChannel1 >= inputChannels ||
+             route.iInputChannel2 >= inputChannels || route.iInputChannel1 == route.iInputChannel2 )
+        {
+            continue;
+        }
+        CClientPolyInSource& source     = PolyInSources[iPolyInSourceCount];
+        const int            channels   = route.iInputChannel2 == INVALID_INDEX ? 1 : 2;
+        bool                 raw        = false;
+        const int            codedBytes = GetCodedBytesForPolyInSource ( channels, raw );
+        source.Config.iKey              = static_cast<uint8_t> ( iPolyInSourceCount + 1 );
+        source.Config.iNumChannels      = static_cast<uint8_t> ( channels );
+        source.Config.eCodec            = eAudioCompressionType;
+        source.Config.bRaw              = raw;
+        source.Config.iPayloadBytes     = static_cast<uint16_t> ( codedBytes );
+        source.Config.iInstrument       = route.iInstrument;
+        source.Config.strTag            = route.strFaderTag.trimmed();
+        source.iInputChannel1           = route.iInputChannel1;
+        source.iInputChannel2           = route.iInputChannel2;
+        source.vecPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
+        source.vecMutedPCM.Init ( channels * iOPUSFrameSizeSamples, 0 );
+        source.vecCoded.Init ( codedBytes, 0 );
+        if ( !raw )
+        {
+            int                   opusError = OPUS_OK;
+            const OpusCustomMode* mode      = eAudioCompressionType == CT_OPUS ? OpusMode : Opus64Mode;
+            source.pEncoder                 = opus_custom_encoder_create ( mode, channels, &opusError );
+            if ( opusError != OPUS_OK || source.pEncoder == nullptr )
+            {
+                DestroyPolyInSources();
+                strPolyInStatus = tr ( "Poly-in unavailable: cannot create source encoder." );
+                emit PolyInStatusChanged ( strPolyInStatus );
+                return;
+            }
+            opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_VBR ( 0 ) );
+            opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
+            opus_custom_encoder_ctl ( source.pEncoder,
+                                      OPUS_SET_BITRATE ( CalcBitRateBitsPerSecFromCodedBytes ( codedBytes, iOPUSFrameSizeSamples ) ) );
+            if ( eAudioCompressionType == CT_OPUS )
+                opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_COMPLEXITY ( 1 ) );
+            else
+                opus_custom_encoder_ctl ( source.pEncoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
+        }
+        ++iPolyInSourceCount;
+    }
+    iPolyInFrameSequence = 0;
+    if ( iPolyInSourceCount == 0 )
+        SetPolyInStatus ( tr ( "Poly-in unavailable: no valid source rows." ) );
+    else
+        SetPolyInStatus ( tr ( "Poly-in will be used on the next connection." ) );
+}
+
+void CClient::BuildPolyInSourceConfig()
+{
+    // Kept as a named boundary for settings/device changes: ConfigurePolyInSources
+    // owns all allocation and codec creation outside the audio callback.
+    ConfigurePolyInSources();
+}
+
+void CClient::FillPolyInSourcePCM ( CClientPolyInSource& source, const CVector<int16_t>& captured, const int captureChannels, const int frameOffset )
+{
+    const int channels = source.Config.iNumChannels;
+    for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
+    {
+        const int inputOffset = ( frame + frameOffset ) * captureChannels;
+        int16_t   left        = 0;
+        int16_t   right       = 0;
+        if ( source.iInputChannel1 >= 0 && source.iInputChannel1 < captureChannels && inputOffset + source.iInputChannel1 < captured.Size() )
+            left = captured[inputOffset + source.iInputChannel1];
+        if ( channels == 2 && source.iInputChannel2 >= 0 && source.iInputChannel2 < captureChannels &&
+             inputOffset + source.iInputChannel2 < captured.Size() )
+            right = captured[inputOffset + source.iInputChannel2];
+        if ( iInputBoost != 1 )
+        {
+            left = Float2Short ( static_cast<float> ( left ) * iInputBoost );
+            if ( channels == 2 )
+                right = Float2Short ( static_cast<float> ( right ) * iInputBoost );
+        }
+        if ( channels == 1 )
+            source.vecPCM[frame] = left;
+        else
+        {
+            source.vecPCM[2 * frame]     = left;
+            source.vecPCM[2 * frame + 1] = right;
+        }
+    }
+}
+
+void CClient::UpdatePolyInInputLevelMeter ( const CVector<int16_t>& captured, const int captureChannels )
+{
+    const int frameCount = captureChannels > 0 ? std::min ( iMonoBlockSizeSam, captured.Size() / captureChannels ) : 0;
+
+    const auto peakForInput = [this, &captured, captureChannels, frameCount] ( const int inputChannel ) {
+        short minSample = 0;
+        if ( inputChannel < 0 || inputChannel >= captureChannels )
+            return 0.0;
+
+        // Match CStereoSignalLevelMeter::Update(): sample every third frame
+        // and retain only negative samples for the inexpensive peak estimate.
+        for ( int frame = 0; frame < frameCount; frame += 3 )
+        {
+            const int inputOffset = frame * captureChannels + inputChannel;
+            short     sample      = captured[inputOffset];
+            if ( iInputBoost != 1 )
+                sample = Float2Short ( static_cast<float> ( sample ) * iInputBoost );
+            minSample = std::min ( minSample, sample );
+        }
+        return -static_cast<double> ( minSample );
+    };
+
+    double peakLeft  = 0.0;
+    double peakRight = 0.0;
+
+    if ( iPolyInSourceCount == 2 && PolyInSources[0].Config.iNumChannels == 1 && PolyInSources[1].Config.iNumChannels == 1 )
+    {
+        // Two mono source rows are the natural analogue of ordinary stereo
+        // capture: row one drives left and row two drives right.
+        peakLeft  = peakForInput ( PolyInSources[0].iInputChannel1 );
+        peakRight = peakForInput ( PolyInSources[1].iInputChannel1 );
+    }
+    else
+    {
+        // In every other Poly-in/Stereo-out layout, collapse every physical
+        // input into one shared peak. Mono rows contribute one input and
+        // stereo rows contribute both split inputs. Show that peak on both
+        // meter bars, rather than implying a left/right source assignment.
+        double peak = 0.0;
+        for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+        {
+            const CClientPolyInSource& source = PolyInSources[sourceIndex];
+            peak                              = std::max ( peak, peakForInput ( source.iInputChannel1 ) );
+            if ( source.Config.iNumChannels == 2 )
+                peak = std::max ( peak, peakForInput ( source.iInputChannel2 ) );
+        }
+        peakLeft  = peak;
+        peakRight = peak;
+    }
+
+    SignalLevelMeter.UpdatePeakLevels ( peakLeft, peakRight );
+}
+
+bool CClient::SendPolyInFrame ( const CVector<int16_t>& captured, const int captureChannels, const int frameOffset, const bool muteOutStream )
+{
+    if ( !PolyInNegotiation.CanSendPolyIn() || iPolyInSourceCount == 0 || captureChannels <= 0 )
+        return false;
+    // Build one logical session frame: each source contributes one record and
+    // every record shares this codec-boundary sequence. Packetization may split
+    // only between records, never within a source payload.
+    std::array<PolyIn::RecordView, PolyIn::kMaxSourceRows> records{};
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+    {
+        CClientPolyInSource& source = PolyInSources[sourceIndex];
+        FillPolyInSourcePCM ( source, captured, captureChannels, frameOffset );
+        // Mute Myself replaces only the network payload. Leave vecPCM intact
+        // for direct local monitoring below, otherwise muted users cannot hear
+        // their own capture at all.
+        const CVector<int16_t>& encodedPCM = muteOutStream ? source.vecMutedPCM : source.vecPCM;
+        if ( source.Config.bRaw )
+        {
+            std::memcpy ( &source.vecCoded[0], &encodedPCM[0], source.Config.iPayloadBytes );
+        }
+        else
+        {
+            // Each Poly-in source record has a fixed payload size. Do not
+            // publish a partial logical frame if one source encode fails.
+            const int encodedBytes =
+                opus_custom_encode ( source.pEncoder, &encodedPCM[0], iOPUSFrameSizeSamples, &source.vecCoded[0], source.Config.iPayloadBytes );
+            if ( encodedBytes != source.Config.iPayloadBytes )
+                return false;
+        }
+        records[sourceIndex] = { source.Config.iKey, &source.vecCoded[0], source.Config.iPayloadBytes };
+    }
+    const PolyIn::Datagram* datagrams     = nullptr;
+    size_t                  datagramCount = 0;
+    if ( !PolyInPacketizer.Packetize ( PolyInNegotiation.Generation(),
+                                       iPolyInFrameSequence++,
+                                       PolyInSources[0].Config.bRaw,
+                                       records.data(),
+                                       static_cast<size_t> ( iPolyInSourceCount ),
+                                       datagrams,
+                                       datagramCount ) )
+    {
+        return false;
+    }
+    for ( size_t i = 0; i < datagramCount; ++i )
+    {
+        // Datagram storage belongs to the preallocated packetizer.  Send its
+        // exact populated length directly so the real-time callback neither
+        // resizes a CVector nor copies packet data.
+        Socket.SendPacket ( datagrams[i].bytes.data(), static_cast<int> ( datagrams[i].length ), Channel.GetAddress() );
+    }
+    PolyInNegotiation.OnFirstAcceptedFrame ( PolyInNegotiation.Generation() );
+    return true;
+}
+
+void CClient::AccumulatePolyInLocalMonitor ( const int frameOffset )
+{
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+    {
+        const CClientPolyInSource& source    = PolyInSources[sourceIndex];
+        const float                gain      = fPolyInLocalMonitorGain[sourceIndex].load ( std::memory_order_relaxed );
+        const float                pan       = fPolyInLocalMonitorPan[sourceIndex].load ( std::memory_order_relaxed );
+        const float                gainLeft  = MathUtils::GetLeftPan ( pan, false ) * gain;
+        const float                gainRight = MathUtils::GetRightPan ( pan, false ) * gain;
+        for ( int frame = 0; frame < iOPUSFrameSizeSamples; ++frame )
+        {
+            const int out = 2 * ( frameOffset + frame );
+            if ( out + 1 >= vecfPolyInLocalMonitor.Size() )
+                break;
+            if ( source.Config.iNumChannels == 1 )
+            {
+                const float value = source.vecPCM[frame];
+                vecfPolyInLocalMonitor[out] += value * gainLeft;
+                vecfPolyInLocalMonitor[out + 1] += value * gainRight;
+            }
+            else
+            {
+                vecfPolyInLocalMonitor[out] += source.vecPCM[2 * frame] * gainLeft;
+                vecfPolyInLocalMonitor[out + 1] += source.vecPCM[2 * frame + 1] * gainRight;
+            }
+        }
+    }
+}
+
+bool CClient::SetPolyInLocalMonitorGain ( const int serverFaderID, const float gain )
+{
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return false;
+
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+    {
+        CClientPolyInSource& source = PolyInSources[sourceIndex];
+        if ( source.Config.iFaderID == serverFaderID )
+        {
+            fPolyInLocalMonitorGain[sourceIndex].store ( gain, std::memory_order_relaxed );
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CClient::SetPolyInLocalMonitorPan ( const int serverFaderID, const float pan )
+{
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return false;
+
+    for ( int sourceIndex = 0; sourceIndex < iPolyInSourceCount; ++sourceIndex )
+    {
+        CClientPolyInSource& source = PolyInSources[sourceIndex];
+        if ( source.Config.iFaderID == serverFaderID )
+        {
+            fPolyInLocalMonitorPan[sourceIndex].store ( pan, std::memory_order_relaxed );
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CClient::RejectPolyInAudioReinitialization ( const QString& setting )
+{
+    if ( !IsPolyInRoutingLocked() )
+        return false;
+
+    SetPolyInStatus ( tr ( "Poly-in is fixed for this connection. Disconnect before changing %1." ).arg ( setting ) );
+    return true;
+}
+
+void CClient::SetPolyInStatus ( const QString& status )
+{
+    strPolyInStatus = status;
+    emit PolyInStatusChanged ( strPolyInStatus );
+}
+
+void CClient::StartPolyInDeadline ( const EPolyInDeadline deadline, const int timeoutMs )
+{
+    ePolyInDeadline = deadline;
+    TimerPolyInNegotiation.start ( timeoutMs );
+}
+
+void CClient::StopPolyInDeadline()
+{
+    TimerPolyInNegotiation.stop();
+    ePolyInDeadline = EPolyInDeadline::None;
+}
+
+QString CClient::PolyInRejectReason ( const uint8_t reason ) const
+{
+    switch ( reason )
+    {
+    case PolyInProtocol::kRejectMalformed:
+        return tr ( "invalid source map" );
+    case PolyInProtocol::kRejectCapacity:
+        return tr ( "server source capacity is exhausted" );
+    case PolyInProtocol::kRejectUnsupported:
+        return tr ( "the requested codec or Raw mode is unsupported" );
+    case PolyInProtocol::kRejectSplitMessageNotReady:
+        return tr ( "split-message setup was incomplete" );
+    case PolyInProtocol::kRejectInvalidSessionState:
+        return tr ( "the session was no longer in legacy startup" );
+    case PolyInProtocol::kRejectStereoReturnRequired:
+        return tr ( "the session return profile was not stereo" );
+    default:
+        return tr ( "an unspecified server policy rejected it" );
+    }
+}
+
+void CClient::BeginPolyInNegotiation()
+{
+    // This negotiation overlays ordinary startup. Until ACCEPT is validated,
+    // ProcessAudioDataIntern continues ordinary legacy upload on the stereo
+    // session transport selected for Poly-in.
+    StopPolyInDeadline();
+    PolyInNegotiation.Reset();
+    bOwnedServerFaderIDs.fill ( false );
+
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return;
+    if ( !Sound.SupportsPolyInCapture() )
+    {
+        SetPolyInStatus ( tr ( "Poly-in is unavailable on this audio backend; using the saved legacy input mode." ) );
+        return;
+    }
+    if ( iPolyInSourceCount == 0 )
+    {
+        SetPolyInStatus ( tr ( "Poly-in has no valid source rows; using the saved legacy input mode." ) );
+        return;
+    }
+    if ( !PolyInNegotiation.Begin() )
+        return;
+
+    if ( Channel.IsSplitMessageSupported() )
+    {
+        // This normally cannot occur on a fresh connection because protocol
+        // reset clears the bit. Keeping the branch makes reconnect/reuse safe.
+        if ( PolyInNegotiation.OnSplitCapabilityReceived() )
+        {
+            SetPolyInStatus ( tr ( "Poly-in split-message capability is ready; requesting server support." ) );
+            Channel.CreateReqPolyInCapsMes();
+        }
+        return;
+    }
+
+    SetPolyInStatus ( tr ( "Poly-in is fixed for this connection; preparing split-message capability." ) );
+    Channel.CreateReqSplitMessSupportMes();
+}
+
+void CClient::OnPolyInReliableMessageSent ( const int logicalMessageID )
+{
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return;
+
+    switch ( logicalMessageID )
+    {
+    case PROTMESSID_REQ_SPLIT_MESS_SUPPORT:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingSplitCapability && ePolyInDeadline == EPolyInDeadline::None )
+        {
+            SetPolyInStatus ( tr ( "Waiting for split-message capability before Poly-in negotiation." ) );
+            StartPolyInDeadline ( EPolyInDeadline::SplitCapability, 3000 );
+        }
+        break;
+
+    case PROTMESSID_REQ_POLY_IN_CAPS:
+        if ( PolyInNegotiation.OnCapabilityRequestSent() )
+        {
+            SetPolyInStatus ( tr ( "Poly-in capability request sent; waiting for the server's semantic response." ) );
+            StartPolyInDeadline ( EPolyInDeadline::CapabilityResponse, 3000 );
+        }
+        break;
+
+    case PROTMESSID_POLY_IN_CONFIG:
+        if ( PolyInNegotiation.OnConfigurationRequestSent() )
+        {
+            // A full 64-row map can comprise several ACK-gated split packets.
+            // This begins at the first packet actually sent, not when the map
+            // was merely appended behind ordinary connection traffic.
+            SetPolyInStatus ( tr ( "Poly-in source configuration sent; waiting for server acceptance." ) );
+            StartPolyInDeadline ( EPolyInDeadline::ConfigurationResponse, 8000 );
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+void CClient::OnPolyInCaps()
+{
+    if ( eAudioChannelConf != CC_POLY_IN || !PolyInNegotiation.OnCapabilityResponse ( PolyIn::kVersion ) )
+        return;
+
+    StopPolyInDeadline();
+    SetPolyInStatus ( tr ( "Poly-in server capability confirmed; queuing the fixed source map." ) );
+    SendPolyInConfigIfReady();
+}
+
+void CClient::OnPolyInSplitMessageSupported()
+{
+    if ( eAudioChannelConf != CC_POLY_IN || !PolyInNegotiation.OnSplitCapabilityReceived() )
+        return;
+
+    StopPolyInDeadline();
+    SetPolyInStatus ( tr ( "Poly-in split-message capability confirmed; requesting server support." ) );
+    Channel.CreateReqPolyInCapsMes();
+}
+
+void CClient::SendPolyInConfigIfReady()
+{
+    if ( eAudioChannelConf != CC_POLY_IN || PolyInNegotiation.State() != PolyIn::NegotiationState::ConfigurationQueued )
+        return;
+
+    CVector<CPolyInSourceConfig> config;
+    config.Init ( iPolyInSourceCount );
+    for ( int i = 0; i < iPolyInSourceCount; ++i )
+        config[i] = PolyInSources[i].Config;
+
+    Channel.CreatePolyInConfigMes ( config );
+    SetPolyInStatus ( tr ( "Poly-in source configuration queued behind connection setup." ) );
+}
+
+void CClient::SetOwnedSourceIDs ( const CVector<CPolyInSourceConfig>& sourceMap )
+{
+    // These are ordinary server fader IDs, not additional client sessions. Map
+    // any already-listed faders now; ApplyNewConClientList repeats the mapping
+    // after the server publishes the atomically promoted source list.
+    bOwnedServerFaderIDs.fill ( false );
+    CVector<int> clientIDs;
+    for ( const CPolyInSourceConfig& mapped : sourceMap )
+    {
+        if ( mapped.iFaderID >= 0 && mapped.iFaderID < MAX_NUM_CHANNELS )
+        {
+            bOwnedServerFaderIDs[mapped.iFaderID] = true;
+            const int clientID                    = FindClientChannel ( mapped.iFaderID, false );
+            if ( clientID != INVALID_INDEX )
+                clientIDs.push_back ( clientID );
+        }
+    }
+    emit OwnedSourceIDsReceived ( clientIDs );
+}
+
+void CClient::RestoreLegacyOwnedSourceID()
+{
+    bOwnedServerFaderIDs.fill ( false );
+    CVector<int> clientIDs;
+    if ( iLegacyServerFaderID >= 0 && iLegacyServerFaderID < MAX_NUM_CHANNELS )
+    {
+        bOwnedServerFaderIDs[iLegacyServerFaderID] = true;
+        const int clientID                         = FindClientChannel ( iLegacyServerFaderID, false );
+        if ( clientID != INVALID_INDEX )
+            clientIDs.push_back ( clientID );
+    }
+    emit OwnedSourceIDsReceived ( clientIDs );
+}
+
+bool CClient::IsOwnedServerFader ( const int serverFaderID ) const
+{
+    return serverFaderID >= 0 && serverFaderID < MAX_NUM_CHANNELS && bOwnedServerFaderIDs[serverFaderID];
+}
+
+void CClient::OnPolyInAccept ( CPolyInAcceptMap accept )
+{
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return;
+
+    // Validate the complete ordinary-fader map before publishing a sendable
+    // generation to the audio callback.
+    if ( accept.vecSources.Size() != iPolyInSourceCount )
+    {
+        PolyInNegotiation.OnReject();
+        StopPolyInDeadline();
+        SetPolyInStatus ( tr ( "Server returned an invalid Poly-in source map; using legacy input." ) );
+        return;
+    }
+    for ( int i = 0; i < accept.vecSources.Size(); ++i )
+    {
+        if ( accept.vecSources[i].iKey != PolyInSources[i].Config.iKey )
+        {
+            PolyInNegotiation.OnReject();
+            StopPolyInDeadline();
+            SetPolyInStatus ( tr ( "Server returned a mismatched Poly-in source map; using legacy input." ) );
+            return;
+        }
+    }
+    if ( !PolyInNegotiation.OnAccept ( accept.iGeneration ) )
+        return;
+
+    StopPolyInDeadline();
+    for ( int i = 0; i < accept.vecSources.Size(); ++i )
+        PolyInSources[i].Config.iFaderID = accept.vecSources[i].iFaderID;
+    SetOwnedSourceIDs ( accept.vecSources );
+
+    // The audio callback now starts multiplexed frames at the next codec
+    // boundary. Until the server acknowledges activation, no source map is
+    // claimed active in the user-facing status.
+    SetPolyInStatus ( tr ( "Poly-in source map accepted; waiting for the first codec frame." ) );
+    StartPolyInDeadline ( EPolyInDeadline::Activation, 3000 );
+}
+
+void CClient::OnPolyInReject ( const uint8_t reason )
+{
+    if ( eAudioChannelConf != CC_POLY_IN )
+        return;
+
+    StopPolyInDeadline();
+    PolyInNegotiation.OnReject();
+    SetPolyInStatus ( tr ( "Server declined Poly-in (%1); using the saved legacy input mode." ).arg ( PolyInRejectReason ( reason ) ) );
+}
+
+void CClient::OnPolyInActive ( const int generation )
+{
+    if ( eAudioChannelConf != CC_POLY_IN || generation < 1 || generation > 0xffff ||
+         !PolyInNegotiation.OnActivation ( static_cast<uint16_t> ( generation ) ) )
+    {
+        return;
+    }
+
+    StopPolyInDeadline();
+    SetPolyInStatus ( tr ( "Poly-in is active (%1 source faders)." ).arg ( iPolyInSourceCount ) );
+}
+
+void CClient::OnPolyInNegotiationTimeout()
+{
+    const EPolyInDeadline deadline = ePolyInDeadline;
+    ePolyInDeadline                = EPolyInDeadline::None;
+
+    switch ( deadline )
+    {
+    case EPolyInDeadline::SplitCapability:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingSplitCapability )
+        {
+            PolyInNegotiation.OnTimeout();
+            SetPolyInStatus ( tr ( "Server did not confirm split-message capability; using the saved legacy input mode." ) );
+        }
+        break;
+
+    case EPolyInDeadline::CapabilityResponse:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingCapabilityResponse )
+        {
+            PolyInNegotiation.OnTimeout();
+            // An old server may ACK the unknown probe. Only its dedicated
+            // POLY_IN_CAPS response is affirmative evidence.
+            SetPolyInStatus ( tr ( "Server did not return Poly-in capability support; using the saved legacy input mode." ) );
+        }
+        break;
+
+    case EPolyInDeadline::ConfigurationResponse:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::AwaitingConfigurationResponse )
+        {
+            PolyInNegotiation.OnTimeout();
+            SetPolyInStatus ( tr ( "Server did not accept the Poly-in source map; using the saved legacy input mode." ) );
+        }
+        break;
+
+    case EPolyInDeadline::Activation:
+        if ( PolyInNegotiation.State() == PolyIn::NegotiationState::Prepared )
+        {
+            // No Poly-in packet was produced, so remaining in legacy mode is
+            // safe: the server has not promoted the hidden map.
+            PolyInNegotiation.OnTimeout();
+            RestoreLegacyOwnedSourceID();
+            SetPolyInStatus ( tr ( "Poly-in source map was accepted but no codec frame was produced; using legacy input." ) );
+        }
+        else if ( PolyInNegotiation.IsAwaitingActivation() )
+        {
+            // Preserve compatibility with a server from the initial
+            // Poly-in implementation which has already promoted on the first frame
+            // but does not yet send POLY_IN_ACTIVE. Never revert to legacy
+            // after Poly-in datagrams have begun.
+            SetPolyInStatus ( tr ( "Poly-in audio is being sent, but the server has not confirmed source-map activation." ) );
+        }
+        break;
+
+    case EPolyInDeadline::None:
+        break;
+    }
+}
+
+void CClient::OpenSndCrdDriverSetup()
+{
+    if ( RejectPolyInAudioReinitialization ( tr ( "audio device settings" ) ) )
+        return;
+
+    Sound.OpenDriverSetup();
+}
+
 QString CClient::SetSndCrdDev ( const QString strNewDev )
 {
     QString strError = "";
 
+    if ( strNewDev != Sound.GetDev() && RejectPolyInAudioReinitialization ( tr ( "the audio device" ) ) )
+        return QString();
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -776,6 +1567,9 @@ QString CClient::SetSndCrdDev ( const QString strNewDev )
 
 void CClient::SetSndCrdLeftInputChannel ( const int iNewChan )
 {
+    if ( RejectPolyInAudioReinitialization ( tr ( "the input channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -796,6 +1590,9 @@ void CClient::SetSndCrdLeftInputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdRightInputChannel ( const int iNewChan )
 {
+    if ( RejectPolyInAudioReinitialization ( tr ( "the input channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -816,6 +1613,9 @@ void CClient::SetSndCrdRightInputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdLeftOutputChannel ( const int iNewChan )
 {
+    if ( RejectPolyInAudioReinitialization ( tr ( "the output channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -836,6 +1636,9 @@ void CClient::SetSndCrdLeftOutputChannel ( const int iNewChan )
 
 void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 {
+    if ( RejectPolyInAudioReinitialization ( tr ( "the output channel selection" ) ) )
+        return;
+
     // if client was running then first
     // stop it and restart again after new initialization
     const bool bWasRunning = Sound.IsRunning();
@@ -856,7 +1659,8 @@ void CClient::SetSndCrdRightOutputChannel ( const int iNewChan )
 
 void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
 {
-    QString strError = "";
+    QString strError          = "";
+    bool    bPolyInDisconnect = false;
 
     // audio device notifications can come at any time and they are in a
     // different thread, therefore we need a mutex here
@@ -866,37 +1670,44 @@ void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
     // on error condition. Catch it here as exceptions must not escape from a Qt slot.
     try
     {
-        // in older QT versions, enums cannot easily be used in signals without
-        // registering them -> workaroud: we use the int type and cast to the enum
-        const ESndCrdResetType eSndCrdResetType = static_cast<ESndCrdResetType> ( iSndCrdResetType );
-
-        // if client was running then first
-        // stop it and restart again after new initialization
-        const bool bWasRunning = Sound.IsRunning();
-        if ( bWasRunning )
+        // The source descriptors, encoders and sequence number are immutable
+        // for one Poly-in session. A device/backend reset recreates those
+        // objects, so preserve the contract by ending the session rather than
+        // silently restarting it with a new encoder state.
+        if ( IsPolyInRoutingLocked() )
         {
-            Sound.Stop();
+            Stop();
+            bPolyInDisconnect = true;
         }
-
-        // perform reinit request as indicated by the request type parameter
-        if ( eSndCrdResetType != RS_ONLY_RESTART )
+        else
         {
-            if ( eSndCrdResetType != RS_ONLY_RESTART_AND_INIT )
+            // In older QT versions, enums cannot easily be used in signals
+            // without registering them -> use int and cast to the enum.
+            const ESndCrdResetType eSndCrdResetType = static_cast<ESndCrdResetType> ( iSndCrdResetType );
+
+            // If the client was running then first stop it and restart after
+            // the requested initialization.
+            const bool bWasRunning = Sound.IsRunning();
+            if ( bWasRunning )
             {
-                // reinit the driver if requested
-                // (we use the currently selected driver)
-                strError = Sound.SetDev ( Sound.GetDev() );
+                Sound.Stop();
             }
 
-            // init client object (must always be performed if the driver
-            // was changed)
-            Init();
-        }
+            if ( eSndCrdResetType != RS_ONLY_RESTART )
+            {
+                if ( eSndCrdResetType != RS_ONLY_RESTART_AND_INIT )
+                {
+                    // Reinitialize the currently selected driver if requested.
+                    strError = Sound.SetDev ( Sound.GetDev() );
+                }
 
-        if ( bWasRunning )
-        {
-            // restart client
-            Sound.Start();
+                Init();
+            }
+
+            if ( bWasRunning )
+            {
+                Sound.Start();
+            }
         }
     }
     catch ( const CGenErr& generr )
@@ -904,7 +1715,13 @@ void CClient::OnSndCrdReinitRequest ( int iSndCrdResetType )
         strError = generr.GetErrorText();
     }
 
-    // inform GUI about the sound card device change
+    if ( bPolyInDisconnect )
+    {
+        SetPolyInStatus ( tr ( "Audio device reinitialized; Poly-in was disconnected. Reconnect to resume." ) );
+        emit Disconnected();
+    }
+
+    // Inform GUI about the sound card device change.
     emit SoundDeviceChanged ( strError );
 }
 
@@ -1007,6 +1824,13 @@ void CClient::OnClientIDReceived ( int iServerChanID )
     // allocate and map client-side channel 0
     int iChanID = FindClientChannel ( iServerChanID, true ); // should always return channel 0
 
+    // A legacy session starts with one owned fader. Poly-in acceptance later
+    // replaces this set atomically with every source fader ID.
+    bOwnedServerFaderIDs.fill ( false );
+    iLegacyServerFaderID = iServerChanID;
+    if ( iServerChanID >= 0 && iServerChanID < MAX_NUM_CHANNELS )
+        bOwnedServerFaderIDs[iServerChanID] = true;
+
     // for headless mode we support to mute our own signal in the personal mix
     // (note that the check for headless is done in the main.cpp and must not
     // be checked here)
@@ -1025,6 +1849,15 @@ void CClient::OnRawAudioSupported()
 {
     if ( !bRawAudioIsSupported )
     {
+        if ( IsPolyInRoutingLocked() && PolyInNegotiation.CanSendPolyIn() )
+        {
+            // Establish the changed capability on a fresh connection rather
+            // than resetting source encoders and frame sequence in place.
+            Stop();
+            SetPolyInStatus ( tr ( "Server audio capability changed; Poly-in was disconnected. Reconnect to resume." ) );
+            emit Disconnected();
+            return;
+        }
         const bool bWasRunning = Sound.IsRunning();
 
         if ( bWasRunning )
@@ -1044,6 +1877,11 @@ void CClient::OnRawAudioSupported()
 
 void CClient::Start()
 {
+    // Poly-in source descriptors, codec choice and routing are a
+    // connection-time contract. Lock them before audio/socket startup, not
+    // only after the server has answered the first protocol message.
+    bPolyInRoutingLocked = eAudioChannelConf == CC_POLY_IN;
+
     // init object
     Init();
 
@@ -1080,6 +1918,12 @@ void CClient::Stop()
 
     // disable channel
     Channel.SetEnable ( false );
+    bPolyInRoutingLocked = false;
+    StopPolyInDeadline();
+    PolyInNegotiation.Reset();
+    bOwnedServerFaderIDs.fill ( false );
+    iLegacyServerFaderID = INVALID_INDEX;
+    SetPolyInStatus ( "Poly-in inactive" );
 
     // Fall back to opus in case raw was used
     bRawAudioIsSupported = false;
@@ -1195,6 +2039,13 @@ void CClient::SetConnectionState ( const EConnectionState eNewConnectionState )
 
 void CClient::Init()
 {
+    // Poly-in/Stereo-out fixes the physical session to a stereo transport
+    // before connection. Negotiation can therefore fall back to ordinary
+    // legacy audio without changing codec, packet or return-buffer geometry.
+    const PolyIn::ChannelProfiles channelProfiles       = PolyIn::ResolveChannelProfiles ( eAudioChannelConf, eLegacyAudioChannelConf );
+    const EAudChanConf            eInputChannelConf     = channelProfiles.input;
+    const EAudChanConf            eTransportChannelConf = channelProfiles.transport;
+
     // check if possible frame size factors are supported
     const int iFraSizePreffered = SYSTEM_FRAME_SIZE_SAMPLES * FRAME_SIZE_FACTOR_PREFERRED;
     const int iFraSizeDefault   = SYSTEM_FRAME_SIZE_SAMPLES * FRAME_SIZE_FACTOR_DEFAULT;
@@ -1284,7 +2135,7 @@ void CClient::Init()
     {
         iOPUSFrameSizeSamples = DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES;
 
-        if ( eAudioChannelConf == CC_MONO )
+        if ( eTransportChannelConf == CC_MONO )
         {
             CurOpusEncoder    = OpusEncoderMono;
             CurOpusDecoder    = OpusDecoderMono;
@@ -1357,7 +2208,7 @@ void CClient::Init()
     {
         iOPUSFrameSizeSamples = SYSTEM_FRAME_SIZE_SAMPLES;
 
-        if ( eAudioChannelConf == CC_MONO )
+        if ( eTransportChannelConf == CC_MONO )
         {
             CurOpusEncoder    = Opus64EncoderMono;
             CurOpusDecoder    = Opus64DecoderMono;
@@ -1433,6 +2284,7 @@ void CClient::Init()
     vecCeltData.Init ( iCeltNumCodedBytes );
     vecZeros.Init ( iStereoBlockSizeSam, 0 );
     vecsStereoSndCrdMuteStream.Init ( iStereoBlockSizeSam );
+    vecfPolyInLocalMonitor.Init ( iStereoBlockSizeSam, 0.0f );
 
     // In case we are connected to a non raw audio server or we don't use raw audio we need to initialze the codec
     if ( CurOpusEncoder != nullptr )
@@ -1447,8 +2299,13 @@ void CClient::Init()
     // set the channel network properties
     Channel.SetAudioStreamProperties ( eAudioCompressionType, iCeltNumCodedBytes, iSndCrdFrameSizeFactor, iNumAudioChannels );
 
-    // init reverberation
-    AudioReverb.Init ( eAudioChannelConf, iStereoBlockSizeSam, SYSTEM_SAMPLE_RATE_HZ );
+    // Allocate and configure all Poly-in source-local codec/PCM state here,
+    // never in the callback. The return still uses the ordinary session codec.
+    ConfigurePolyInSources();
+
+    // Reverb follows the saved fallback input routing, not the forced stereo
+    // transport used while Poly-in is selected.
+    AudioReverb.Init ( eInputChannelConf, iStereoBlockSizeSam, SYSTEM_SAMPLE_RATE_HZ );
 
     // init the sound card conversion buffers
     if ( bSndCrdConversionBufferRequired )
@@ -1457,16 +2314,23 @@ void CClient::Init()
         // be the sum of input/output sizes which is the worst case fill level)
         const int iSndCardStereoBlockSizeSamConvBuff = 2 * iSndCardMonoBlockSizeSamConvBuff;
         const int iConBufSize                        = iStereoBlockSizeSam + iSndCardStereoBlockSizeSamConvBuff;
+        iCaptureInputChannels                        = qMax ( 2, Sound.GetNumInputChannels() );
+        const int iInputConBufSize = iMonoBlockSizeSam * iCaptureInputChannels + iSndCardMonoBlockSizeSamConvBuff * iCaptureInputChannels;
 
-        SndCrdConversionBufferIn.Init ( iConBufSize );
+        SndCrdConversionBufferIn.Init ( iInputConBufSize );
         SndCrdConversionBufferOut.Init ( iConBufSize );
         vecDataConvBuf.Init ( iStereoBlockSizeSam );
+        vecInputDataConvBuf.Init ( iMonoBlockSizeSam * iCaptureInputChannels );
+        vecCapturedInputFallback.Init ( iSndCardMonoBlockSizeSamConvBuff * iCaptureInputChannels );
 
         // the output conversion buffer must be filled with the inner
         // block size for initialization (this is the latency which is
         // introduced by the conversion buffer) to avoid buffer underruns
         SndCrdConversionBufferOut.Put ( vecZeros, iStereoBlockSizeSam );
     }
+
+    if ( !bSndCrdConversionBufferRequired )
+        iCaptureInputChannels = qMax ( 2, Sound.GetNumInputChannels() );
 
     // reset initialization phase flag and mute flag
     bIsInitializationPhase = true;
@@ -1491,150 +2355,170 @@ void CClient::AudioCallback ( CVector<int16_t>& psData, void* arg )
 
 void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
 {
-    // check if a conversion buffer is required or not
+    const CVector<int16_t>& captured        = Sound.GetCapturedInputAudio();
+    const int               captureChannels = Sound.GetCapturedInputChannels() > 0 ? Sound.GetCapturedInputChannels() : 2;
+
     if ( bSndCrdConversionBufferRequired )
     {
-        // add new sound card block in conversion buffer
-        SndCrdConversionBufferIn.Put ( vecsStereoSndCrd, vecsStereoSndCrd.Size() );
-
-        // process all available blocks of data
-        while ( SndCrdConversionBufferIn.GetAvailData() >= iStereoBlockSizeSam )
+        const int callbackFrames         = vecsStereoSndCrd.Size() / 2;
+        const int expectedCaptureSamples = callbackFrames * iCaptureInputChannels;
+        if ( captureChannels == iCaptureInputChannels && captured.Size() >= expectedCaptureSamples )
         {
-            // get one block of data for processing
-            SndCrdConversionBufferIn.Get ( vecDataConvBuf, iStereoBlockSizeSam );
-
-            // process audio data
-            ProcessAudioDataIntern ( vecDataConvBuf );
-
-            SndCrdConversionBufferOut.Put ( vecDataConvBuf, iStereoBlockSizeSam );
+            SndCrdConversionBufferIn.Put ( captured, expectedCaptureSamples );
+        }
+        else
+        {
+            // Unsupported drivers retain a stable legacy stereo fallback. This
+            // branch is never used after Poly-in capability is advertised.
+            const int available = qMin ( expectedCaptureSamples, vecCapturedInputFallback.Size() );
+            vecCapturedInputFallback.Reset ( 0 );
+            for ( int frame = 0; frame < callbackFrames && 2 * frame + 1 < vecsStereoSndCrd.Size(); ++frame )
+            {
+                const int out = frame * iCaptureInputChannels;
+                if ( out < available )
+                    vecCapturedInputFallback[out] = vecsStereoSndCrd[2 * frame];
+                if ( iCaptureInputChannels > 1 && out + 1 < available )
+                    vecCapturedInputFallback[out + 1] = vecsStereoSndCrd[2 * frame + 1];
+            }
+            SndCrdConversionBufferIn.Put ( vecCapturedInputFallback, available );
         }
 
-        // get processed sound card block out of the conversion buffer
+        const int inputBlockSamples = iMonoBlockSizeSam * iCaptureInputChannels;
+        while ( SndCrdConversionBufferIn.GetAvailData() >= inputBlockSamples )
+        {
+            SndCrdConversionBufferIn.Get ( vecInputDataConvBuf, inputBlockSamples );
+            pCurrentCaptureInput         = &vecInputDataConvBuf;
+            iCurrentCaptureInputChannels = iCaptureInputChannels;
+            vecDataConvBuf.Reset ( 0 );
+            ProcessAudioDataIntern ( vecDataConvBuf );
+            SndCrdConversionBufferOut.Put ( vecDataConvBuf, iStereoBlockSizeSam );
+        }
         SndCrdConversionBufferOut.Get ( vecsStereoSndCrd, vecsStereoSndCrd.Size() );
     }
     else
     {
-        // regular case: no conversion buffer required
-        // process audio data
+        pCurrentCaptureInput         = &captured;
+        iCurrentCaptureInputChannels = captureChannels;
         ProcessAudioDataIntern ( vecsStereoSndCrd );
     }
+    pCurrentCaptureInput = nullptr;
 }
 
 void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
 {
-    int            i, j, iUnused;
-    unsigned char* pCurCodedData;
+    int            i             = 0;
+    int            j             = 0;
+    int            iUnused       = 0;
+    unsigned char* pCurCodedData = nullptr;
+
+    // The saved standard mode controls fallback input processing. The
+    // network transport is nevertheless stereo for the lifetime of a Poly-in
+    // connection, including unsupported, refused and timed-out negotiation.
+    const PolyIn::ChannelProfiles channelProfiles = PolyIn::ResolveChannelProfiles ( eAudioChannelConf, eLegacyAudioChannelConf );
+    const EAudChanConf            eInputProfile   = channelProfiles.input;
+    const CVector<int16_t>&       captured        = pCurrentCaptureInput != nullptr ? *pCurrentCaptureInput : vecsStereoSndCrd;
+    const int                     captureChannels = pCurrentCaptureInput != nullptr ? iCurrentCaptureInputChannels : 2;
+    const bool                    polyInActive =
+        eAudioChannelConf == CC_POLY_IN && PolyInNegotiation.CanSendPolyIn() && Sound.SupportsPolyInCapture() && iPolyInSourceCount > 0;
+    const bool  muteOutStream     = bMuteOutStream.load ( std::memory_order_relaxed );
+    const float muteOutStreamGain = fMuteOutStreamGain.load ( std::memory_order_relaxed );
 
     // Transmit signal ---------------------------------------------------------
-
-    if ( iInputBoost != 1 )
+    if ( polyInActive )
     {
-        // apply a general gain boost to all audio input:
-        for ( i = 0, j = 0; i < iMonoBlockSizeSam; i++, j += 2 )
+        if ( muteOutStream )
+            vecfPolyInLocalMonitor.Reset ( 0.0f );
+        for ( i = 0; i < iSndCrdFrameSizeFactor; ++i )
         {
-            vecsStereoSndCrd[j + 1] = Float2Short ( iInputBoost * vecsStereoSndCrd[j + 1] );
-            vecsStereoSndCrd[j]     = Float2Short ( iInputBoost * vecsStereoSndCrd[j] );
+            const int frameOffset = i * iOPUSFrameSizeSamples;
+            if ( !SendPolyInFrame ( captured, captureChannels, frameOffset, muteOutStream ) )
+            {
+                // An unprepared/stale state must fail closed to ordinary legacy
+                // transport rather than sending an unrecognised audio datagram.
+                PolyInNegotiation.OnTimeout();
+                break;
+            }
+            if ( muteOutStream )
+                AccumulatePolyInLocalMonitor ( frameOffset );
         }
-    }
-
-    // update stereo signal level meter (not needed in headless mode)
 #ifndef HEADLESS
-    SignalLevelMeter.Update ( vecsStereoSndCrd, iMonoBlockSizeSam, true );
+        UpdatePolyInInputLevelMeter ( captured, captureChannels );
 #endif
-
-    // add reverberation effect if activated
-    if ( iReverbLevel != 0 )
-    {
-        AudioReverb.Process ( vecsStereoSndCrd, bReverbOnLeftChan, static_cast<float> ( iReverbLevel ) / AUD_REVERB_MAX / 4 );
     }
-
-    // apply pan (audio fader) and mix mono signals
-    if ( !( ( iAudioInFader == AUD_FADER_IN_MIDDLE ) && ( eAudioChannelConf == CC_STEREO ) ) )
+    else
     {
-        // calculate pan gain in the range 0 to 1, where 0.5 is the middle position
-        const float fPan = static_cast<float> ( iAudioInFader ) / AUD_FADER_IN_MAX;
-
-        if ( eAudioChannelConf == CC_STEREO )
+        // Legacy profile remains active until explicit semantic capability and
+        // acceptance. Poly-in never chooses an arbitrary row as fallback.
+        if ( iInputBoost != 1 )
         {
-            // for stereo only apply pan attenuation on one channel (same as pan in the server)
-            const float fGainL = MathUtils::GetLeftPan ( fPan, false );
-            const float fGainR = MathUtils::GetRightPan ( fPan, false );
-
             for ( i = 0, j = 0; i < iMonoBlockSizeSam; i++, j += 2 )
             {
-                // note that the gain is always <= 1, therefore a simple cast is
-                // ok since we never can get an overload
-                vecsStereoSndCrd[j + 1] = static_cast<int16_t> ( fGainR * vecsStereoSndCrd[j + 1] );
-                vecsStereoSndCrd[j]     = static_cast<int16_t> ( fGainL * vecsStereoSndCrd[j] );
+                vecsStereoSndCrd[j + 1] = static_cast<int16_t> ( iInputBoost * vecsStereoSndCrd[j + 1] );
+                vecsStereoSndCrd[j]     = static_cast<int16_t> ( iInputBoost * vecsStereoSndCrd[j] );
             }
         }
-        else
+#ifndef HEADLESS
+        SignalLevelMeter.Update ( vecsStereoSndCrd, iMonoBlockSizeSam, true );
+#endif
+        if ( iReverbLevel != 0 )
         {
-            // for mono implement a cross-fade between channels and mix them, for
-            // mono-in/stereo-out use no attenuation in pan center
-            const float fGainL = MathUtils::GetLeftPan ( fPan, eAudioChannelConf != CC_MONO_IN_STEREO_OUT );
-            const float fGainR = MathUtils::GetRightPan ( fPan, eAudioChannelConf != CC_MONO_IN_STEREO_OUT );
-
-            for ( i = 0, j = 0; i < iMonoBlockSizeSam; i++, j += 2 )
-            {
-                // note that we need the Float2Short for stereo pan mode
-                vecsStereoSndCrd[i] = Float2Short ( fGainL * vecsStereoSndCrd[j] + fGainR * vecsStereoSndCrd[j + 1] );
-            }
+            AudioReverb.Process ( vecsStereoSndCrd, bReverbOnLeftChan, static_cast<float> ( iReverbLevel ) / AUD_REVERB_MAX / 4 );
         }
-    }
-
-    // Support for mono-in/stereo-out mode: Per definition this mode works in
-    // full stereo mode at the transmission level. The only thing which is done
-    // is to mix both sound card inputs together and then put this signal on
-    // both stereo channels to be transmitted to the server.
-    if ( eAudioChannelConf == CC_MONO_IN_STEREO_OUT )
-    {
-        // copy mono data in stereo sound card buffer (note that since the input
-        // and output is the same buffer, we have to start from the end not to
-        // overwrite input values)
-        for ( i = iMonoBlockSizeSam - 1, j = iStereoBlockSizeSam - 2; i >= 0; i--, j -= 2 )
+        if ( !( ( iAudioInFader == AUD_FADER_IN_MIDDLE ) && ( eInputProfile == CC_STEREO ) ) )
         {
-            vecsStereoSndCrd[j] = vecsStereoSndCrd[j + 1] = vecsStereoSndCrd[i];
-        }
-    }
-
-    for ( i = 0, j = 0; i < iSndCrdFrameSizeFactor; i++, j += iNumAudioChannels * iOPUSFrameSizeSamples )
-    {
-        // OPUS encoding or copying RAW audio?
-        if ( CurOpusEncoder != nullptr )
-        {
-            // OPUS encoding
-            if ( bMuteOutStream )
+            const float fPan = static_cast<float> ( iAudioInFader ) / AUD_FADER_IN_MAX;
+            if ( eInputProfile == CC_STEREO )
             {
-                iUnused = opus_custom_encode ( CurOpusEncoder, &vecZeros[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
+                const float fGainL = MathUtils::GetLeftPan ( fPan, false );
+                const float fGainR = MathUtils::GetRightPan ( fPan, false );
+                for ( i = 0, j = 0; i < iMonoBlockSizeSam; i++, j += 2 )
+                {
+                    vecsStereoSndCrd[j + 1] = static_cast<int16_t> ( fGainR * vecsStereoSndCrd[j + 1] );
+                    vecsStereoSndCrd[j]     = static_cast<int16_t> ( fGainL * vecsStereoSndCrd[j] );
+                }
             }
             else
             {
-                iUnused = opus_custom_encode ( CurOpusEncoder, &vecsStereoSndCrd[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
+                const float fGainL = MathUtils::GetLeftPan ( fPan, eInputProfile != CC_MONO_IN_STEREO_OUT );
+                const float fGainR = MathUtils::GetRightPan ( fPan, eInputProfile != CC_MONO_IN_STEREO_OUT );
+                for ( i = 0, j = 0; i < iMonoBlockSizeSam; i++, j += 2 )
+                {
+                    vecsStereoSndCrd[i] = Float2Short ( fGainL * vecsStereoSndCrd[j] + fGainR * vecsStereoSndCrd[j + 1] );
+                }
             }
         }
-        else if ( bRawAudioIsSupported )
+        // A Poly-in connection always has a stereo legacy transport. Expand
+        // a saved mono fallback only after its normal mono processing.
+        if ( iNumAudioChannels == 2 && eInputProfile != CC_STEREO )
         {
-            // RAW audio
-            if ( bMuteOutStream )
+            for ( i = iMonoBlockSizeSam - 1, j = iStereoBlockSizeSam - 2; i >= 0; i--, j -= 2 )
             {
-                // output muted - fill with silence
-                memset ( &vecCeltData[0], 0, iCeltNumCodedBytes );
-            }
-            else
-            {
-                // copy raw audio data
-                memcpy ( &vecCeltData[0], &vecsStereoSndCrd[j], iCeltNumCodedBytes );
+                vecsStereoSndCrd[j] = vecsStereoSndCrd[j + 1] = vecsStereoSndCrd[i];
             }
         }
-
-        // send coded audio through the network
-        Channel.PrepAndSendPacket ( &Socket, vecCeltData, iCeltNumCodedBytes );
+        for ( i = 0, j = 0; i < iSndCrdFrameSizeFactor; i++, j += iNumAudioChannels * iOPUSFrameSizeSamples )
+        {
+            if ( CurOpusEncoder != nullptr )
+            {
+                if ( muteOutStream )
+                    iUnused = opus_custom_encode ( CurOpusEncoder, &vecZeros[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
+                else
+                    iUnused = opus_custom_encode ( CurOpusEncoder, &vecsStereoSndCrd[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
+            }
+            else if ( bRawAudioIsSupported )
+            {
+                if ( muteOutStream )
+                    memset ( &vecCeltData[0], 0, iCeltNumCodedBytes );
+                else
+                    memcpy ( &vecCeltData[0], &vecsStereoSndCrd[j], iCeltNumCodedBytes );
+            }
+            Channel.PrepAndSendPacket ( &Socket, vecCeltData, iCeltNumCodedBytes );
+        }
     }
 
     // Receive signal ----------------------------------------------------------
     // in case of mute stream, store local data
-    if ( bMuteOutStream )
+    if ( muteOutStream && !polyInActive )
     {
         vecsStereoSndCrdMuteStream = vecsStereoSndCrd;
     }
@@ -1684,18 +2568,26 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
     }
 
     // for muted stream we have to add our local data here
-    if ( bMuteOutStream )
+    if ( muteOutStream )
     {
-        for ( i = 0; i < iStereoBlockSizeSam; i++ )
+        if ( polyInActive )
         {
-            vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * fMuteOutStreamGain );
+            // Keep all Poly-in sources in float until they are combined with
+            // the decoded server return, then clip exactly once.
+            for ( i = 0; i < iStereoBlockSizeSam; ++i )
+                vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecfPolyInLocalMonitor[i] );
+        }
+        else
+        {
+            for ( i = 0; i < iStereoBlockSizeSam; ++i )
+                vecsStereoSndCrd[i] = Float2Short ( vecsStereoSndCrd[i] + vecsStereoSndCrdMuteStream[i] * muteOutStreamGain );
         }
     }
 
     // check if channel is connected and if we do not have the initialization phase
     if ( Channel.IsConnected() && ( !bIsInitializationPhase ) )
     {
-        if ( eAudioChannelConf == CC_MONO )
+        if ( iNumAudioChannels == 1 )
         {
             // copy mono data in stereo sound card buffer (note that since the input
             // and output is the same buffer, we have to start from the end not to
@@ -1772,8 +2664,9 @@ void CClient::ClearClientChannels()
 {
     QMutexLocker locker ( &MutexChannels );
 
-    iActiveChannels = 0;
-    iJoinSequence   = 0;
+    iActiveChannels      = 0;
+    iJoinSequence        = 0;
+    iLegacyServerFaderID = INVALID_INDEX;
 
     for ( int i = 0; i < MAX_NUM_CHANNELS; i++ )
     {

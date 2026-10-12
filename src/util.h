@@ -507,7 +507,9 @@ enum EAudChanConf
     // used for settings -> enum values should be fixed
     CC_MONO               = 0,
     CC_MONO_IN_STEREO_OUT = 1,
-    CC_STEREO             = 2
+    CC_STEREO             = 2,
+    // Poly-in source routing; legacy values above remain persistent ABI
+    CC_POLY_IN = 3
 };
 
 // Audio compression type enum -------------------------------------------------
@@ -773,6 +775,9 @@ public:
     }
 
     void Update ( const CVector<short>& vecsAudio, const int iInSize, const bool bIsStereoIn );
+
+    /** Apply one pre-reduced peak value per meter side, in 16-bit PCM units. */
+    void UpdatePeakLevels ( const double dMaxLOrMono, const double dMaxR );
 
     double        GetLevelForMeterdBLeftOrMono() { return CalcLogResultForMeter ( dCurLevelLOrMono ); }
     double        GetLevelForMeterdBRight() { return CalcLogResultForMeter ( dCurLevelR ); }

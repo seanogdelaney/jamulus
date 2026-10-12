@@ -507,6 +507,12 @@ CClientDlg::CClientDlg ( CClient*         pNCliP,
     QObject::connect ( pClient, &CClient::ChatTextReceived, this, &CClientDlg::OnChatTextReceived );
 
     QObject::connect ( pClient, &CClient::ClientIDReceived, this, &CClientDlg::OnClientIDReceived );
+    QObject::connect ( pClient, &CClient::OwnedSourceIDsReceived, MainMixerBoard, &CAudioMixerBoard::SetMyChannelIDs );
+
+    QObject::connect ( pClient, &CClient::PolyInStatusChanged, this, [this] ( const QString& ) {
+        ClientSettingsDlg.UpdateSoundDeviceChannelSelectionFrame();
+        ClientSettingsDlg.UpdateDisplay();
+    } );
 
     QObject::connect ( pClient, &CClient::MuteStateHasChangedReceived, this, &CClientDlg::OnMuteStateHasChangedReceived );
 
