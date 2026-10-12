@@ -1,3 +1,11 @@
+### 4.0.0sdel12 ###
+
+- Fix a Poly-in server configuration deadlock which could freeze a session and prevent recovery after reconnecting.
+
+- Preserve negotiated mono and stereo input sources, live latency displays and in-place recovery after network interruption.
+
+- Unofficial seanogdelaney fork build for band use; not an official Jamulus release.
+
 ### 4.0.0sdel11 ###
 
 - Add negotiated Poly-in transport for multiple capture sources while preserving compatibility with legacy clients and servers.
