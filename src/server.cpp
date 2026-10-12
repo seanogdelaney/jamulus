@@ -1792,8 +1792,9 @@ void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig>
     // ingress/codec/source reservations at this endpoint. An ACK may have been
     // lost: retransmissions carrying the same nonce reuse the old map, while
     // another nonce can never be interpreted as an old audio fragment.
-    std::lock_guard<std::mutex> ingressGuard ( Mutex );
-    CServerSessionState&        state = vecSessionState[sessionID];
+    // OnProtocolMessageReceived() holds Mutex while CProtocol synchronously
+    // emits PolyInConfigReceived. Re-locking it here deadlocks the server.
+    CServerSessionState& state = vecSessionState[sessionID];
     if ( state.Sources.IsActive() || state.Sources.IsPrepared() )
     {
         if ( state.iRequestNonce != requestNonce )

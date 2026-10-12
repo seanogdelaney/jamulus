@@ -187,6 +187,13 @@ public:
         return PreparePolyInSources ( sessionID, config, rejectReason );
     }
 
+    void SubmitPolyInConfig ( const int sessionID, const CVector<CPolyInSourceConfig>& config, const uint32_t requestNonce )
+    {
+        CVector<uint8_t> data;
+        QVERIFY ( PolyInProtocol::EncodeConfig ( config, requestNonce, data ) );
+        OnProtocolMessageReceived ( 1, PROTMESSID_POLY_IN_CONFIG, data, vecSessions[sessionID].GetAddress() );
+    }
+
     bool PutPolyInFrame ( const int sessionID, const uint16_t generation, const uint32_t sequence, const CVector<CPolyInSourceConfig>& config )
     {
         std::vector<std::vector<uint8_t>> payloads ( static_cast<size_t> ( config.Size() ) );
@@ -400,6 +407,20 @@ private slots:
         server.ConfigurePolyInCapableSession ( sessionID, 2 );
         QVERIFY ( server.PreparePolyIn ( sessionID, config, rejectReason ) );
         QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Prepared );
+    }
+
+    void polyInConfigProtocolPathDoesNotRelockServerMutex()
+    {
+        CServerTestHarness                 server ( true );
+        const int                          sessionID = server.ReserveLegacySession ( TestAddress ( 41035 ) );
+        const CVector<CPolyInSourceConfig> config    = MakePolyInConfig ( 2 );
+
+        server.ConfigurePolyInCapableSession ( sessionID );
+        server.SubmitPolyInConfig ( sessionID, config, 1 );
+
+        QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Prepared );
+        QCOMPARE ( server.PreparedSourceCount ( sessionID ), 2 );
+        QCOMPARE ( server.VisibleSourceCount(), 1 );
     }
 
     void polyInReservationAndPromotionAreAtomic()
