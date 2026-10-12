@@ -44,6 +44,7 @@
  *
 \******************************************************************************/
 
+#include "opusprofile.h"
 #include "server.h"
 #include "util.h"
 
@@ -119,25 +120,10 @@ CServer::CServer ( const int          iNewMaxNumChan,
         Opus64EncoderStereo[i] = opus_custom_encoder_create ( Opus64Mode[i], 2, &iOpusError ); // stereo encoder OPUS64
         Opus64DecoderStereo[i] = opus_custom_decoder_create ( Opus64Mode[i], 2, &iOpusError ); // stereo decoder OPUS64
 
-        // we require a constant bit rate
-        opus_custom_encoder_ctl ( OpusEncoderMono[i], OPUS_SET_VBR ( 0 ) );
-        opus_custom_encoder_ctl ( OpusEncoderStereo[i], OPUS_SET_VBR ( 0 ) );
-        opus_custom_encoder_ctl ( Opus64EncoderMono[i], OPUS_SET_VBR ( 0 ) );
-        opus_custom_encoder_ctl ( Opus64EncoderStereo[i], OPUS_SET_VBR ( 0 ) );
-
-        // for 64 samples frame size we have to adjust the PLC behavior to avoid loud artifacts
-        opus_custom_encoder_ctl ( Opus64EncoderMono[i], OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
-        opus_custom_encoder_ctl ( Opus64EncoderStereo[i], OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
-
-        // we want as low delay as possible
-        opus_custom_encoder_ctl ( OpusEncoderMono[i], OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-        opus_custom_encoder_ctl ( OpusEncoderStereo[i], OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-        opus_custom_encoder_ctl ( Opus64EncoderMono[i], OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-        opus_custom_encoder_ctl ( Opus64EncoderStereo[i], OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-
-        // set encoder low complexity for legacy 128 samples frame size
-        opus_custom_encoder_ctl ( OpusEncoderMono[i], OPUS_SET_COMPLEXITY ( 1 ) );
-        opus_custom_encoder_ctl ( OpusEncoderStereo[i], OPUS_SET_COMPLEXITY ( 1 ) );
+        OpusProfile::Configure ( OpusEncoderMono[i], false );
+        OpusProfile::Configure ( OpusEncoderStereo[i], false );
+        OpusProfile::Configure ( Opus64EncoderMono[i], true );
+        OpusProfile::Configure ( Opus64EncoderStereo[i], true );
 
         // init double-to-normal frame size conversion buffers -----------------
         // use worst case memory initialization to avoid allocating memory in
