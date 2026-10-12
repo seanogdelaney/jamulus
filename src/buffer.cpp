@@ -49,6 +49,7 @@
 
 #include "buffer.h"
 #include "netreceive.h"
+#include "netjitterpolicy.h"
 
 /* Network buffer implementation **********************************************/
 void CNetBuf::Init ( const int iNewBlockSize, const int iNewNumBlocks, const bool bNUseSequenceNumber, const bool bPreserve )
@@ -511,57 +512,14 @@ bool CNetBufWithStats::Get ( CVector<uint8_t>& vecbyData, const int iOutSize )
 
 void CNetBufWithStats::UpdateAutoSetting()
 {
-    int  iCurDecision      = 0; // dummy initialization
-    int  iCurMaxUpDecision = 0; // dummy initialization
-    bool bDecisionFound;
-
-    // Get regular error rate decision -----------------------------------------
-    // Use a specified error bound to identify the best buffer size for the
-    // current network situation. Start with the smallest buffer and
-    // test for the error rate until the rate is below the bound.
-    bDecisionFound = false;
-
-    for ( int i = 0; i < NUM_STAT_SIMULATION_BUFFERS - 1; i++ )
-    {
-        if ( ( !bDecisionFound ) && ( ErrorRateStatistic[i].GetAverage() <= dErrorRateBound ) )
-        {
-            iCurDecision   = viBufSizesForSim[i];
-            bDecisionFound = true;
-        }
-    }
-
-    if ( !bDecisionFound )
-    {
-        // in case no buffer is below bound, use largest buffer size
-        iCurDecision = viBufSizesForSim[NUM_STAT_SIMULATION_BUFFERS - 1];
-    }
-
-    // Get maximum upper error rate decision -----------------------------------
-    // Use a specified error bound to identify the maximum upper error rate
-    // to identify if we have a too low buffer setting which gives a very
-    // bad performance constantly. Start with the smallest buffer and
-    // test for the error rate until the rate is below the bound.
-    bDecisionFound = false;
-
-    for ( int i = 0; i < NUM_STAT_SIMULATION_BUFFERS - 1; i++ )
-    {
-        if ( ( !bDecisionFound ) && ( ErrorRateStatistic[i].GetAverage() <= dUpMaxErrorBound ) )
-        {
-            iCurMaxUpDecision = viBufSizesForSim[i];
-            bDecisionFound    = true;
-        }
-    }
-
-    if ( !bDecisionFound )
-    {
-        // in case no buffer is below bound, use largest buffer size
-        iCurMaxUpDecision = viBufSizesForSim[NUM_STAT_SIMULATION_BUFFERS - 1];
-
-        // This is a worst case, something very bad had happened. Hopefully
-        // this was just temporary so that we initiate a new initialization
-        // phase to get quickly back to normal buffer sizes (hopefully).
-        ResetInitCounter();
-    }
+    double errorRates[NUM_STAT_SIMULATION_BUFFERS];
+    for ( int i = 0; i < NUM_STAT_SIMULATION_BUFFERS; ++i )
+        errorRates[i] = ErrorRateStatistic[i].GetAverage();
+    const auto decision = NetReceive::SelectAutoSize ( errorRates, viBufSizesForSim,
+                                                       NUM_STAT_SIMULATION_BUFFERS, dErrorRateBound, dUpMaxErrorBound );
+    const int iCurDecision      = decision.normal;
+    const int iCurMaxUpDecision = decision.emergency;
+    if ( decision.noneBelowEmergency ) ResetInitCounter();
 
     // Post calculation (filtering) --------------------------------------------
     // Define different weights for up and down direction. Up direction
