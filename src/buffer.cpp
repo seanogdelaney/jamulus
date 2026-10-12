@@ -200,14 +200,16 @@ bool CNetBuf::Put ( const CVector<uint8_t>& vecbyData, int iInSize )
                 veciBlockValid[iBlockGetPos] = 0;
                 --iSequenceNumberAtGetPos;
                 --iBlockGetPos;
-                if ( iBlockGetPos < 0 ) iBlockGetPos += iNumBlocksMemory;
+                if ( iBlockGetPos < 0 )
+                    iBlockGetPos += iNumBlocksMemory;
             }
             for ( int i = 0; i < placement.forward; ++i )
             {
                 veciBlockValid[iBlockGetPos] = 0;
                 ++iSequenceNumberAtGetPos;
                 ++iBlockGetPos;
-                if ( iBlockGetPos >= iNumBlocksMemory ) iBlockGetPos -= iNumBlocksMemory;
+                if ( iBlockGetPos >= iNumBlocksMemory )
+                    iBlockGetPos -= iNumBlocksMemory;
             }
             iBlockPutPos = ( iBlockGetPos + placement.offset ) % iNumBlocksMemory;
 
@@ -515,11 +517,11 @@ void CNetBufWithStats::UpdateAutoSetting()
     double errorRates[NUM_STAT_SIMULATION_BUFFERS];
     for ( int i = 0; i < NUM_STAT_SIMULATION_BUFFERS; ++i )
         errorRates[i] = ErrorRateStatistic[i].GetAverage();
-    const auto decision = NetReceive::SelectAutoSize ( errorRates, viBufSizesForSim,
-                                                       NUM_STAT_SIMULATION_BUFFERS, dErrorRateBound, dUpMaxErrorBound );
-    const int iCurDecision      = decision.normal;
-    const int iCurMaxUpDecision = decision.emergency;
-    if ( decision.noneBelowEmergency ) ResetInitCounter();
+    const auto decision = NetReceive::SelectAutoSize ( errorRates, viBufSizesForSim, NUM_STAT_SIMULATION_BUFFERS, dErrorRateBound, dUpMaxErrorBound );
+    const int  iCurDecision      = decision.normal;
+    const int  iCurMaxUpDecision = decision.emergency;
+    if ( decision.noneBelowEmergency )
+        ResetInitCounter();
 
     // Post calculation (filtering) --------------------------------------------
     // Define different weights for up and down direction. Up direction
@@ -566,8 +568,13 @@ void CNetBufWithStats::UpdateAutoSetting()
     // apply non-linear IIR filter
     // Exactly the stock MathUtils smoothing/hysteresis rules, now also used
     // by the shared logical-frame receive policy.
-    NetReceive::UpdateSmoothedSize ( dCurIIRFilterResult, iCurAutoBufferSizeSetting, iCurDecision,
-                                     dWeightUp, dWeightDown, dHysteresisValue, iCurDecidedResult );
+    NetReceive::UpdateSmoothedSize ( dCurIIRFilterResult,
+                                     iCurAutoBufferSizeSetting,
+                                     iCurDecision,
+                                     dWeightUp,
+                                     dWeightDown,
+                                     dHysteresisValue,
+                                     iCurDecidedResult );
 
     //### TEST: BEGIN ###//
     // TEST store important detection parameters in file for debugging

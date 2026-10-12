@@ -90,6 +90,7 @@ public:
                   maxSessions,
                   QString(),
                   QStringLiteral ( "127.0.0.1" ),
+                  QString(),
                   0,
                   0,
                   QString(),
@@ -219,23 +220,30 @@ public:
 
     void ProcessPostedServerEvents() { QCoreApplication::sendPostedEvents ( this, QEvent::User + 11 ); }
 
-    int                         LegacySourceID ( const int sessionID ) const { return GetLegacySourceID ( sessionID ); }
-    int                         SessionCount() const { return iCurNumSessions; }
-    int                         SourceCount() const { return iCurNumSources; }
-    int                         VisibleSourceCount() { return CreateChannelList().Size(); }
-    int                         VisibleSourceID ( const int index ) { return CreateChannelList()[index].iChanID; }
-    CServerSessionState::EState SessionState ( const int sessionID ) const { return vecSessionState[sessionID].eState; }
-    uint16_t                    Generation ( const int sessionID ) const { return vecSessionState[sessionID].iGeneration; }
-    int                         PreparedSourceCount ( const int sessionID ) const { return vecSessionState[sessionID].iNumSources; }
-    int   PreparedSourceID ( const int sessionID, const int index ) const { return vecSessionState[sessionID].vecSourceIDs[index]; }
-    bool  PromotionQueued ( const int sessionID ) const { return vecSessionState[sessionID].bPromotionQueued; }
-    bool  SourceIsActive ( const int sourceID ) const { return vecSources[sourceID].IsActive(); }
-    bool  SourceIsReserved ( const int sourceID ) const { return vecSources[sourceID].IsReserved(); }
-    int   SourceParentSession ( const int sourceID ) const { return vecSources[sourceID].ParentSessionID(); }
-    int   SourceFaderID ( const int sourceID ) const { return vecSources[sourceID].GetConfig().iFaderID; }
-    void  AcknowledgePolyInAccept ( const int sessionID ) { OnPolyInReliableMessageAcknowledged ( sessionID, PROTMESSID_POLY_IN_ACCEPT ); }
-    bool  PreparedExpiryIsArmed ( const int sessionID ) const { return vecSessionState[sessionID].iPreparedExpirySamplesRemaining > 0; }
-    void  ArmPreparedForExpiry ( const int sessionID ) { vecSessionState[sessionID].iPreparedExpirySamplesRemaining = iServerFrameSizeSamples; }
+    int                             LegacySourceID ( const int sessionID ) const { return GetLegacySourceID ( sessionID ); }
+    int                             SessionCount() const { return iCurNumSessions; }
+    int                             SourceCount() const { return iCurNumSources; }
+    int                             VisibleSourceCount() { return CreateChannelList().Size(); }
+    int                             VisibleSourceID ( const int index ) { return CreateChannelList()[index].iChanID; }
+    PolyIn::SessionSourceMap::State SessionState ( const int sessionID ) const { return vecSessionState[sessionID].Sources.GetState(); }
+    uint16_t                        Generation ( const int sessionID ) const { return vecSessionState[sessionID].Sources.Generation(); }
+    int  PreparedSourceCount ( const int sessionID ) const { return static_cast<int> ( vecSessionState[sessionID].Sources.SourceCount() ); }
+    int  PreparedSourceID ( const int sessionID, const int index ) const { return vecSessionState[sessionID].Sources.SourceAt ( index ); }
+    bool PromotionQueued ( const int sessionID ) const { return vecSessionState[sessionID].Sources.PromotionQueued(); }
+    bool SourceIsActive ( const int sourceID ) const { return vecSources[sourceID].IsActive(); }
+    bool SourceIsReserved ( const int sourceID ) const { return vecSources[sourceID].IsReserved(); }
+    int  SourceParentSession ( const int sourceID ) const { return vecSources[sourceID].ParentSessionID(); }
+    int  SourceFaderID ( const int sourceID ) const { return vecSources[sourceID].GetConfig().iFaderID; }
+    void AcknowledgePolyInAccept ( const int sessionID ) { OnPolyInReliableMessageAcknowledged ( sessionID, PROTMESSID_POLY_IN_ACCEPT ); }
+    bool PreparedExpiryIsArmed ( const int sessionID ) const
+    {
+        PolyIn::SessionSourceMap sources = vecSessionState[sessionID].Sources;
+        return sources.AdvancePreparedAge ( 5U * SYSTEM_SAMPLE_RATE_HZ, 5U * SYSTEM_SAMPLE_RATE_HZ );
+    }
+    void ArmPreparedForExpiry ( const int sessionID )
+    {
+        vecSessionState[sessionID].Sources.AdvancePreparedAge ( 5U * SYSTEM_SAMPLE_RATE_HZ - iServerFrameSizeSamples, 5U * SYSTEM_SAMPLE_RATE_HZ );
+    }
     void  FreeTestSession ( const int sessionID ) { FreeChannel ( sessionID ); }
     void  ArmSessionForExpiry ( const int sessionID ) { vecSessions[sessionID].Disconnect(); }
     int   DecodedChannels() const { return vecNumAudioChannels[0]; }
@@ -386,12 +394,12 @@ private slots:
         server.ConfigurePolyInCapableSession ( sessionID, 1 );
         QVERIFY ( !server.PreparePolyIn ( sessionID, config, rejectReason ) );
         QCOMPARE ( static_cast<int> ( rejectReason ), static_cast<int> ( PolyInProtocol::kRejectStereoReturnRequired ) );
-        QCOMPARE ( static_cast<int> ( server.SessionState ( sessionID ) ), static_cast<int> ( CServerSessionState::ST_LEGACY ) );
+        QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Legacy );
         QCOMPARE ( server.SourceCount(), 1 );
 
         server.ConfigurePolyInCapableSession ( sessionID, 2 );
         QVERIFY ( server.PreparePolyIn ( sessionID, config, rejectReason ) );
-        QCOMPARE ( static_cast<int> ( server.SessionState ( sessionID ) ), static_cast<int> ( CServerSessionState::ST_PREPARED ) );
+        QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Prepared );
     }
 
     void polyInReservationAndPromotionAreAtomic()
@@ -432,7 +440,7 @@ private slots:
         QVERIFY ( server.PutPolyInFrame ( sessionID, staleGeneration, 90, config ) );
         QVERIFY ( !server.PromotionQueued ( sessionID ) );
         server.ProcessPostedServerEvents();
-        QCOMPARE ( static_cast<int> ( server.SessionState ( sessionID ) ), static_cast<int> ( CServerSessionState::ST_PREPARED ) );
+        QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Prepared );
         QCOMPARE ( server.VisibleSourceCount(), 1 );
 
         QVERIFY ( server.PutPolyInFrame ( sessionID, generation, 91, config ) );
@@ -440,7 +448,7 @@ private slots:
         QCOMPARE ( server.VisibleSourceCount(), 1 );
         server.ProcessPostedServerEvents();
 
-        QCOMPARE ( static_cast<int> ( server.SessionState ( sessionID ) ), static_cast<int> ( CServerSessionState::ST_ACTIVE ) );
+        QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Active );
         QCOMPARE ( server.SourceCount(), 2 );
         QCOMPARE ( server.VisibleSourceCount(), 2 );
         for ( int index = 0; index < 2; ++index )
@@ -470,7 +478,7 @@ private slots:
         server.ArmPreparedForExpiry ( sessionID );
         server.OnTimer();
 
-        QCOMPARE ( static_cast<int> ( server.SessionState ( sessionID ) ), static_cast<int> ( CServerSessionState::ST_LEGACY ) );
+        QCOMPARE ( server.SessionState ( sessionID ), PolyIn::SessionSourceMap::State::Legacy );
         QCOMPARE ( server.Generation ( sessionID ), static_cast<uint16_t> ( 0 ) );
         QCOMPARE ( server.SourceCount(), 1 );
         QCOMPARE ( server.VisibleSourceCount(), 1 );
@@ -514,7 +522,7 @@ private slots:
         rejectReason                              = 0;
         QVERIFY ( !sourceLimited.PreparePolyIn ( ownerSession, config, rejectReason ) );
         QCOMPARE ( static_cast<int> ( rejectReason ), static_cast<int> ( PolyInProtocol::kRejectCapacity ) );
-        QCOMPARE ( static_cast<int> ( sourceLimited.SessionState ( ownerSession ) ), static_cast<int> ( CServerSessionState::ST_LEGACY ) );
+        QCOMPARE ( sourceLimited.SessionState ( ownerSession ), PolyIn::SessionSourceMap::State::Legacy );
         QCOMPARE ( sourceLimited.SessionCount(), 2 );
         QCOMPARE ( sourceLimited.SourceCount(), 2 );
         QCOMPARE ( sourceLimited.VisibleSourceCount(), 2 );
@@ -533,7 +541,7 @@ private slots:
         const uint16_t firstGeneration = server.Generation ( firstSession );
         QVERIFY ( server.PutPolyInFrame ( firstSession, firstGeneration, 200, config ) );
         server.ProcessPostedServerEvents();
-        QCOMPARE ( static_cast<int> ( server.SessionState ( firstSession ) ), static_cast<int> ( CServerSessionState::ST_ACTIVE ) );
+        QCOMPARE ( server.SessionState ( firstSession ), PolyIn::SessionSourceMap::State::Active );
         QCOMPARE ( server.SourceCount(), 2 );
 
         server.FreeTestSession ( firstSession );
@@ -552,12 +560,12 @@ private slots:
         QVERIFY ( server.PutPolyInFrame ( secondSession, firstGeneration, 201, config ) );
         QVERIFY ( !server.PromotionQueued ( secondSession ) );
         server.ProcessPostedServerEvents();
-        QCOMPARE ( static_cast<int> ( server.SessionState ( secondSession ) ), static_cast<int> ( CServerSessionState::ST_PREPARED ) );
+        QCOMPARE ( server.SessionState ( secondSession ), PolyIn::SessionSourceMap::State::Prepared );
         QCOMPARE ( server.VisibleSourceCount(), 1 );
 
         QVERIFY ( server.PutPolyInFrame ( secondSession, secondGeneration, 202, config ) );
         server.ProcessPostedServerEvents();
-        QCOMPARE ( static_cast<int> ( server.SessionState ( secondSession ) ), static_cast<int> ( CServerSessionState::ST_ACTIVE ) );
+        QCOMPARE ( server.SessionState ( secondSession ), PolyIn::SessionSourceMap::State::Active );
         QCOMPARE ( server.SourceCount(), 2 );
     }
 

@@ -637,8 +637,9 @@ void CChannel::ResetForServerReuse()
     SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, false );
     ConvBuf.Init ( iNetwFrameSize * iNetwFrameSizeFact, false );
 
-    ResetInfo();
-    InetAddr = CHostAddress();
+    bIsIdentified = false;
+    ChannelInfo   = CChannelCoreInfo();
+    InetAddr      = CHostAddress();
     SignalLevelMeter.Reset();
 }
 

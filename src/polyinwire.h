@@ -240,10 +240,10 @@ private:
     // are reused here; outcomes are derived from fragment deadlines rather
     // than copying payload into ten simulated buffers.
     std::array<uint16_t, kMaxAutoIngressFrames + 1> autoLateScores{};
-    int autoTarget = 6;
-    int autoWarmupTicks = 0;
-    double autoSmoothed = 6.0;
-    void UpdateAutoPolicy();
+    int                                             autoTarget      = 6;
+    int                                             autoWarmupTicks = 0;
+    double                                          autoSmoothed    = 6.0;
+    void                                            UpdateAutoPolicy();
 };
 
 // The client intentionally advances only after each prerequisite has been

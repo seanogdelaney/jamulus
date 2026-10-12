@@ -1883,7 +1883,8 @@ void CClient::Start()
     if ( eAudioChannelConf == CC_POLY_IN )
     {
         iPolyInRequestNonce = QRandomGenerator::global()->generate();
-        if ( iPolyInRequestNonce == 0 ) iPolyInRequestNonce = 1;
+        if ( iPolyInRequestNonce == 0 )
+            iPolyInRequestNonce = 1;
     }
     // Poly-in source descriptors, codec choice and routing are a
     // connection-time contract. Lock them before audio/socket startup, not

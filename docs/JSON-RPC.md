@@ -729,7 +729,7 @@ Parameters:
 | --- | --- | --- |
 | params.id | number | The channel ID assigned to the client. |
 | params.address | string | The client's address. |
-| params.totalChannels | number | Number of total channels connected to the server. |
+| params.totalChannels | number | Number of connected user sessions. |
 
 
 ### jamulusserver/clientDisconnected

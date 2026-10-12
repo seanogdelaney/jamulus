@@ -384,9 +384,11 @@ inline void CServer::connectChannelSignalsToServerSlots()
     // source map is negotiated once, while protocol, timeout and return audio
     // remain owned by this single CChannel.
     QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReqPolyInCaps, this, [this, iCurChanID]() { OnReqPolyInCaps ( iCurChanID ); } );
-    QObject::connect ( &vecSessions[iCurChanID], &CChannel::PolyInConfigReceived, this, [this, iCurChanID] ( CVector<CPolyInSourceConfig> config, uint32_t requestNonce ) {
-        OnPolyInConfig ( iCurChanID, config, requestNonce );
-    } );
+    QObject::connect (
+        &vecSessions[iCurChanID],
+        &CChannel::PolyInConfigReceived,
+        this,
+        [this, iCurChanID] ( CVector<CPolyInSourceConfig> config, uint32_t requestNonce ) { OnPolyInConfig ( iCurChanID, config, requestNonce ); } );
     QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReliableMessageAcknowledged, this, [this, iCurChanID] ( int logicalMessageID ) {
         OnPolyInReliableMessageAcknowledged ( iCurChanID, logicalMessageID );
     } );
@@ -957,11 +959,15 @@ void CServer::DecodeLegacySource ( const int sourceIndex, const int sourceID, co
         const uint8_t*     coded  = status == GS_BUFFER_OK ? &vecvecbyCodedData[sourceIndex][0] : nullptr;
         const int          offset = block * SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex];
 
-        const int decodedSamples = AudioFrameDecode::Decode ( decoder, coded, codedBytes,
-                    &vecvecsData[sourceIndex][offset], frameSamples, vecNumAudioChannels[sourceIndex], raw );
+        const int decodedSamples = AudioFrameDecode::Decode ( decoder,
+                                                              coded,
+                                                              codedBytes,
+                                                              &vecvecsData[sourceIndex][offset],
+                                                              frameSamples,
+                                                              vecNumAudioChannels[sourceIndex],
+                                                              raw );
         if ( !raw && decodedSamples != frameSamples )
-            std::memset ( &vecvecsData[sourceIndex][offset], 0,
-                          frameSamples * vecNumAudioChannels[sourceIndex] * sizeof ( int16_t ) );
+            std::memset ( &vecvecsData[sourceIndex][offset], 0, frameSamples * vecNumAudioChannels[sourceIndex] * sizeof ( int16_t ) );
     }
 
     if ( useDoubleConversion )
@@ -1015,12 +1021,16 @@ void CServer::DecodePolyInSource ( const int sourceIndex, const int sourceID )
             ++receivedBlocks;
         }
 
-        const int offset = block * SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex];
-        const int decodedSamples = AudioFrameDecode::Decode ( decoder, coded, config.iPayloadBytes,
-                    &vecvecsData[sourceIndex][offset], frameSamples, vecNumAudioChannels[sourceIndex], config.bRaw );
+        const int offset         = block * SYSTEM_FRAME_SIZE_SAMPLES * vecNumAudioChannels[sourceIndex];
+        const int decodedSamples = AudioFrameDecode::Decode ( decoder,
+                                                              coded,
+                                                              config.iPayloadBytes,
+                                                              &vecvecsData[sourceIndex][offset],
+                                                              frameSamples,
+                                                              vecNumAudioChannels[sourceIndex],
+                                                              config.bRaw );
         if ( !config.bRaw && decodedSamples != frameSamples )
-            std::memset ( &vecvecsData[sourceIndex][offset], 0,
-                          frameSamples * vecNumAudioChannels[sourceIndex] * sizeof ( int16_t ) );
+            std::memset ( &vecvecsData[sourceIndex][offset], 0, frameSamples * vecNumAudioChannels[sourceIndex] * sizeof ( int16_t ) );
     }
 
     if ( useDoubleConversion )
@@ -1771,8 +1781,7 @@ void CServer::OnReqPolyInCaps ( const int sessionID )
 
 void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config, const uint32_t requestNonce )
 {
-    if ( requestNonce == 0 || !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ||
-         !PolyInProtocol::ValidateSourceConfig ( config ) )
+    if ( requestNonce == 0 || !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) || !PolyInProtocol::ValidateSourceConfig ( config ) )
     {
         if ( MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
             vecSessions[sessionID].CreatePolyInRejectMes ( PolyInProtocol::kRejectMalformed );
@@ -1784,7 +1793,7 @@ void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig>
     // lost: retransmissions carrying the same nonce reuse the old map, while
     // another nonce can never be interpreted as an old audio fragment.
     std::lock_guard<std::mutex> ingressGuard ( Mutex );
-    CServerSessionState& state = vecSessionState[sessionID];
+    CServerSessionState&        state = vecSessionState[sessionID];
     if ( state.Sources.IsActive() || state.Sources.IsPrepared() )
     {
         if ( state.iRequestNonce != requestNonce )
@@ -1806,15 +1815,17 @@ void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig>
                 return;
             }
             CPolyInAcceptMap repeat;
-            repeat.iGeneration = state.Sources.Generation();
+            repeat.iGeneration   = state.Sources.Generation();
             repeat.iRequestNonce = requestNonce;
             repeat.vecSources.Init ( static_cast<int> ( state.Sources.SourceCount() ) );
             for ( size_t index = 0; index < state.Sources.SourceCount(); ++index )
             {
                 const CPolyInSourceConfig& current = vecSources[state.Sources.SourceAt ( index )].GetConfig();
-                if ( current.iKey != config[static_cast<int> ( index )].iKey || current.iNumChannels != config[static_cast<int> ( index )].iNumChannels ||
+                if ( current.iKey != config[static_cast<int> ( index )].iKey ||
+                     current.iNumChannels != config[static_cast<int> ( index )].iNumChannels ||
                      current.eCodec != config[static_cast<int> ( index )].eCodec || current.bRaw != config[static_cast<int> ( index )].bRaw ||
-                     current.iPayloadBytes != config[static_cast<int> ( index )].iPayloadBytes || current.strTag != config[static_cast<int> ( index )].strTag )
+                     current.iPayloadBytes != config[static_cast<int> ( index )].iPayloadBytes ||
+                     current.strTag != config[static_cast<int> ( index )].strTag )
                 {
                     vecSessions[sessionID].CreatePolyInRejectMes ( PolyInProtocol::kRejectInvalidSessionState );
                     return;
@@ -1834,7 +1845,7 @@ void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig>
     }
     state.iRequestNonce = requestNonce;
     CPolyInAcceptMap accept;
-    accept.iGeneration = state.Sources.Generation();
+    accept.iGeneration   = state.Sources.Generation();
     accept.iRequestNonce = requestNonce;
     accept.vecSources.Init ( static_cast<int> ( state.Sources.SourceCount() ) );
     for ( size_t index = 0; index < state.Sources.SourceCount(); ++index )

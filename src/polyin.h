@@ -32,7 +32,7 @@ struct CPolyInSourceConfig
 // visible together only after the server promotes the map on first valid audio.
 struct CPolyInAcceptMap
 {
-    uint16_t                     iGeneration = 0;
+    uint16_t                     iGeneration   = 0;
     uint32_t                     iRequestNonce = 0;
     CVector<CPolyInSourceConfig> vecSources;
 };

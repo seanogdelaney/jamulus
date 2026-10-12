@@ -349,8 +349,8 @@ protected:
     bool EvaluateCLReqServerFeaturesMes ( const CHostAddress& InetAddr );
     bool EvaluateCLReqWelcomeMessageMes ( const CHostAddress& InetAddr );
 
-    int iOldRecID;
-    int iOldRecCnt;
+    int              iOldRecID;
+    int              iOldRecCnt;
     CVector<uint8_t> vecbyOldRecBody;
 
     // these two objects must be sequred by a mutex

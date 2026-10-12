@@ -195,14 +195,14 @@ public:
         Sources.Reset();
         Playout.Reset();
         Cadence.Reset();
-        bIngressAuto = false;
+        bIngressAuto  = false;
         iRequestNonce = 0;
     }
 
     PolyIn::SessionSourceMap Sources;
     PolyIn::SessionPlayout   Playout;
     PolyIn::FrameCadence     Cadence;
-    bool                     bIngressAuto = false;
+    bool                     bIngressAuto  = false;
     uint32_t                 iRequestNonce = 0;
 };
 

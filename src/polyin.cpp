@@ -157,8 +157,9 @@ bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CPolyInSourceConfig>& co
     }
     const bool bRaw  = ( in[1] & 1 ) != 0;
     const int  count = in[2];
-    requestNonce = ( uint32_t ( in[3] ) << 24 ) | ( uint32_t ( in[4] ) << 16 ) | ( uint32_t ( in[5] ) << 8 ) | uint32_t ( in[6] );
-    if ( requestNonce == 0 ) return false;
+    requestNonce     = ( uint32_t ( in[3] ) << 24 ) | ( uint32_t ( in[4] ) << 16 ) | ( uint32_t ( in[5] ) << 8 ) | uint32_t ( in[6] );
+    if ( requestNonce == 0 )
+        return false;
     config.Init ( count );
     int position = 7;
     for ( int i = 0; i < count; ++i )
@@ -203,7 +204,8 @@ bool EncodeAccept ( const CPolyInAcceptMap& accept, CVector<uint8_t>& out )
     {
         return false;
     }
-    if ( accept.iRequestNonce == 0 ) return false;
+    if ( accept.iRequestNonce == 0 )
+        return false;
     out.Init ( 8 + 3 * accept.vecSources.Size() );
     int position    = 0;
     out[position++] = kProtocolVersion;
@@ -228,11 +230,11 @@ bool DecodeAccept ( const CVector<uint8_t>& in, CPolyInAcceptMap& accept )
     accept = CPolyInAcceptMap();
     if ( in.Size() < 8 || in[0] != kProtocolVersion || in[3] == 0 || in.Size() != 8 + 3 * in[3] )
         return false;
-    int position       = 1;
-    accept.iGeneration = Get16 ( in, position );
-    const int count    = in[position++];
-    accept.iRequestNonce = ( uint32_t ( in[position] ) << 24 ) | ( uint32_t ( in[position+1] ) << 16 ) |
-                           ( uint32_t ( in[position+2] ) << 8 ) | uint32_t ( in[position+3] );
+    int position         = 1;
+    accept.iGeneration   = Get16 ( in, position );
+    const int count      = in[position++];
+    accept.iRequestNonce = ( uint32_t ( in[position] ) << 24 ) | ( uint32_t ( in[position + 1] ) << 16 ) | ( uint32_t ( in[position + 2] ) << 8 ) |
+                           uint32_t ( in[position + 3] );
     position += 4;
     if ( accept.iRequestNonce == 0 || accept.iGeneration == 0 || count > static_cast<int> ( PolyIn::kMaxSourceRows ) )
         return false;

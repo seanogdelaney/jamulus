@@ -7,11 +7,13 @@
 #include "../libs/opus/include/opus_defines.h"
 namespace OpusProfile
 {
-inline void Configure (OpusCustomEncoder* encoder, bool frame64)
+inline void Configure ( OpusCustomEncoder* encoder, bool frame64 )
 {
-    opus_custom_encoder_ctl(encoder, OPUS_SET_VBR(0));
-    if (frame64) opus_custom_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(35));
-    opus_custom_encoder_ctl(encoder, OPUS_SET_APPLICATION(OPUS_APPLICATION_RESTRICTED_LOWDELAY));
-    if (!frame64) opus_custom_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(1));
+    opus_custom_encoder_ctl ( encoder, OPUS_SET_VBR ( 0 ) );
+    if ( frame64 )
+        opus_custom_encoder_ctl ( encoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
+    opus_custom_encoder_ctl ( encoder, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
+    if ( !frame64 )
+        opus_custom_encoder_ctl ( encoder, OPUS_SET_COMPLEXITY ( 1 ) );
 }
-}
+} // namespace OpusProfile

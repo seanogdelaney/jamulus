@@ -186,7 +186,10 @@ public:
     void CreateRawAudioSupportedMes() { Protocol.CreateRawAudioSupportedMes(); }
     void CreateReqPolyInCapsMes() { Protocol.CreateReqPolyInCapsMes(); }
     void CreatePolyInCapsMes() { Protocol.CreatePolyInCapsMes(); }
-    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config ) { Protocol.CreatePolyInConfigMes ( config ); }
+    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config, uint32_t requestNonce )
+    {
+        Protocol.CreatePolyInConfigMes ( config, requestNonce );
+    }
     void CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept ) { Protocol.CreatePolyInAcceptMes ( accept ); }
     void CreatePolyInRejectMes ( uint8_t reason ) { Protocol.CreatePolyInRejectMes ( reason ); }
     void CreatePolyInActiveMes ( uint16_t generation ) { Protocol.CreatePolyInActiveMes ( generation ); }
@@ -319,7 +322,7 @@ signals:
     void SplitMessageSupported();
     void ReqPolyInCaps();
     void PolyInCapsReceived();
-    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config );
+    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config, uint32_t requestNonce );
     void PolyInAcceptReceived ( CPolyInAcceptMap accept );
     void PolyInRejected ( uint8_t reason );
     void PolyInActive ( int generation );

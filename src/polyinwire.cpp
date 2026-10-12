@@ -305,9 +305,9 @@ void SessionIngress::Reset()
     metadata.clear();
     payloadStorage.clear();
     autoLateScores.fill ( 0 );
-    autoTarget = 6;
+    autoTarget      = 6;
     autoWarmupTicks = 0;
-    autoSmoothed = 6.0;
+    autoSmoothed    = 6.0;
 }
 
 int SessionIngress::FindDescriptor ( const uint8_t key ) const
@@ -455,17 +455,21 @@ void SessionIngress::UpdateAutoPolicy()
     // Stock CNetBufWithStats' ten candidate sizes, error thresholds and
     // fast/normal filtering. Only the underlying deadline-event measurement
     // differs because there may be many records in one logical frame.
-    constexpr int candidates[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
-    double errorRates[10];
+    constexpr int candidates[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+    double        errorRates[10];
     for ( int i = 0; i < 10; ++i )
         errorRates[i] = static_cast<double> ( autoLateScores[candidates[i]] ) / kAutoScoreScale;
     const auto decision = NetReceive::SelectAutoSize ( errorRates, candidates, 10, 0.00025, 0.005 );
-    const bool fast = autoWarmupTicks < 5625 || autoTarget < decision.emergency || decision.noneBelowEmergency;
-    if ( autoWarmupTicks < 5625 ) ++autoWarmupTicks;
-    NetReceive::UpdateSmoothedSize ( autoSmoothed, autoTarget, decision.normal,
-                                    fast ? 0.9997499687422 : 0.9999975,
-                                    fast ? 0.999499875 : 0.99994999875,
-                                    0.1, 6 );
+    const bool fast     = autoWarmupTicks < 5625 || autoTarget < decision.emergency || decision.noneBelowEmergency;
+    if ( autoWarmupTicks < 5625 )
+        ++autoWarmupTicks;
+    NetReceive::UpdateSmoothedSize ( autoSmoothed,
+                                     autoTarget,
+                                     decision.normal,
+                                     fast ? 0.9997499687422 : 0.9999975,
+                                     fast ? 0.999499875 : 0.99994999875,
+                                     0.1,
+                                     6 );
     autoTarget = std::max ( kMinAutoIngressFrames, std::min ( 11, autoTarget ) );
 }
 

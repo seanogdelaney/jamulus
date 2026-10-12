@@ -8,12 +8,14 @@
 #include <cstring>
 namespace AudioFrameDecode
 {
-inline int Decode(OpusCustomDecoder* decoder, const unsigned char* data,
-                  int codedBytes, int16_t* pcm, int samples, int channels, bool raw)
+inline int Decode ( OpusCustomDecoder* decoder, const unsigned char* data, int codedBytes, int16_t* pcm, int samples, int channels, bool raw )
 {
-    if (!raw) return decoder ? opus_custom_decode(decoder, data, codedBytes, pcm, samples) : 0;
-    if (data) std::memcpy(pcm, data, codedBytes);
-    else std::memset(pcm, 0, codedBytes);
+    if ( !raw )
+        return decoder ? opus_custom_decode ( decoder, data, codedBytes, pcm, samples ) : 0;
+    if ( data )
+        std::memcpy ( pcm, data, codedBytes );
+    else
+        std::memset ( pcm, 0, codedBytes );
     return samples * channels;
 }
-}
+} // namespace AudioFrameDecode

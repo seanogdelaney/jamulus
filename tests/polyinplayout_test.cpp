@@ -118,7 +118,7 @@ void TestReorderingAndBurstLossRemainSynchronized()
     harness.Put ( 101 );
     harness.Put ( 100 );
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 100 );
     // 102/103 are absent; once 104/105 arrive, the receive window moves to
     // 104 rather than playing out a long queue of already obsolete frames.
@@ -135,9 +135,10 @@ void TestTargetBoundedBurstLag()
     harness.Put ( 100 );
     harness.Put ( 101 );
     std::array<RecordView, kMaxSourceRows> records{};
-    uint32_t sequence = 0;
+    uint32_t                               sequence = 0;
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 100 );
-    for ( uint32_t seq = 102; seq <= 110; ++seq ) harness.Put ( seq );
+    for ( uint32_t seq = 102; seq <= 110; ++seq )
+        harness.Put ( seq );
     assert ( harness.Get ( sequence, records ) == EPlayoutResult::FrameAvailable && sequence == 109 );
     for ( uint32_t seq = 111; seq < 170; ++seq )
     {

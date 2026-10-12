@@ -133,11 +133,12 @@ EPlayoutResult SessionPlayout::GetNext ( RecordView* const records, const size_t
     const uint32_t requested = nextSequence;
     if ( sequence != nullptr )
         *sequence = requested;
-    const bool haveFrame = ingress.Read ( requested, records, capacity );
-    bool completeFrame = haveFrame;
+    const bool haveFrame     = ingress.Read ( requested, records, capacity );
+    bool       completeFrame = haveFrame;
     if ( completeFrame )
         for ( size_t i = 0; i < ingress.DescriptorCount(); ++i )
-            if ( records[i].data == nullptr ) completeFrame = false;
+            if ( records[i].data == nullptr )
+                completeFrame = false;
     ingress.ObservePlayoutResult ( completeFrame, targetFrames );
 
     if ( !haveFrame && ingress.HasHighestSequence() && IsConsumerUnderrun ( requested, ingress.HighestSequence() ) )

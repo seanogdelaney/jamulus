@@ -510,9 +510,9 @@ void CProtocol::Reset()
     QMutexLocker locker ( &Mutex );
 
     // prepare internal variables for initial protocol transfer
-    iCounter               = 0;
-    iOldRecID              = PROTMESSID_ILLEGAL;
-    iOldRecCnt             = 0;
+    iCounter   = 0;
+    iOldRecID  = PROTMESSID_ILLEGAL;
+    iOldRecCnt = 0;
     vecbyOldRecBody.clear();
     iSplitMessageCnt       = 0;
     iSplitMessageDataIndex = 0;
@@ -698,8 +698,8 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
     // did not make it to the receiver, he will resend his message. We check
     // here if the message is the same as the old one, and if this is the
     // case, just resend our old answer again
-    const bool identicalPayload = vecbyOldRecBody.Size() == vecbyMesBodyData.Size() &&
-                                  std::equal ( vecbyOldRecBody.begin(), vecbyOldRecBody.end(), vecbyMesBodyData.begin() );
+    const bool identicalPayload =
+        vecbyOldRecBody.Size() == vecbyMesBodyData.Size() && std::equal ( vecbyOldRecBody.begin(), vecbyOldRecBody.end(), vecbyMesBodyData.begin() );
     if ( ( iOldRecID == iRecID ) && ( iOldRecCnt == iRecCounter ) && identicalPayload )
     {
         // acknowledgments are not acknowledged
@@ -939,8 +939,8 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
 
             // save current message ID and counter to find out if message
             // was resent
-            iOldRecID  = iRecID;
-            iOldRecCnt = iRecCounter;
+            iOldRecID       = iRecID;
+            iOldRecCnt      = iRecCounter;
             vecbyOldRecBody = vecbyMesBodyData;
         }
     }
@@ -1679,7 +1679,7 @@ void CProtocol::CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& conf
 bool CProtocol::EvaluatePolyInConfigMes ( const CVector<uint8_t>& vecData )
 {
     CVector<CPolyInSourceConfig> config;
-    uint32_t requestNonce = 0;
+    uint32_t                     requestNonce = 0;
     if ( !PolyInProtocol::DecodeConfig ( vecData, config, requestNonce ) )
         return true; // return error code
     emit PolyInConfigReceived ( config, requestNonce );
