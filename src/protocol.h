@@ -141,6 +141,7 @@ public:
     CProtocol();
 
     void Reset();
+    void ResetForPolyInReplacement();
     void SetSplitMessageSupported ( const bool bIn ) { bSplitMessageSupported = bIn; }
     bool IsSplitMessageSupported() const { return bSplitMessageSupported; }
 
@@ -162,7 +163,7 @@ public:
     void CreateRawAudioSupportedMes();
     void CreateReqPolyInCapsMes();
     void CreatePolyInCapsMes();
-    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config );
+    void CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config, uint32_t requestNonce );
     void CreatePolyInAcceptMes ( const CPolyInAcceptMap& accept );
     void CreatePolyInRejectMes ( uint8_t reason );
     void CreatePolyInActiveMes ( uint16_t generation );
@@ -350,6 +351,7 @@ protected:
 
     int iOldRecID;
     int iOldRecCnt;
+    CVector<uint8_t> vecbyOldRecBody;
 
     // these two objects must be sequred by a mutex
     uint8_t                 iCounter;
@@ -392,7 +394,7 @@ signals:
     void RawAudioSupported();
     void ReqPolyInCaps();
     void PolyInCapsReceived();
-    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config );
+    void PolyInConfigReceived ( CVector<CPolyInSourceConfig> config, uint32_t requestNonce );
     void PolyInAcceptReceived ( CPolyInAcceptMap accept );
     void PolyInRejected ( uint8_t reason );
     void PolyInActive ( int generation );

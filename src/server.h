@@ -196,12 +196,14 @@ public:
         Playout.Reset();
         Cadence.Reset();
         bIngressAuto = false;
+        iRequestNonce = 0;
     }
 
     PolyIn::SessionSourceMap Sources;
     PolyIn::SessionPlayout   Playout;
     PolyIn::FrameCadence     Cadence;
     bool                     bIngressAuto = false;
+    uint32_t                 iRequestNonce = 0;
 };
 
 class CServer : public QObject, public CServerSlots<MAX_NUM_CHANNELS>
@@ -316,6 +318,7 @@ protected:
 
     int                   FindChannel ( const CHostAddress& checkAddr, const bool bAllowNew = false );
     void                  InitChannel ( const int iNewSessionID, const CHostAddress& inetAddr );
+    void                  InstallLegacySource ( const int sessionID );
     void                  FreeChannel ( const int iCurSessionID );
     int                   AllocateSource ( const int parentSessionID, const CPolyInSourceConfig& config, const bool legacy, const bool active );
     void                  FreeSource ( const int sourceID );
@@ -330,7 +333,7 @@ protected:
     bool                  ActivatePreparedSources ( const int sessionID, const uint16_t generation, const uint32_t firstSequence );
     void                  OnPolyInReliableMessageAcknowledged ( const int sessionID, const int logicalMessageID );
     void                  OnReqPolyInCaps ( const int sessionID );
-    void                  OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config );
+    void                  OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config, uint32_t requestNonce );
     void                  DumpChannels ( const QString& title );
     CVector<CChannelInfo> CreateChannelList();
 

@@ -111,13 +111,13 @@ bool ValidateSourceConfig ( const CVector<CPolyInSourceConfig>& config, QString*
     return true;
 }
 
-bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, CVector<uint8_t>& out )
+bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, const uint32_t requestNonce, CVector<uint8_t>& out )
 {
-    if ( !ValidateSourceConfig ( config ) )
+    if ( requestNonce == 0 || !ValidateSourceConfig ( config ) )
     {
         return false;
     }
-    int bytes = 3; // version, flags, count
+    int bytes = 7; // version, flags, count, unique connection nonce
     for ( const CPolyInSourceConfig& source : config )
     {
         bytes += 9 + source.strTag.trimmed().toUtf8().size();
@@ -127,6 +127,10 @@ bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, CVector<uint8_t>
     out[position++] = kProtocolVersion;
     out[position++] = config[0].bRaw ? 1 : 0;
     out[position++] = static_cast<uint8_t> ( config.Size() );
+    out[position++] = static_cast<uint8_t> ( requestNonce >> 24 );
+    out[position++] = static_cast<uint8_t> ( requestNonce >> 16 );
+    out[position++] = static_cast<uint8_t> ( requestNonce >> 8 );
+    out[position++] = static_cast<uint8_t> ( requestNonce );
     for ( const CPolyInSourceConfig& source : config )
     {
         const QByteArray tag = source.strTag.trimmed().toUtf8();
@@ -143,17 +147,20 @@ bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, CVector<uint8_t>
     return true;
 }
 
-bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CPolyInSourceConfig>& config )
+bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CPolyInSourceConfig>& config, uint32_t& requestNonce )
 {
     config.clear();
-    if ( in.Size() < 3 || in[0] != kProtocolVersion || ( in[1] & ~uint8_t ( 1 ) ) != 0 || in[2] == 0 || in[2] > PolyIn::kMaxSourceRows )
+    requestNonce = 0;
+    if ( in.Size() < 7 || in[0] != kProtocolVersion || ( in[1] & ~uint8_t ( 1 ) ) != 0 || in[2] == 0 || in[2] > PolyIn::kMaxSourceRows )
     {
         return false;
     }
     const bool bRaw  = ( in[1] & 1 ) != 0;
     const int  count = in[2];
+    requestNonce = ( uint32_t ( in[3] ) << 24 ) | ( uint32_t ( in[4] ) << 16 ) | ( uint32_t ( in[5] ) << 8 ) | uint32_t ( in[6] );
+    if ( requestNonce == 0 ) return false;
     config.Init ( count );
-    int position = 3;
+    int position = 7;
     for ( int i = 0; i < count; ++i )
     {
         if ( position + 9 > in.Size() )
@@ -196,11 +203,16 @@ bool EncodeAccept ( const CPolyInAcceptMap& accept, CVector<uint8_t>& out )
     {
         return false;
     }
-    out.Init ( 4 + 3 * accept.vecSources.Size() );
+    if ( accept.iRequestNonce == 0 ) return false;
+    out.Init ( 8 + 3 * accept.vecSources.Size() );
     int position    = 0;
     out[position++] = kProtocolVersion;
     Put16 ( out, position, accept.iGeneration );
     out[position++] = static_cast<uint8_t> ( accept.vecSources.Size() );
+    out[position++] = static_cast<uint8_t> ( accept.iRequestNonce >> 24 );
+    out[position++] = static_cast<uint8_t> ( accept.iRequestNonce >> 16 );
+    out[position++] = static_cast<uint8_t> ( accept.iRequestNonce >> 8 );
+    out[position++] = static_cast<uint8_t> ( accept.iRequestNonce );
     for ( const CPolyInSourceConfig& source : accept.vecSources )
     {
         if ( source.iFaderID < 0 || source.iFaderID >= MAX_NUM_CHANNELS )
@@ -214,12 +226,15 @@ bool EncodeAccept ( const CPolyInAcceptMap& accept, CVector<uint8_t>& out )
 bool DecodeAccept ( const CVector<uint8_t>& in, CPolyInAcceptMap& accept )
 {
     accept = CPolyInAcceptMap();
-    if ( in.Size() < 4 || in[0] != kProtocolVersion || in[3] == 0 || in.Size() != 4 + 3 * in[3] )
+    if ( in.Size() < 8 || in[0] != kProtocolVersion || in[3] == 0 || in.Size() != 8 + 3 * in[3] )
         return false;
     int position       = 1;
     accept.iGeneration = Get16 ( in, position );
     const int count    = in[position++];
-    if ( accept.iGeneration == 0 || count > static_cast<int> ( PolyIn::kMaxSourceRows ) )
+    accept.iRequestNonce = ( uint32_t ( in[position] ) << 24 ) | ( uint32_t ( in[position+1] ) << 16 ) |
+                           ( uint32_t ( in[position+2] ) << 8 ) | uint32_t ( in[position+3] );
+    position += 4;
+    if ( accept.iRequestNonce == 0 || accept.iGeneration == 0 || count > static_cast<int> ( PolyIn::kMaxSourceRows ) )
         return false;
     accept.vecSources.Init ( count );
     for ( int i = 0; i < count; ++i )

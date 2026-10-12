@@ -513,12 +513,20 @@ void CProtocol::Reset()
     iCounter               = 0;
     iOldRecID              = PROTMESSID_ILLEGAL;
     iOldRecCnt             = 0;
+    vecbyOldRecBody.clear();
     iSplitMessageCnt       = 0;
     iSplitMessageDataIndex = 0;
     bSplitMessageSupported = false; // compatilibity to old versions
 
     // delete complete "send message queue"
     SendMessQueue.clear();
+}
+
+void CProtocol::ResetForPolyInReplacement()
+{
+    const bool split = bSplitMessageSupported;
+    Reset();
+    bSplitMessageSupported = split;
 }
 
 void CProtocol::EnqueueMessage ( CVector<uint8_t>& vecMessage, const int iCnt, const int iID, const int iLogicalID, const bool bLastLogicalPart )
@@ -690,7 +698,9 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
     // did not make it to the receiver, he will resend his message. We check
     // here if the message is the same as the old one, and if this is the
     // case, just resend our old answer again
-    if ( ( iOldRecID == iRecID ) && ( iOldRecCnt == iRecCounter ) )
+    const bool identicalPayload = vecbyOldRecBody.Size() == vecbyMesBodyData.Size() &&
+                                  std::equal ( vecbyOldRecBody.begin(), vecbyOldRecBody.end(), vecbyMesBodyData.begin() );
+    if ( ( iOldRecID == iRecID ) && ( iOldRecCnt == iRecCounter ) && identicalPayload )
     {
         // acknowledgments are not acknowledged
         if ( iRecID != PROTMESSID_ACKN )
@@ -931,6 +941,7 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
             // was resent
             iOldRecID  = iRecID;
             iOldRecCnt = iRecCounter;
+            vecbyOldRecBody = vecbyMesBodyData;
         }
     }
 }
@@ -1658,19 +1669,20 @@ bool CProtocol::EvaluatePolyInCapsMes ( const CVector<uint8_t>& vecData )
     return false; // no error
 }
 
-void CProtocol::CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config )
+void CProtocol::CreatePolyInConfigMes ( const CVector<CPolyInSourceConfig>& config, const uint32_t requestNonce )
 {
     CVector<uint8_t> data;
-    if ( PolyInProtocol::EncodeConfig ( config, data ) )
+    if ( PolyInProtocol::EncodeConfig ( config, requestNonce, data ) )
         CreateAndSendMessage ( PROTMESSID_POLY_IN_CONFIG, data );
 }
 
 bool CProtocol::EvaluatePolyInConfigMes ( const CVector<uint8_t>& vecData )
 {
     CVector<CPolyInSourceConfig> config;
-    if ( !PolyInProtocol::DecodeConfig ( vecData, config ) )
+    uint32_t requestNonce = 0;
+    if ( !PolyInProtocol::DecodeConfig ( vecData, config, requestNonce ) )
         return true; // return error code
-    emit PolyInConfigReceived ( config );
+    emit PolyInConfigReceived ( config, requestNonce );
     return false; // no error
 }
 

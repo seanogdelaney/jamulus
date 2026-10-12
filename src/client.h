@@ -506,6 +506,7 @@ protected:
     PolyIn::FramePacketizer                                PolyInPacketizer;
     PolyIn::Negotiation                                    PolyInNegotiation;
     uint32_t                                               iPolyInFrameSequence;
+    uint32_t                                               iPolyInRequestNonce = 0;
     std::array<bool, MAX_NUM_CHANNELS>                     bOwnedServerFaderIDs;
     int                                                    iLegacyServerFaderID;
     std::array<std::atomic<float>, PolyIn::kMaxSourceRows> fPolyInLocalMonitorGain;

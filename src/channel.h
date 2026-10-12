@@ -116,6 +116,7 @@ public:
     // This is intentionally server-side only and must be called from the
     // CChannel/CProtocol QObject thread, not the socket worker.
     void ResetForServerReuse();
+    void ResetReliableForPolyInReplacement() { Protocol.ResetForPolyInReplacement(); }
 
     void SetEnable ( const bool bNEnStat );
     bool IsEnabled() { return bIsEnabled; }

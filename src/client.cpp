@@ -45,6 +45,7 @@
 \******************************************************************************/
 
 #include "opusprofile.h"
+#include <QRandomGenerator>
 #include "client.h"
 #include "settings.h"
 #include "util.h"
@@ -1352,7 +1353,7 @@ void CClient::SendPolyInConfigIfReady()
     for ( int i = 0; i < iPolyInSourceCount; ++i )
         config[i] = PolyInSources[i].Config;
 
-    Channel.CreatePolyInConfigMes ( config );
+    Channel.CreatePolyInConfigMes ( config, iPolyInRequestNonce );
     SetPolyInStatus ( tr ( "Poly-in source configuration queued behind connection setup." ) );
 }
 
@@ -1397,8 +1398,8 @@ bool CClient::IsOwnedServerFader ( const int serverFaderID ) const
 
 void CClient::OnPolyInAccept ( CPolyInAcceptMap accept )
 {
-    if ( eAudioChannelConf != CC_POLY_IN )
-        return;
+    if ( eAudioChannelConf != CC_POLY_IN || accept.iRequestNonce != iPolyInRequestNonce )
+        return; // late ACCEPT from another connection epoch
 
     // Validate the complete ordinary-fader map before publishing a sendable
     // generation to the audio callback.
@@ -1877,6 +1878,13 @@ void CClient::OnRawAudioSupported()
 
 void CClient::Start()
 {
+    // Distinguish a fresh connection from reliable-message retransmissions
+    // even when the server still associates the UDP endpoint with an old map.
+    if ( eAudioChannelConf == CC_POLY_IN )
+    {
+        iPolyInRequestNonce = QRandomGenerator::global()->generate();
+        if ( iPolyInRequestNonce == 0 ) iPolyInRequestNonce = 1;
+    }
     // Poly-in source descriptors, codec choice and routing are a
     // connection-time contract. Lock them before audio/socket startup, not
     // only after the server has answered the first protocol message.

@@ -384,8 +384,8 @@ inline void CServer::connectChannelSignalsToServerSlots()
     // source map is negotiated once, while protocol, timeout and return audio
     // remain owned by this single CChannel.
     QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReqPolyInCaps, this, [this, iCurChanID]() { OnReqPolyInCaps ( iCurChanID ); } );
-    QObject::connect ( &vecSessions[iCurChanID], &CChannel::PolyInConfigReceived, this, [this, iCurChanID] ( CVector<CPolyInSourceConfig> config ) {
-        OnPolyInConfig ( iCurChanID, config );
+    QObject::connect ( &vecSessions[iCurChanID], &CChannel::PolyInConfigReceived, this, [this, iCurChanID] ( CVector<CPolyInSourceConfig> config, uint32_t requestNonce ) {
+        OnPolyInConfig ( iCurChanID, config, requestNonce );
     } );
     QObject::connect ( &vecSessions[iCurChanID], &CChannel::ReliableMessageAcknowledged, this, [this, iCurChanID] ( int logicalMessageID ) {
         OnPolyInReliableMessageAcknowledged ( iCurChanID, logicalMessageID );
@@ -1387,6 +1387,11 @@ void CServer::InitChannel ( const int sessionID, const CHostAddress& address )
     vecSessions[sessionID].SetAddress ( address );
     vecSessions[sessionID].ResetInfo();
     vecSessionState[sessionID].Reset();
+    InstallLegacySource ( sessionID );
+}
+
+void CServer::InstallLegacySource ( const int sessionID )
+{
     CPolyInSourceConfig legacy;
     legacy.iKey          = 1;
     legacy.iNumChannels  = 1;
@@ -1753,22 +1758,84 @@ void CServer::OnReqPolyInCaps ( const int sessionID )
     if ( MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) && vecSessions[sessionID].IsConnected() &&
          vecSessions[sessionID].IsSplitMessageSupported() )
     {
+        // A fresh capability request on an active Poly-in endpoint is the
+        // beginning of a new reliable handshake. Retain the active sources
+        // until a different connection nonce in CONFIG explicitly replaces
+        // them, but free the old outgoing ACK-gated FIFO now: otherwise CAPS
+        // for the new client can be blocked behind an orphaned old message.
+        if ( vecSessionState[sessionID].Sources.IsActive() || vecSessionState[sessionID].Sources.IsPrepared() )
+            vecSessions[sessionID].ResetReliableForPolyInReplacement();
         vecSessions[sessionID].CreatePolyInCapsMes();
     }
 }
 
-void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config )
+void CServer::OnPolyInConfig ( const int sessionID, CVector<CPolyInSourceConfig> config, const uint32_t requestNonce )
 {
+    if ( requestNonce == 0 || !MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) ||
+         !PolyInProtocol::ValidateSourceConfig ( config ) )
+    {
+        if ( MathUtils::InRange<int> ( sessionID, 0, MAX_NUM_CHANNELS - 1 ) )
+            vecSessions[sessionID].CreatePolyInRejectMes ( PolyInProtocol::kRejectMalformed );
+        return;
+    }
+
+    // The first config message of a new connection epoch replaces *all* old
+    // ingress/codec/source reservations at this endpoint. An ACK may have been
+    // lost: retransmissions carrying the same nonce reuse the old map, while
+    // another nonce can never be interpreted as an old audio fragment.
+    std::lock_guard<std::mutex> ingressGuard ( Mutex );
+    CServerSessionState& state = vecSessionState[sessionID];
+    if ( state.Sources.IsActive() || state.Sources.IsPrepared() )
+    {
+        if ( state.iRequestNonce != requestNonce )
+        {
+            FreeAllSourcesForSession ( sessionID );
+            InstallLegacySource ( sessionID );
+            // Clear any unacknowledged old protocol output before sending the
+            // new ACCEPT; preserve the split-message capability of this peer.
+            vecSessions[sessionID].ResetReliableForPolyInReplacement();
+            CreateAndSendChanListForAllConChannels();
+        }
+        else
+        {
+            // Same epoch, same mapping: idempotently resend ACCEPT. A source
+            // reconfiguration requires a new nonce/connection epoch.
+            if ( state.Sources.SourceCount() != static_cast<size_t> ( config.Size() ) )
+            {
+                vecSessions[sessionID].CreatePolyInRejectMes ( PolyInProtocol::kRejectInvalidSessionState );
+                return;
+            }
+            CPolyInAcceptMap repeat;
+            repeat.iGeneration = state.Sources.Generation();
+            repeat.iRequestNonce = requestNonce;
+            repeat.vecSources.Init ( static_cast<int> ( state.Sources.SourceCount() ) );
+            for ( size_t index = 0; index < state.Sources.SourceCount(); ++index )
+            {
+                const CPolyInSourceConfig& current = vecSources[state.Sources.SourceAt ( index )].GetConfig();
+                if ( current.iKey != config[static_cast<int> ( index )].iKey || current.iNumChannels != config[static_cast<int> ( index )].iNumChannels ||
+                     current.eCodec != config[static_cast<int> ( index )].eCodec || current.bRaw != config[static_cast<int> ( index )].bRaw ||
+                     current.iPayloadBytes != config[static_cast<int> ( index )].iPayloadBytes || current.strTag != config[static_cast<int> ( index )].strTag )
+                {
+                    vecSessions[sessionID].CreatePolyInRejectMes ( PolyInProtocol::kRejectInvalidSessionState );
+                    return;
+                }
+                repeat.vecSources[static_cast<int> ( index )] = current;
+            }
+            vecSessions[sessionID].CreatePolyInAcceptMes ( repeat );
+            return;
+        }
+    }
+
     uint8_t rejectReason = PolyInProtocol::kRejectMalformed;
     if ( !PreparePolyInSources ( sessionID, config, rejectReason ) )
     {
         vecSessions[sessionID].CreatePolyInRejectMes ( rejectReason );
         return;
     }
-
-    const CServerSessionState& state = vecSessionState[sessionID];
-    CPolyInAcceptMap           accept;
+    state.iRequestNonce = requestNonce;
+    CPolyInAcceptMap accept;
     accept.iGeneration = state.Sources.Generation();
+    accept.iRequestNonce = requestNonce;
     accept.vecSources.Init ( static_cast<int> ( state.Sources.SourceCount() ) );
     for ( size_t index = 0; index < state.Sources.SourceCount(); ++index )
         accept.vecSources[static_cast<int> ( index )] = vecSources[state.Sources.SourceAt ( index )].GetConfig();

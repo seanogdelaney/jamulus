@@ -33,6 +33,7 @@ struct CPolyInSourceConfig
 struct CPolyInAcceptMap
 {
     uint16_t                     iGeneration = 0;
+    uint32_t                     iRequestNonce = 0;
     CVector<CPolyInSourceConfig> vecSources;
 };
 
@@ -70,8 +71,8 @@ constexpr uint8_t kRejectStereoReturnRequired = 6;
 bool EncodeCaps ( CVector<uint8_t>& out );
 bool DecodeCaps ( const CVector<uint8_t>& in );
 
-bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, CVector<uint8_t>& out );
-bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CPolyInSourceConfig>& config );
+bool EncodeConfig ( const CVector<CPolyInSourceConfig>& config, uint32_t requestNonce, CVector<uint8_t>& out );
+bool DecodeConfig ( const CVector<uint8_t>& in, CVector<CPolyInSourceConfig>& config, uint32_t& requestNonce );
 
 bool EncodeAccept ( const CPolyInAcceptMap& accept, CVector<uint8_t>& out );
 bool DecodeAccept ( const CVector<uint8_t>& in, CPolyInAcceptMap& accept );

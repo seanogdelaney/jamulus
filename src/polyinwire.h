@@ -17,7 +17,7 @@
 namespace PolyIn
 {
 constexpr uint16_t kMagic                  = 0x5049; // "PI", deliberately non-zero
-constexpr uint8_t  kVersion                = 1;
+constexpr uint8_t  kVersion                = 2;
 constexpr size_t   kHeaderBytes            = 14;
 constexpr size_t   kRecordHeaderBytes      = 3;
 constexpr size_t   kMaxApplicationDatagram = 1200;
