@@ -227,7 +227,7 @@ void CChannel::SetAudioStreamProperties ( const EAudComprType eNewAudComprType,
         {
             // init socket buffer
             SockBuf.SetUseDoubleSystemFrameSize ( eAudioCompressionType == CT_OPUS ); // NOTE must be set BEFORE the init()
-            SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
+            SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber ); // stock session receive-state reset
         }
         MutexSocketBuf.unlock();
 
