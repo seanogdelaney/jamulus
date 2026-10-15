@@ -1,0 +1,3 @@
+# These fingerprints are platform/build dependent; semantic assertions and same-host pristine/R01 comparison are primary proof.
+d6669156e5c1498bfb581a73c860a55f79f4958f8e677341badf89bea92de100  ARM64 Apple clang/Qt tester Opus build
+8372b65e259c4f15327caec4a8bdc765b114df138ae2893da55426fc328641bd  Linux x86-64 GCC vendored Opus build
