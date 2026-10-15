@@ -265,7 +265,14 @@ bool CChannel::SetSockBufNumFrames ( const int iNewNumFrames, const bool bPreser
 
                 // the network block size is a multiple of the minimum network
                 // block size
-                SockBuf.Init ( iCeltNumCodedBytes, iNewNumFrames, bUseSequenceNumber, bPreserve );
+                if ( PolyFrameBuffer )
+                {
+                    // The borrowed stock window must honour the same reset vs.
+                    // preserve flag as the ordinary SockBuf.Init call below.
+                    if ( bPreserve ) PolyFrameBuffer->Resize ( iNewNumFrames );
+                    else PolyFrameBuffer->Init ( PolyFrameBuffer->Generation(), iNewNumFrames );
+                }
+                else SockBuf.Init ( iCeltNumCodedBytes, iNewNumFrames, bUseSequenceNumber, bPreserve );
 
                 // store current auto socket buffer size setting in the mutex
                 // region since if we use the current parameter below in the
@@ -393,7 +400,7 @@ QString CChannel::GetName()
     // read here -> use mutex to secure access
     QMutexLocker locker ( &Mutex );
 
-    return ChannelInfo.strName;
+    return pPolyInOwner ? PolyInTag : ChannelInfo.strName;
 }
 
 CChannelCoreInfo CChannel::GetChanInfo()
@@ -502,7 +509,12 @@ void CChannel::OnNetTranspPropsReceived ( CNetworkTransportProps NetworkTranspor
                 // update socket buffer (the network block size is a multiple of the
                 // minimum network frame size)
                 SockBuf.SetUseDoubleSystemFrameSize ( eAudioCompressionType == CT_OPUS ); // NOTE must be set BEFORE the init()
-                SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
+                // F05: a negotiated poly-in physical session borrows SockBuf for
+                // frame-identity tokens, not the ordinary encoded audio bytes.
+                // Follow stock's transport-property reset, but reinitialize
+                // the same buffer via its token owner (including sidecars).
+                if ( PolyFrameBuffer ) PolyFrameBuffer->Init ( PolyFrameBuffer->Generation(), iCurSockBufNumFrames );
+                else SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
             }
             MutexSocketBuf.unlock();
 
@@ -589,10 +601,13 @@ EPutDataStat CChannel::PutAudioData ( const CVector<uint8_t>& vecbyData, const i
         MutexSocketBuf.lock();
         {
             // only process audio if packet has correct size
-            if ( iNumBytes == ( iNetwFrameSize * iNetwFrameSizeFact ) )
+            if ( PolyFrameBuffer || iNumBytes == ( iNetwFrameSize * iNetwFrameSizeFact ) )
             {
+                // Fragments share one physical stock frame. Only its first
+                // complete record attempts a stock Put and advances the fade.
+                const uint64_t priorPuts = PolyFrameBuffer ? PolyFrameBuffer->Stats().stockPuts : 0;
                 // store new packet in jitter buffer
-                if ( SockBuf.Put ( vecbyData, iNumBytes ) )
+                if ( PolyFrameBuffer ? PolyFrameBuffer->Receive ( vecbyData.data(), iNumBytes ) : SockBuf.Put ( vecbyData, iNumBytes ) )
                 {
                     eRet = PS_AUDIO_OK;
                 }
@@ -602,7 +617,8 @@ EPutDataStat CChannel::PutAudioData ( const CVector<uint8_t>& vecbyData, const i
                 }
 
                 // manage audio fade-in counter, after channel is identified
-                if ( iFadeInCnt < iFadeInCntMax && bIsIdentified )
+                if ( iFadeInCnt < iFadeInCntMax && bIsIdentified &&
+                     ( !PolyFrameBuffer || PolyFrameBuffer->Stats().stockPuts != priorPuts ) )
                 {
                     iFadeInCnt++;
                 }
@@ -650,12 +666,49 @@ EPutDataStat CChannel::PutAudioData ( const CVector<uint8_t>& vecbyData, const i
 
 EGetDataStat CChannel::GetData ( CVector<uint8_t>& vecbyData, const int iNumBytes )
 {
+    // Virtual source records have no independent jitter queue, timer, socket or
+    // timeout: they borrow the physical Get's stock-admitted frame snapshot.
+    if ( pPolyInOwner )
+    {
+        const int index = iPolyInFrameCursor++;
+        if ( index < pPolyInOwner->iPolyInFrameCount )
+        {
+            const auto& frame = pPolyInOwner->PolyInFrames[index];
+            for ( size_t i = 0; i < frame.count; ++i )
+                if ( frame.records[i].source == iPolyInSource &&
+                     frame.records[i].codec == static_cast<uint8_t> ( ePolyInCodec ) &&
+                     frame.records[i].channels == iPolyInChannels && frame.records[i].size == iNumBytes )
+                {
+                    memcpy ( vecbyData.data(), frame.records[i].data, iNumBytes );
+                    return GS_BUFFER_OK;
+                }
+        }
+        return GS_BUFFER_UNDERRUN; // original decoder performs Opus PLC or raw silence
+    }
     EGetDataStat eGetStatus;
 
     MutexSocketBuf.lock();
     {
         // the socket access must be inside a mutex
-        const bool bSockBufState = SockBuf.Get ( vecbyData, iNumBytes );
+        bool bSockBufState;
+        if ( PolyFrameBuffer )
+        {
+            PolyIn::FrameView view;
+            const bool admitted = PolyFrameBuffer->Get ( view );
+            if ( iPolyInFrameCount < 2 ) PolyInFrames[iPolyInFrameCount++] = view;
+            bSockBufState = false;
+            if ( admitted )
+                for ( size_t i = 0; i < view.count; ++i )
+                    if ( view.records[i].source == 0 &&
+                         view.records[i].codec == static_cast<uint8_t> ( eAudioCompressionType ) &&
+                         view.records[i].channels == iNumAudioChannels && view.records[i].size == iNumBytes )
+                    {
+                        memcpy ( vecbyData.data(), view.records[i].data, iNumBytes );
+                        bSockBufState = true;
+                        break;
+                    }
+        }
+        else bSockBufState = SockBuf.Get ( vecbyData, iNumBytes );
 
         // decrease time-out counter
         if ( iConTimeOut > 0 )
@@ -761,4 +814,52 @@ void CChannel::UpdateSocketBufferSize()
         // buffer memory since we just adjust the size here
         SetSockBufNumFrames ( SockBuf.GetAutoSetting(), true );
     }
+}
+
+// F05: configure only after Stage 5 validates a real physical session/generation.
+// No second stock jitter window is created: the adapter borrows SockBuf.
+bool CChannel::EnablePolyInPhysical ( uint64_t generation )
+{
+    if ( !bIsServer || !generation || pPolyInOwner ) return false;
+    QMutexLocker locker ( &MutexSocketBuf );
+    if ( PolyFrameBuffer && PolyFrameBuffer->Generation() == generation ) return true;
+    if ( !PolyFrameBuffer ) PolyFrameBuffer.reset ( new PolyIn::StockFrameBuffer ( SockBuf ) );
+    SockBuf.SetUseDoubleSystemFrameSize ( eAudioCompressionType == CT_OPUS );
+    PolyFrameBuffer->Init ( generation, iCurSockBufNumFrames );
+    return true;
+}
+
+void CChannel::EnablePolyInVirtual ( CChannel* owner, uint16_t source, const QString& tag,
+                                     EAudComprType codec, int channels, int encodedBytes, bool newIdentity )
+{
+    // Stock PutAudioData resets the level meter for a newly connected source.
+    // Do not merge the outgoing new identity with the preceding source's meter.
+    if ( newIdentity ) SignalLevelMeter.Reset();
+    pPolyInOwner = owner;
+    iPolyInSource = source;
+    PolyInTag = tag;
+    ePolyInCodec = codec;
+    iPolyInChannels = channels;
+    iPolyInEncodedBytes = encodedBytes;
+    iPolyInFrameCursor = 0;
+}
+
+void CChannel::DisablePolyIn()
+{
+    QMutexLocker locker ( &MutexSocketBuf );
+    pPolyInOwner = nullptr;
+    PolyInTag.clear();
+    iPolyInFrameCursor = iPolyInFrameCount = 0;
+    if ( PolyFrameBuffer )
+    {
+        PolyFrameBuffer.reset();
+        SockBuf.SetUseDoubleSystemFrameSize ( eAudioCompressionType == CT_OPUS );
+        SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
+    }
+}
+
+void CChannel::BeginPolyInTick()
+{
+    iPolyInFrameCursor = iPolyInFrameCount = 0;
+    PolyInFrames = {};
 }

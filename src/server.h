@@ -51,6 +51,7 @@
 #include <QHostAddress>
 #include <QFileInfo>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #ifdef USE_OPUS_SHARED_LIB
 #    include "opus/opus_custom.h"
@@ -62,6 +63,7 @@
 #include "signalhandler.h"
 #include "socket.h"
 #include "channel.h"
+#include "polyinsources.h"
 #include "util.h"
 #include "serverlogging.h"
 #include "serverlist.h"
@@ -137,6 +139,20 @@ public:
     bool IsRunning() { return HighPrecisionTimer.isActive(); }
 
     bool PutAudioData ( const CVector<uint8_t>& vecbyRecBuf, const int iNumBytesRead, const CHostAddress& HostAdr, int& iCurChanID );
+
+    // F05 audio-only activation: Stage 5 owns negotiation, F03 source-ID
+    // admission and control routing. No new control protocol lives here.
+    struct PolyInAudioSource
+    {
+        uint16_t source;
+        int channel;               // F03 ordinary, reserved stock channel ID
+        EAudComprType codec;
+        int channels, encodedBytes;
+    };
+    bool ConfigurePolyInAudio ( const PolyIn::SourceSlots& identities, int physical, uint64_t generation,
+                                const std::vector<PolyInAudioSource>& sources );
+    void DisablePolyInAudio ( int physical );
+
 
     int GetNumberOfConnectedClients();
 
@@ -256,6 +272,7 @@ protected:
     QMutex            Mutex;
     QMutex            MutexWelcomeMessage;
     std::atomic<bool> bChannelIsNowDisconnected;
+    bool bHasPolyInAudio = false; // false on every unmodified legacy-only server
 
     // audio encoder/decoder
     OpusCustomMode*    Opus64Mode[MAX_NUM_CHANNELS];
@@ -282,6 +299,21 @@ protected:
     CVector<CVector<float>>   vecvecfPannings;
     CVector<CVector<int16_t>> vecvecsData;
     CVector<CVector<int16_t>> vecvecsData2;
+    // --delaypan stores the preceding tick by mix position. F05 may shift
+    // virtual-source positions when physical clients join/leave, so remember
+    // those positions by their existing stock IDs. All scratch is preallocated.
+    CVector<int>              vecPrevDelayPanIDs;
+    CVector<CVector<int16_t>> vecDelayPanRemapScratch;
+    int                       iPrevDelayPanSources = 0;
+    bool                      bPrevDelayPanHadVirtual = false;
+
+    struct PolyInHistoryIdentity
+    {
+        int owner = -1;
+        uint64_t generation = 0;
+        uint16_t source = 0;
+    };
+    std::array<PolyInHistoryIdentity, MAX_NUM_CHANNELS> polyInHistoryIdentity{};
     CVector<int>              vecNumAudioChannels;
     CVector<int>              vecNumFrameSizeConvBlocks;
     CVector<int>              vecUseDoubleSysFraSizeConvBuf;
@@ -292,6 +324,7 @@ protected:
 
     // Channel levels
     CVector<uint16_t> vecChannelLevels;
+    CVector<uint16_t> vecSortedPolyInLevels; // existing sorted-ID channel-list order
 
     // actual working objects
     bool            bIPv6Available; // must be before Socket - passed by reference to Socket

@@ -50,11 +50,14 @@
 #include <QDateTime>
 #include <QFile>
 #include <atomic>
+#include <array>
+#include <memory>
 #if QT_VERSION >= QT_VERSION_CHECK( 5, 6, 0 )
 #    include <QVersionNumber>
 #endif
 #include "global.h"
 #include "buffer.h"
+#include "polyinframe.h"
 #include "util.h"
 #include "protocol.h"
 #include "socket.h"
@@ -97,6 +100,20 @@ public:
 
     EGetDataStat GetData ( CVector<uint8_t>& vecbyData, const int iNumBytes );
 
+    // F05 receive adapter. Enabled only by a later-stage negotiated setup;
+    // the ordinary source continues through unchanged GetData/PutAudioData.
+    bool EnablePolyInPhysical ( uint64_t generation );
+    void EnablePolyInVirtual ( CChannel* owner, uint16_t source, const QString& tag,
+                               EAudComprType codec, int channels, int encodedBytes, bool newIdentity );
+    void DisablePolyIn();
+    void BeginPolyInTick();
+    bool IsPolyInPhysical() const { return PolyFrameBuffer != nullptr; }
+    bool IsPolyInVirtual() const { return pPolyInOwner != nullptr; }
+    bool IsPolyInVirtualOf ( const CChannel* owner ) const { return pPolyInOwner == owner; }
+    CChannel* PolyInPhysicalOwner() const { return pPolyInOwner; }
+    const CHostAddress& PolyInOwnerAddress() const { return pPolyInOwner ? pPolyInOwner->GetAddress() : GetAddress(); }
+
+
     void PrepAndSendPacket ( CHighPrioSocket* pSocket, const CVector<uint8_t>& vecbyNPacket, const int iNPacketLen );
 
     void ResetTimeOutCounter() { iConTimeOut = iConTimeOutStartVal; }
@@ -121,7 +138,7 @@ public:
     void CreateMuteStateHasChangedMes ( const int iChanID, const bool bIsMuted ) { Protocol.CreateMuteStateHasChangedMes ( iChanID, bIsMuted ); }
 
     void  SetGain ( const int iChanID, const float fNewGain );
-    float GetFadeInGain() { return static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
+    float GetFadeInGain() { return pPolyInOwner ? pPolyInOwner->GetFadeInGain() : static_cast<float> ( iFadeInCnt ) / iFadeInCntMax; }
 
     void SetPan ( const int iChanID, const float fNewPan );
 
@@ -149,15 +166,15 @@ public:
     bool GetDoAutoSockBufSize() const { return bDoAutoSockBufSize; }
 
     int GetNetwFrameSizeFact() const { return iNetwFrameSizeFact; }
-    int GetCeltNumCodedBytes() const { return iCeltNumCodedBytes; }
+    int GetCeltNumCodedBytes() const { return pPolyInOwner ? iPolyInEncodedBytes : iCeltNumCodedBytes; }
 
     void GetBufErrorRates ( CVector<double>& vecErrRates, double& dLimit, double& dMaxUpLimit )
     {
         SockBuf.GetErrorRates ( vecErrRates, dLimit, dMaxUpLimit );
     }
 
-    EAudComprType GetAudioCompressionType() { return eAudioCompressionType; }
-    int           GetNumAudioChannels() const { return iNumAudioChannels; }
+    EAudComprType GetAudioCompressionType() { return pPolyInOwner ? ePolyInCodec : eAudioCompressionType; }
+    int           GetNumAudioChannels() const { return pPolyInOwner ? iPolyInChannels : iNumAudioChannels; }
 
     // network protocol interface
     void CreateJitBufMes ( const int iJitBufSize )
@@ -217,6 +234,16 @@ protected:
 
     // network jitter-buffer
     CNetBufWithStats SockBuf;
+    // Source views refer to the physical StockFrameBuffer's immutable sidecars
+    // and live for one OnTimer decode pass, before the next physical Get.
+    std::unique_ptr<PolyIn::StockFrameBuffer> PolyFrameBuffer;
+    CChannel* pPolyInOwner = nullptr; // no ownership; physical channels are static array entries
+    uint16_t iPolyInSource = 0;
+    EAudComprType ePolyInCodec = CT_NONE;
+    int iPolyInChannels = 1, iPolyInEncodedBytes = 0, iPolyInFrameCursor = 0, iPolyInFrameCount = 0;
+    QString PolyInTag;
+    std::array<PolyIn::FrameView, 2> PolyInFrames{};
+
     int              iCurSockBufNumFrames;
     bool             bDoAutoSockBufSize;
     bool             bUseSequenceNumber;
