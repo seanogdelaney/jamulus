@@ -404,6 +404,9 @@ HEADERS += src/plugins/audioreverb.h \
     src/buffer.h \
     src/polyinwire.h \
     src/polyinframe.h \
+    src/polyinsources.h \
+    src/polyinproducer.h \
+    src/stockclientencode.h \
     src/channel.h \
     src/global.h \
     src/protocol.h \
@@ -514,6 +517,8 @@ SOURCES += src/plugins/audioreverb.cpp \
     src/buffer.cpp \
     src/polyinwire.cpp \
     src/polyinframe.cpp \
+    src/polyinsources.cpp \
+    src/polyinproducer.cpp \
     src/channel.cpp \
     src/main.cpp \
     src/protocol.cpp \

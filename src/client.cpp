@@ -45,6 +45,7 @@
 \******************************************************************************/
 
 #include "client.h"
+#include "stockclientencode.h"
 #include "settings.h"
 #include "util.h"
 
@@ -111,25 +112,11 @@ CClient::CClient ( const quint16  iPortNumber,
     Opus64EncoderStereo = opus_custom_encoder_create ( Opus64Mode, 2, &iOpusError ); // stereo encoder OPUS64
     Opus64DecoderStereo = opus_custom_decoder_create ( Opus64Mode, 2, &iOpusError ); // stereo decoder OPUS64
 
-    // we require a constant bit rate
-    opus_custom_encoder_ctl ( OpusEncoderMono, OPUS_SET_VBR ( 0 ) );
-    opus_custom_encoder_ctl ( OpusEncoderStereo, OPUS_SET_VBR ( 0 ) );
-    opus_custom_encoder_ctl ( Opus64EncoderMono, OPUS_SET_VBR ( 0 ) );
-    opus_custom_encoder_ctl ( Opus64EncoderStereo, OPUS_SET_VBR ( 0 ) );
-
-    // for 64 samples frame size we have to adjust the PLC behavior to avoid loud artifacts
-    opus_custom_encoder_ctl ( Opus64EncoderMono, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
-    opus_custom_encoder_ctl ( Opus64EncoderStereo, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
-
-    // we want as low delay as possible
-    opus_custom_encoder_ctl ( OpusEncoderMono, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-    opus_custom_encoder_ctl ( OpusEncoderStereo, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-    opus_custom_encoder_ctl ( Opus64EncoderMono, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-    opus_custom_encoder_ctl ( Opus64EncoderStereo, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-
-    // set encoder low complexity for legacy 128 samples frame size
-    opus_custom_encoder_ctl ( OpusEncoderMono, OPUS_SET_COMPLEXITY ( 1 ) );
-    opus_custom_encoder_ctl ( OpusEncoderStereo, OPUS_SET_COMPLEXITY ( 1 ) );
+    // The same stock encoder settings are used by optional poly-in sources.
+    StockClientEncoderDefaults ( OpusEncoderMono, false );
+    StockClientEncoderDefaults ( OpusEncoderStereo, false );
+    StockClientEncoderDefaults ( Opus64EncoderMono, true );
+    StockClientEncoderDefaults ( Opus64EncoderStereo, true );
 
     // Connections -------------------------------------------------------------
     // connections for the protocol mechanism
@@ -1451,8 +1438,7 @@ void CClient::Init()
     // In case we are connected to a non raw audio server or we don't use raw audio we need to initialze the codec
     if ( CurOpusEncoder != nullptr )
     {
-        opus_custom_encoder_ctl ( CurOpusEncoder,
-                                  OPUS_SET_BITRATE ( CalcBitRateBitsPerSecFromCodedBytes ( iCeltNumCodedBytes, iOPUSFrameSizeSamples ) ) );
+        StockClientEncoderBitrate ( CurOpusEncoder, iCeltNumCodedBytes, iOPUSFrameSizeSamples, SYSTEM_SAMPLE_RATE_HZ );
     }
 
     // inits for network and channel
@@ -1614,33 +1600,11 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd )
 
     for ( i = 0, j = 0; i < iSndCrdFrameSizeFactor; i++, j += iNumAudioChannels * iOPUSFrameSizeSamples )
     {
-        // OPUS encoding or copying RAW audio?
-        if ( CurOpusEncoder != nullptr )
-        {
-            // OPUS encoding
-            if ( bMuteOutStream )
-            {
-                iUnused = opus_custom_encode ( CurOpusEncoder, &vecZeros[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
-            }
-            else
-            {
-                iUnused = opus_custom_encode ( CurOpusEncoder, &vecsStereoSndCrd[j], iOPUSFrameSizeSamples, &vecCeltData[0], iCeltNumCodedBytes );
-            }
-        }
-        else if ( bRawAudioIsSupported )
-        {
-            // RAW audio
-            if ( bMuteOutStream )
-            {
-                // output muted - fill with silence
-                memset ( &vecCeltData[0], 0, iCeltNumCodedBytes );
-            }
-            else
-            {
-                // copy raw audio data
-                memcpy ( &vecCeltData[0], &vecsStereoSndCrd[j], iCeltNumCodedBytes );
-            }
-        }
+        // Original encode/RAW/mute call, shared with independently configured
+        // poly-in producer sources. No change to legacy capture or sending.
+        StockClientEncodeFrame ( CurOpusEncoder, bRawAudioIsSupported, bMuteOutStream,
+                                 &vecsStereoSndCrd[j], &vecZeros[j], iOPUSFrameSizeSamples,
+                                 &vecCeltData[0], iCeltNumCodedBytes );
 
         // send coded audio through the network
         Channel.PrepAndSendPacket ( &Socket, vecCeltData, iCeltNumCodedBytes );
