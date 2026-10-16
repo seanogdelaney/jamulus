@@ -21,9 +21,14 @@ bool SourceSlots::AdmitPhysical ( int id, uint64_t generation, const std::string
 {
     if ( id < 0 || id >= capacity_ || !generation || slots_[id].active || slots_[id].held || physical_[id].active )
         return false;
-    physical_[id]       = { true, generation };
-    slots_[id].active   = true;
-    slots_[id].identity = { id, id, 0, generation, stockName };
+    physical_[id].active           = true;
+    physical_[id].generation       = generation;
+    slots_[id].active              = true;
+    slots_[id].identity.channel    = id;
+    slots_[id].identity.physical   = id;
+    slots_[id].identity.source     = 0;
+    slots_[id].identity.generation = generation;
+    slots_[id].identity.tag        = stockName;
     return true;
 }
 
@@ -61,7 +66,13 @@ uint64_t SourceSlots::Reserve ( int physical, uint64_t expectedGeneration, uint6
                     id = c;
                     break;
                 }
-        proposed.push_back ( { id, physical, def.source, newGeneration, Tagged ( def.baseName, def.source ) } );
+        proposed.emplace_back();
+        Identity& identity  = proposed.back();
+        identity.channel    = id;
+        identity.physical   = physical;
+        identity.source     = def.source;
+        identity.generation = newGeneration;
+        identity.tag        = Tagged ( def.baseName, def.source );
     }
     if ( !hasZero )
         return 0;
@@ -94,7 +105,13 @@ uint64_t SourceSlots::Reserve ( int physical, uint64_t expectedGeneration, uint6
     }
     if ( ++serial_ == 0 )
         ++serial_; // zero is always invalid
-    pending_[physical] = { true, serial_, physical, expectedGeneration, newGeneration, std::move ( proposed ) };
+    Pending& pending   = pending_[physical];
+    pending.active     = true;
+    pending.ticket     = serial_;
+    pending.physical   = physical;
+    pending.expected   = expectedGeneration;
+    pending.next       = newGeneration;
+    pending.identities = std::move ( proposed );
     for ( const auto& s : pending_[physical].identities )
         slots_[s.channel].held = true;
     return pending_[physical].ticket;

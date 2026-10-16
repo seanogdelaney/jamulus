@@ -391,11 +391,13 @@ bool CClient::PreparePolyInProducer()
     {
         const QByteArray suffix = configured ? QByteArray ( polyInAudioChannels[source].strFaderTag.c_str() ) : QByteArray::number ( source + 1 );
         const QByteArray name   = ( base + QByteArray ( " " ) + suffix ).left ( 64 );
-        polyInDescriptors.push_back ( { uint16_t ( source ),
-                                        uint8_t ( eAudioCompressionType ),
-                                        uint8_t ( specs[source].route == PolyIn::InputRoute::Stereo ? 2 : 1 ),
-                                        uint16_t ( specs[source].encodedBytes ),
-                                        name.toStdString() } );
+        PolyIn::ControlSource descriptor;
+        descriptor.source   = uint16_t ( source );
+        descriptor.codec    = uint8_t ( eAudioCompressionType );
+        descriptor.channels = uint8_t ( specs[source].route == PolyIn::InputRoute::Stereo ? 2 : 1 );
+        descriptor.bytes    = uint16_t ( specs[source].encodedBytes );
+        descriptor.name     = name.toStdString();
+        polyInDescriptors.push_back ( std::move ( descriptor ) );
         if ( configured )
             polyInDescriptors.back().instrument = polyInAudioChannels[source].iInstrument;
     }

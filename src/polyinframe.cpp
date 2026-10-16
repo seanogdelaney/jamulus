@@ -160,7 +160,14 @@ bool StockFrameBuffer::Get ( FrameView& view )
     {
         const Source& src = slot.sources[i];
         if ( src.complete && !src.invalid )
-            view.records[view.count++] = RecordView{ uint16_t ( i ), src.codec, src.channels, src.bytes.data(), src.length };
+        {
+            RecordView& record = view.records[view.count++];
+            record.source      = uint16_t ( i );
+            record.codec       = src.codec;
+            record.channels    = src.channels;
+            record.data        = src.bytes.data();
+            record.size        = src.length;
+        }
     }
     return true;
 }

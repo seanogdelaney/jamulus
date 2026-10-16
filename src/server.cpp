@@ -2007,7 +2007,9 @@ bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots&            ident
         // while preserving the physical recipient's return encoder and gains.
         if ( s.channel == physical )
         {
-            prior = { physical, generation, s.source };
+            prior.owner      = physical;
+            prior.generation = generation;
+            prior.source     = s.source;
             continue;
         }
         if ( changedIdentity )
@@ -2022,7 +2024,9 @@ bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots&            ident
                 vecChannels[id].SetPan ( s.channel, 0.5f );
             }
         }
-        prior = { physical, generation, s.source };
+        prior.owner      = physical;
+        prior.generation = generation;
+        prior.source     = s.source;
         vecChannels[s.channel].EnablePolyInVirtual ( &vecChannels[physical],
                                                      s.source,
                                                      QString::fromStdString ( actual.tag ),

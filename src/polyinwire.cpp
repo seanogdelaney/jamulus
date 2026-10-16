@@ -97,8 +97,15 @@ bool ParseDatagram ( const uint8_t* packet, size_t bytes, ParsedDatagram& parsed
     {
         if ( bytes - cursor < FragmentHeaderBytes )
             return false;
-        const uint8_t*     p = packet + cursor;
-        const FragmentView frag{ Read16 ( p ), Read16 ( p + 4 ), Read16 ( p + 6 ), Read16 ( p + 8 ), p[2], p[3], p + FragmentHeaderBytes };
+        const uint8_t* p = packet + cursor;
+        FragmentView   frag;
+        frag.source   = Read16 ( p );
+        frag.total    = Read16 ( p + 4 );
+        frag.offset   = Read16 ( p + 6 );
+        frag.size     = Read16 ( p + 8 );
+        frag.codec    = p[2];
+        frag.channels = p[3];
+        frag.data     = p + FragmentHeaderBytes;
         cursor += FragmentHeaderBytes;
         if ( frag.source >= MaxSources || !ValidCodec ( frag.codec, frag.channels ) || frag.total == 0 || frag.total > MaxEncodedBytes ||
              !frag.size || frag.offset >= frag.total || frag.size > frag.total - frag.offset || frag.size > bytes - cursor )
