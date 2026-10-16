@@ -102,19 +102,23 @@ public:
 
     // F05 receive adapter. Enabled only by a later-stage negotiated setup;
     // the ordinary source continues through unchanged GetData/PutAudioData.
-    bool EnablePolyInPhysical ( uint64_t generation );
-    void EnablePolyInVirtual ( CChannel* owner, uint16_t source, const QString& tag,
-                               EAudComprType codec, int channels, int encodedBytes, bool newIdentity );
-    void DisablePolyIn();
-    void BeginPolyInTick();
-    bool IsPolyInPhysical() const { return PolyFrameBuffer != nullptr; }
-    bool IsPolyInVirtual() const { return pPolyInOwner != nullptr; }
-    bool IsPolyInVirtualOf ( const CChannel* owner ) const { return pPolyInOwner == owner; }
-    CChannel* PolyInPhysicalOwner() const { return pPolyInOwner; }
-    int GetPolyInInstrument() const { return polyInInstrument; }
-    void SetPolyInInstrument ( int instrument ) { polyInInstrument = instrument; }
+    bool                EnablePolyInPhysical ( uint64_t generation );
+    void                EnablePolyInVirtual ( CChannel*      owner,
+                                              uint16_t       source,
+                                              const QString& tag,
+                                              EAudComprType  codec,
+                                              int            channels,
+                                              int            encodedBytes,
+                                              bool           newIdentity );
+    void                DisablePolyIn();
+    void                BeginPolyInTick();
+    bool                IsPolyInPhysical() const { return PolyFrameBuffer != nullptr; }
+    bool                IsPolyInVirtual() const { return pPolyInOwner != nullptr; }
+    bool                IsPolyInVirtualOf ( const CChannel* owner ) const { return pPolyInOwner == owner; }
+    CChannel*           PolyInPhysicalOwner() const { return pPolyInOwner; }
+    int                 GetPolyInInstrument() const { return polyInInstrument; }
+    void                SetPolyInInstrument ( int instrument ) { polyInInstrument = instrument; }
     const CHostAddress& PolyInOwnerAddress() const { return pPolyInOwner ? pPolyInOwner->GetAddress() : GetAddress(); }
-
 
     void PrepAndSendPacket ( CHighPrioSocket* pSocket, const CVector<uint8_t>& vecbyNPacket, const int iNPacketLen );
 
@@ -241,18 +245,18 @@ protected:
     // Source views refer to the physical StockFrameBuffer's immutable sidecars
     // and live for one OnTimer decode pass, before the next physical Get.
     std::unique_ptr<PolyIn::StockFrameBuffer> PolyFrameBuffer;
-    CChannel* pPolyInOwner = nullptr; // no ownership; physical channels are static array entries
-    uint16_t iPolyInSource = 0;
-    EAudComprType ePolyInCodec = CT_NONE;
-    int iPolyInChannels = 1, iPolyInEncodedBytes = 0, iPolyInFrameCursor = 0, iPolyInFrameCount = 0;
-    QString PolyInTag;
-    int polyInInstrument = -1;
-    std::array<PolyIn::FrameView, 2> PolyInFrames{};
+    CChannel*                                 pPolyInOwner    = nullptr; // no ownership; physical channels are static array entries
+    uint16_t                                  iPolyInSource   = 0;
+    EAudComprType                             ePolyInCodec    = CT_NONE;
+    int                                       iPolyInChannels = 1, iPolyInEncodedBytes = 0, iPolyInFrameCursor = 0, iPolyInFrameCount = 0;
+    QString                                   PolyInTag;
+    int                                       polyInInstrument = -1;
+    std::array<PolyIn::FrameView, 2>          PolyInFrames{};
 
-    int              iCurSockBufNumFrames;
-    bool             bDoAutoSockBufSize;
-    bool             bUseSequenceNumber;
-    uint8_t          iSendSequenceNumber;
+    int     iCurSockBufNumFrames;
+    bool    bDoAutoSockBufSize;
+    bool    bUseSequenceNumber;
+    uint8_t iSendSequenceNumber;
 
     // network output conversion buffer
     CConvBuf<uint8_t> ConvBuf;

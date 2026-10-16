@@ -104,16 +104,13 @@ public:
 
     virtual ~CSound() { CloseJack(); }
 
-    virtual int  Init ( const int iNewPrefMonoBufferSize );
-    virtual void Start();
-    virtual void Stop();
-    bool ConfigurePolyInCapture ( int channels ) override;
-    bool ConfigurePolyInPhysicalCapture ( int channels ) override { return ConfigurePolyInCapture ( channels ); }
-    int GetNumPolyInPhysicalInputs() const override { return PolyInMaxInputs; }
-    const CVector<int16_t>* PolyInCaptureFrame() const override
-    {
-        return polyInCaptureChannels > 2 ? &polyInCaptureFrame : nullptr;
-    }
+    virtual int             Init ( const int iNewPrefMonoBufferSize );
+    virtual void            Start();
+    virtual void            Stop();
+    bool                    ConfigurePolyInCapture ( int channels ) override;
+    bool                    ConfigurePolyInPhysicalCapture ( int channels ) override { return ConfigurePolyInCapture ( channels ); }
+    int                     GetNumPolyInPhysicalInputs() const override { return PolyInMaxInputs; }
+    const CVector<int16_t>* PolyInCaptureFrame() const override { return polyInCaptureChannels > 2 ? &polyInCaptureFrame : nullptr; }
 
     virtual float       GetInOutLatencyMs() { return fInOutLatencyMs; }
     virtual void        EnableMIDI ( bool bEnable ) override;
@@ -129,15 +126,15 @@ public:
 
     // Additional opt-in JACK input ports, pre-registered off the RT callback.
     // The first two ports remain the existing stock left/right ports.
-    static constexpr int PolyInMaxInputs = 20;
-    std::array<jack_port_t*, PolyInMaxInputs-2> polyInExtraPorts{};
-    CVector<int16_t> polyInCaptureFrame;
-    int polyInCaptureChannels = 2;
-    jack_port_t* input_port_left;
-    jack_port_t* input_port_right;
-    jack_port_t* output_port_left;
-    jack_port_t* output_port_right;
-    jack_port_t* input_port_midi;
+    static constexpr int                          PolyInMaxInputs = 20;
+    std::array<jack_port_t*, PolyInMaxInputs - 2> polyInExtraPorts{};
+    CVector<int16_t>                              polyInCaptureFrame;
+    int                                           polyInCaptureChannels = 2;
+    jack_port_t*                                  input_port_left;
+    jack_port_t*                                  input_port_right;
+    jack_port_t*                                  output_port_left;
+    jack_port_t*                                  output_port_right;
+    jack_port_t*                                  input_port_midi;
 
 protected:
     void OpenJack ( const bool bNoAutoJackConnect, const char* jackClientName );

@@ -958,18 +958,22 @@ bool CSound::ConfigurePolyInCapture ( int channels )
 {
     // Called with the stock sound callback stopped. Device enumeration and
     // multi-buffer channel layout already belong to CoreAudio's stock path.
-    if ( IsRunning() || channels < 2 || channels > int(PolyIn::MaxSources) ||
-         channels > iNumInChan || iCoreAudioBufferSizeMono <= 0 ) return false;
-    if ( channels > 2 ) polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
-    else polyInCaptureFrame.clear();
+    if ( IsRunning() || channels < 2 || channels > int ( PolyIn::MaxSources ) || channels > iNumInChan || iCoreAudioBufferSizeMono <= 0 )
+        return false;
+    if ( channels > 2 )
+        polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
+    else
+        polyInCaptureFrame.clear();
     polyInCaptureChannels = channels;
     return true;
 }
 
 bool CSound::ConfigurePolyInPhysicalCapture ( int channels )
 {
-    if ( !ConfigurePolyInCapture ( channels ) ) return false;
-    if ( channels == 2 ) polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
+    if ( !ConfigurePolyInCapture ( channels ) )
+        return false;
+    if ( channels == 2 )
+        polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
     return true;
 }
 
@@ -1117,28 +1121,34 @@ OSStatus CSound::callbackIO ( AudioDeviceID inDevice,
         // No allocation, extra IOProc, resampling or clock in the callback.
         if ( !pSound->polyInCaptureFrame.empty() )
         {
-            const int count = pSound->polyInCaptureChannels;
-            int physical = 0;
-            bool valid = true;
+            const int count    = pSound->polyInCaptureChannels;
+            int       physical = 0;
+            bool      valid    = true;
             for ( UInt32 b = 0; b < inInputData->mNumberBuffers && physical < count; ++b )
             {
-                if ( b >= UInt32(vecNumInBufChan.Size()) ) { valid = false; break; }
-                const int lanes = vecNumInBufChan[b];
+                if ( b >= UInt32 ( vecNumInBufChan.Size() ) )
+                {
+                    valid = false;
+                    break;
+                }
+                const int          lanes  = vecNumInBufChan[b];
                 const AudioBuffer& buffer = inInputData->mBuffers[b];
-                if ( lanes <= 0 || !buffer.mData ||
-                     buffer.mDataByteSize != UInt32(lanes * iCoreAudioBufferSizeMono * sizeof(Float32)) )
-                { valid = false; break; }
+                if ( lanes <= 0 || !buffer.mData || buffer.mDataByteSize != UInt32 ( lanes * iCoreAudioBufferSizeMono * sizeof ( Float32 ) ) )
+                {
+                    valid = false;
+                    break;
+                }
                 const Float32* samples = static_cast<const Float32*> ( buffer.mData );
-                const int used = std::min ( lanes, count - physical );
+                const int      used    = std::min ( lanes, count - physical );
                 for ( int frame = 0; frame < iCoreAudioBufferSizeMono; ++frame )
                     for ( int lane = 0; lane < used; ++lane )
-                        pSound->polyInCaptureFrame[frame * count + physical + lane] =
-                            Float2Short ( samples[frame * lanes + lane] * _MAXSHORT );
+                        pSound->polyInCaptureFrame[frame * count + physical + lane] = Float2Short ( samples[frame * lanes + lane] * _MAXSHORT );
                 physical += lanes;
             }
             // Fail closed rather than submit stale samples if a device changes
             // its layout while running. Stock stereo processing is untouched.
-            if ( !valid || physical < count ) pSound->polyInCaptureFrame.Reset ( 0 );
+            if ( !valid || physical < count )
+                pSound->polyInCaptureFrame.Reset ( 0 );
         }
 
         // call processing callback function

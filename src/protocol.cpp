@@ -842,11 +842,13 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                     break;
 
                 case PROTMESSID_POLYIN_CONFIG:
-                    if ( vecbyMesBodyDataRef.Size() <= 1450 ) emit PolyInConfigReceived ( vecbyMesBodyDataRef );
+                    if ( vecbyMesBodyDataRef.Size() <= 1450 )
+                        emit PolyInConfigReceived ( vecbyMesBodyDataRef );
                     break;
 
                 case PROTMESSID_POLYIN_RESPONSE:
-                    if ( vecbyMesBodyDataRef.Size() == 10 ) emit PolyInResponseReceived ( vecbyMesBodyDataRef );
+                    if ( vecbyMesBodyDataRef.Size() == 10 )
+                        emit PolyInResponseReceived ( vecbyMesBodyDataRef );
                     break;
 
                 case PROTMESSID_CONN_CLIENTS_LIST:
@@ -1319,15 +1321,9 @@ bool CProtocol::EvaluateConClientListMes ( const CVector<uint8_t>& vecData )
     return false; // no error
 }
 
-void CProtocol::CreatePolyInConfig ( const CVector<uint8_t>& body )
-{
-    CreateAndSendMessage ( PROTMESSID_POLYIN_CONFIG, body );
-}
+void CProtocol::CreatePolyInConfig ( const CVector<uint8_t>& body ) { CreateAndSendMessage ( PROTMESSID_POLYIN_CONFIG, body ); }
 
-void CProtocol::CreatePolyInResponse ( const CVector<uint8_t>& body )
-{
-    CreateAndSendMessage ( PROTMESSID_POLYIN_RESPONSE, body );
-}
+void CProtocol::CreatePolyInResponse ( const CVector<uint8_t>& body ) { CreateAndSendMessage ( PROTMESSID_POLYIN_RESPONSE, body ); }
 
 void CProtocol::CreateReqConnClientsList() { CreateAndSendMessage ( PROTMESSID_REQ_CONN_CLIENTS_LIST, CVector<uint8_t> ( 0 ) ); }
 

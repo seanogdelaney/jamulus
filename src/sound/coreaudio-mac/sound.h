@@ -63,16 +63,13 @@ public:
 
     virtual ~CSound();
 
-    virtual int  Init ( const int iNewPrefMonoBufferSize ) override;
-    virtual void Start() override;
-    virtual void Stop() override;
-    bool ConfigurePolyInCapture ( int channels ) override;
-    bool ConfigurePolyInPhysicalCapture ( int channels ) override;
-    int GetNumPolyInPhysicalInputs() const override { return iNumInChan; }
-    const CVector<int16_t>* PolyInCaptureFrame() const override
-    {
-        return !polyInCaptureFrame.empty() ? &polyInCaptureFrame : nullptr;
-    }
+    virtual int             Init ( const int iNewPrefMonoBufferSize ) override;
+    virtual void            Start() override;
+    virtual void            Stop() override;
+    bool                    ConfigurePolyInCapture ( int channels ) override;
+    bool                    ConfigurePolyInPhysicalCapture ( int channels ) override;
+    int                     GetNumPolyInPhysicalInputs() const override { return iNumInChan; }
+    const CVector<int16_t>* PolyInCaptureFrame() const override { return !polyInCaptureFrame.empty() ? &polyInCaptureFrame : nullptr; }
 
     // channel selection
     virtual int     GetNumInputChannels() override { return iNumInChanPlusAddChan; }
@@ -99,33 +96,33 @@ public:
     CVector<short> vecsTmpAudioSndCrdStereo;
     // Same input IOProc and buffer boundary as stock stereo, opt-in only.
     CVector<int16_t> polyInCaptureFrame;
-    int polyInCaptureChannels = 2;
-    int            iCoreAudioBufferSizeMono;
-    int            iCoreAudioBufferSizeStereo;
-    AudioDeviceID  CurrentAudioInputDeviceID;
-    AudioDeviceID  CurrentAudioOutputDeviceID;
-    long           lCurDev;
-    int            iNumInChan;
-    int            iNumInChanPlusAddChan; // includes additional "added" channels
-    int            iNumOutChan;
-    int            iSelInputLeftChannel;
-    int            iSelInputRightChannel;
-    int            iSelOutputLeftChannel;
-    int            iSelOutputRightChannel;
-    int            iSelInBufferLeft;
-    int            iSelInBufferRight;
-    int            iSelInInterlChLeft;
-    int            iSelInInterlChRight;
-    int            iSelAddInBufferLeft;
-    int            iSelAddInBufferRight;
-    int            iSelAddInInterlChLeft;
-    int            iSelAddInInterlChRight;
-    int            iSelOutBufferLeft;
-    int            iSelOutBufferRight;
-    int            iSelOutInterlChLeft;
-    int            iSelOutInterlChRight;
-    CVector<int>   vecNumInBufChan;
-    CVector<int>   vecNumOutBufChan;
+    int              polyInCaptureChannels = 2;
+    int              iCoreAudioBufferSizeMono;
+    int              iCoreAudioBufferSizeStereo;
+    AudioDeviceID    CurrentAudioInputDeviceID;
+    AudioDeviceID    CurrentAudioOutputDeviceID;
+    long             lCurDev;
+    int              iNumInChan;
+    int              iNumInChanPlusAddChan; // includes additional "added" channels
+    int              iNumOutChan;
+    int              iSelInputLeftChannel;
+    int              iSelInputRightChannel;
+    int              iSelOutputLeftChannel;
+    int              iSelOutputRightChannel;
+    int              iSelInBufferLeft;
+    int              iSelInBufferRight;
+    int              iSelInInterlChLeft;
+    int              iSelInInterlChRight;
+    int              iSelAddInBufferLeft;
+    int              iSelAddInBufferRight;
+    int              iSelAddInInterlChLeft;
+    int              iSelAddInInterlChRight;
+    int              iSelOutBufferLeft;
+    int              iSelOutBufferRight;
+    int              iSelOutInterlChLeft;
+    int              iSelOutInterlChRight;
+    CVector<int>     vecNumInBufChan;
+    CVector<int>     vecNumOutBufChan;
 
 protected:
     virtual QString LoadAndInitializeDriver ( QString strDriverName, bool ) override;

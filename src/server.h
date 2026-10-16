@@ -100,7 +100,7 @@ protected:
     virtual void CreateOtherMuteStateChanged ( const int iCurChanID, const int iOtherChanID, const bool bIsMuted ) = 0;
 
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra ) = 0;
-    virtual void HandlePolyInConfig ( int physical, CVector<uint8_t> body ) = 0;
+    virtual void HandlePolyInConfig ( int physical, CVector<uint8_t> body )              = 0;
 };
 
 template<>
@@ -146,15 +146,16 @@ public:
     // admission and control routing. No new control protocol lives here.
     struct PolyInAudioSource
     {
-        uint16_t source;
-        int channel;               // F03 ordinary, reserved stock channel ID
+        uint16_t      source;
+        int           channel; // F03 ordinary, reserved stock channel ID
         EAudComprType codec;
-        int channels, encodedBytes;
+        int           channels, encodedBytes;
     };
-    bool ConfigurePolyInAudio ( const PolyIn::SourceSlots& identities, int physical, uint64_t generation,
+    bool ConfigurePolyInAudio ( const PolyIn::SourceSlots&            identities,
+                                int                                   physical,
+                                uint64_t                              generation,
                                 const std::vector<PolyInAudioSource>& sources );
     void DisablePolyInAudio ( int physical );
-
 
     int GetNumberOfConnectedClients();
 
@@ -234,7 +235,7 @@ protected:
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra );
 
     virtual void SendProtMessage ( int iChID, CVector<uint8_t> vecMessage );
-    void HandlePolyInConfig ( int physical, CVector<uint8_t> body ) override;
+    void         HandlePolyInConfig ( int physical, CVector<uint8_t> body ) override;
 
     template<unsigned int slotId>
     inline void connectChannelSignalsToServerSlots();
@@ -271,12 +272,12 @@ protected:
     int    vecChannelOrder[MAX_NUM_CHANNELS];
     QMutex MutexChanOrder;
 
-    CProtocol         ConnLessProtocol;
-    QMutex            Mutex;
-    QMutex            MutexWelcomeMessage;
-    std::atomic<bool> bChannelIsNowDisconnected;
-    bool bHasPolyInAudio = false; // false on every unmodified legacy-only server
-    PolyIn::SourceSlots polyInSlots; // actual stock-ID reservation, guarded by server Mutex
+    CProtocol                              ConnLessProtocol;
+    QMutex                                 Mutex;
+    QMutex                                 MutexWelcomeMessage;
+    std::atomic<bool>                      bChannelIsNowDisconnected;
+    bool                                   bHasPolyInAudio = false; // false on every unmodified legacy-only server
+    PolyIn::SourceSlots                    polyInSlots;             // actual stock-ID reservation, guarded by server Mutex
     std::array<uint64_t, MAX_NUM_CHANNELS> polyInEpoch{};
 
     // audio encoder/decoder
@@ -309,23 +310,23 @@ protected:
     // those positions by their existing stock IDs. All scratch is preallocated.
     CVector<int>              vecPrevDelayPanIDs;
     CVector<CVector<int16_t>> vecDelayPanRemapScratch;
-    int                       iPrevDelayPanSources = 0;
+    int                       iPrevDelayPanSources    = 0;
     bool                      bPrevDelayPanHadVirtual = false;
 
     struct PolyInHistoryIdentity
     {
-        int owner = -1;
+        int      owner      = -1;
         uint64_t generation = 0;
-        uint16_t source = 0;
+        uint16_t source     = 0;
     };
     std::array<PolyInHistoryIdentity, MAX_NUM_CHANNELS> polyInHistoryIdentity{};
-    CVector<int>              vecNumAudioChannels;
-    CVector<int>              vecNumFrameSizeConvBlocks;
-    CVector<int>              vecUseDoubleSysFraSizeConvBuf;
-    CVector<EAudComprType>    vecAudioComprType;
-    CVector<CVector<int16_t>> vecvecsSendData;
-    CVector<CVector<float>>   vecvecfIntermediateProcBuf;
-    CVector<CVector<uint8_t>> vecvecbyCodedData;
+    CVector<int>                                        vecNumAudioChannels;
+    CVector<int>                                        vecNumFrameSizeConvBlocks;
+    CVector<int>                                        vecUseDoubleSysFraSizeConvBuf;
+    CVector<EAudComprType>                              vecAudioComprType;
+    CVector<CVector<int16_t>>                           vecvecsSendData;
+    CVector<CVector<float>>                             vecvecfIntermediateProcBuf;
+    CVector<CVector<uint8_t>>                           vecvecbyCodedData;
 
     // Channel levels
     CVector<uint16_t> vecChannelLevels;

@@ -325,37 +325,41 @@ void CSound::DestroyMIDIPort()
 // same nframes as stock. Extra ports are created/retired only while stopped.
 bool CSound::ConfigurePolyInCapture ( int channels )
 {
-    if ( channels < 2 || channels > PolyInMaxInputs || IsRunning() || !pJackClient ) return false;
+    if ( channels < 2 || channels > PolyInMaxInputs || IsRunning() || !pJackClient )
+        return false;
     // Sound.Stop() has already quiesced the callback. Do NOT hold its
     // process mutex while calling jack_port_register/unregister: JACK may
     // wait for a process cycle on the JACK server side.
     // Grow first; if JACK cannot supply the ports, roll the additions back.
-    for ( int i=2; i<channels; ++i )
+    for ( int i = 2; i < channels; ++i )
     {
-        if ( !polyInExtraPorts[i-2] )
+        if ( !polyInExtraPorts[i - 2] )
         {
-            const QByteArray name = QByteArray("input ") + QByteArray::number(i+1);
-            polyInExtraPorts[i-2] = jack_port_register ( pJackClient, name.constData(),
-                                            JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0 );
-            if ( !polyInExtraPorts[i-2] )
+            const QByteArray name   = QByteArray ( "input " ) + QByteArray::number ( i + 1 );
+            polyInExtraPorts[i - 2] = jack_port_register ( pJackClient, name.constData(), JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0 );
+            if ( !polyInExtraPorts[i - 2] )
             {
-                for ( int j=2; j<i; ++j ) if ( j>=polyInCaptureChannels && polyInExtraPorts[j-2] )
-                {
-                    jack_port_unregister ( pJackClient, polyInExtraPorts[j-2] );
-                    polyInExtraPorts[j-2] = nullptr;
-                }
+                for ( int j = 2; j < i; ++j )
+                    if ( j >= polyInCaptureChannels && polyInExtraPorts[j - 2] )
+                    {
+                        jack_port_unregister ( pJackClient, polyInExtraPorts[j - 2] );
+                        polyInExtraPorts[j - 2] = nullptr;
+                    }
                 return false;
             }
         }
     }
-    for ( int i=channels; i<PolyInMaxInputs; ++i ) if ( polyInExtraPorts[i-2] )
-    {
-        jack_port_unregister ( pJackClient, polyInExtraPorts[i-2] );
-        polyInExtraPorts[i-2] = nullptr;
-    }
+    for ( int i = channels; i < PolyInMaxInputs; ++i )
+        if ( polyInExtraPorts[i - 2] )
+        {
+            jack_port_unregister ( pJackClient, polyInExtraPorts[i - 2] );
+            polyInExtraPorts[i - 2] = nullptr;
+        }
     polyInCaptureChannels = channels;
-    if ( channels>2 ) polyInCaptureFrame.Init ( iJACKBufferSizeMono*channels );
-    else polyInCaptureFrame.clear();
+    if ( channels > 2 )
+        polyInCaptureFrame.Init ( iJACKBufferSizeMono * channels );
+    else
+        polyInCaptureFrame.clear();
     return true;
 }
 
@@ -390,7 +394,8 @@ int CSound::Init ( const int /* iNewPrefMonoBufferSize */ )
 
     // create memory for intermediate audio buffer
     vecsTmpAudioSndCrdStereo.Init ( iJACKBufferSizeStereo );
-    if ( polyInCaptureChannels > 2 ) polyInCaptureFrame.Init ( iJACKBufferSizeMono*polyInCaptureChannels );
+    if ( polyInCaptureChannels > 2 )
+        polyInCaptureFrame.Init ( iJACKBufferSizeMono * polyInCaptureChannels );
 
     return iJACKBufferSizeMono;
 }
@@ -426,14 +431,14 @@ int CSound::process ( jack_nframes_t nframes, void* arg )
         if ( pSound->polyInCaptureChannels > 2 )
         {
             const int count = pSound->polyInCaptureChannels;
-            for ( int ch=0; ch<count; ++ch )
+            for ( int ch = 0; ch < count; ++ch )
             {
-                auto* input = ch < 2 ? nullptr : static_cast<jack_default_audio_sample_t*>(
-                    jack_port_get_buffer ( pSound->polyInExtraPorts[ch-2], nframes ) );
-                for ( int sample=0; sample<pSound->iJACKBufferSizeMono; ++sample )
-                    pSound->polyInCaptureFrame[sample*count+ch] = ch < 2 ?
-                        pSound->vecsTmpAudioSndCrdStereo[2*sample+ch] :
-                        ( input ? Float2Short ( input[sample]*_MAXSHORT ) : int16_t(0) );
+                auto* input = ch < 2
+                                  ? nullptr
+                                  : static_cast<jack_default_audio_sample_t*> ( jack_port_get_buffer ( pSound->polyInExtraPorts[ch - 2], nframes ) );
+                for ( int sample = 0; sample < pSound->iJACKBufferSizeMono; ++sample )
+                    pSound->polyInCaptureFrame[sample * count + ch] = ch < 2 ? pSound->vecsTmpAudioSndCrdStereo[2 * sample + ch]
+                                                                             : ( input ? Float2Short ( input[sample] * _MAXSHORT ) : int16_t ( 0 ) );
             }
         }
         // call processing callback function

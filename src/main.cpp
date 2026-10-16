@@ -105,8 +105,8 @@ int main ( int argc, char** argv )
 #else
     bool bIsClient = true;
 #endif
-    bool bPolyInRequested = false;
-    int polyInInputCount = 2;
+    bool         bPolyInRequested            = false;
+    int          polyInInputCount            = 2;
     bool         bUseGUI                     = true;
     bool         bStartMinimized             = false;
     bool         bShowComplRegConnList       = false;
@@ -601,7 +601,7 @@ int main ( int argc, char** argv )
         // channel, with one physical capture callback/clock.
         if ( GetStringArgument ( argc, argv, i, "--polyin-sources", "--polyin-sources", strArgument ) )
         {
-            bool valid = false;
+            bool valid       = false;
             polyInInputCount = strArgument.toInt ( &valid );
             if ( !valid || polyInInputCount < 2 || polyInInputCount > 20 )
             {

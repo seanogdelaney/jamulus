@@ -345,7 +345,7 @@ inline void CServer::connectChannelSignalsToServerSlots()
 
     void ( CServer::*pOnMuteStateHasChangedCh ) ( int, bool ) = &CServerSlots<slotId>::OnMuteStateHasChangedCh;
 
-    void ( CServer::*pOnServerAutoSockBufSizeChangeCh ) ( int ) = &CServerSlots<slotId>::OnServerAutoSockBufSizeChangeCh;
+    void ( CServer::*pOnServerAutoSockBufSizeChangeCh ) ( int )       = &CServerSlots<slotId>::OnServerAutoSockBufSizeChangeCh;
     void ( CServer::*pOnPolyInConfigReceivedCh ) ( CVector<uint8_t> ) = &CServerSlots<slotId>::OnPolyInConfigReceivedCh;
 
     // send message
@@ -356,8 +356,7 @@ inline void CServer::connectChannelSignalsToServerSlots()
     // OnProtocolMessageReceived holds Mutex while CProtocol emits this signal.
     // Queue configuration onto this object's Qt event loop; a direct call
     // would recursively lock the nonrecursive server Mutex and deadlock.
-    QObject::connect ( &vecChannels[iCurChanID], &CChannel::PolyInConfigReceived, this,
-                       pOnPolyInConfigReceivedCh, Qt::QueuedConnection );
+    QObject::connect ( &vecChannels[iCurChanID], &CChannel::PolyInConfigReceived, this, pOnPolyInConfigReceivedCh, Qt::QueuedConnection );
 
     // channel info has changed
     QObject::connect ( &vecChannels[iCurChanID], &CChannel::ChanInfoHasChanged, this, &CServer::CreateAndSendChanListForAllConChannels );
@@ -683,7 +682,7 @@ void CServer::OnTimer()
     // 1:1 ticks; protect the complete processing cycle only when poly-in was
     // active at entry. Stage 5 configuration uses this existing CServer::Mutex.
     QMutexLocker locker ( &Mutex );
-    const bool bPolyInAtStart = bHasPolyInAudio;
+    const bool   bPolyInAtStart = bHasPolyInAudio;
     {
         // Make put and get calls thread safe.
 
@@ -712,17 +711,19 @@ void CServer::OnTimer()
         // Stage 5 owns the F03 roster and calls ConfigurePolyInAudio only after
         // negotiated admission. No virtual channel is a new physical recipient.
         iNumMixSources = iNumClients;
-        if ( bHasPolyInAudio ) for ( int id = 0; id < iMaxNumChannels; ++id )
-        {
-            CChannel* owner = vecChannels[id].PolyInPhysicalOwner();
-            if ( owner && owner->IsConnected() && iNumMixSources < iMaxNumChannels )
+        if ( bHasPolyInAudio )
+            for ( int id = 0; id < iMaxNumChannels; ++id )
             {
-                vecfFadeInGains[iNumMixSources] = vecChannels[id].GetFadeInGain();
-                vecChanIDsCurConChan[iNumMixSources++] = id;
-                vecChannels[id].BeginPolyInTick();
+                CChannel* owner = vecChannels[id].PolyInPhysicalOwner();
+                if ( owner && owner->IsConnected() && iNumMixSources < iMaxNumChannels )
+                {
+                    vecfFadeInGains[iNumMixSources]        = vecChannels[id].GetFadeInGain();
+                    vecChanIDsCurConChan[iNumMixSources++] = id;
+                    vecChannels[id].BeginPolyInTick();
+                }
+                if ( vecChannels[id].IsPolyInPhysical() )
+                    vecChannels[id].BeginPolyInTick();
             }
-            if ( vecChannels[id].IsPolyInPhysical() ) vecChannels[id].BeginPolyInTick();
-        }
 
         // use multithreading for any non-zero number of clients
         // (overhead is low and it is worth doing for all numbers)
@@ -781,14 +782,15 @@ void CServer::OnTimer()
         int iLiveMixSources = iNumClients;
         for ( int source = iNumClients; source < iNumMixSources; ++source )
         {
-            const int id = vecChanIDsCurConChan[source];
+            const int id    = vecChanIDsCurConChan[source];
             CChannel* owner = vecChannels[id].PolyInPhysicalOwner();
-            if ( !owner || !owner->IsConnected() ) continue;
+            if ( !owner || !owner->IsConnected() )
+                continue;
             vecChanIDsCurConChan[iLiveMixSources] = id;
             if ( source != iLiveMixSources )
                 for ( int recipient = 0; recipient < iNumClients; ++recipient )
                 {
-                    vecvecfGains[recipient][iLiveMixSources] = vecvecfGains[recipient][source];
+                    vecvecfGains[recipient][iLiveMixSources]    = vecvecfGains[recipient][source];
                     vecvecfPannings[recipient][iLiveMixSources] = vecvecfPannings[recipient][source];
                 }
             ++iLiveMixSources;
@@ -813,7 +815,11 @@ void CServer::OnTimer()
                 {
                     int previous = -1;
                     for ( int old = 0; old < iPrevDelayPanSources; ++old )
-                        if ( vecPrevDelayPanIDs[old] == vecChanIDsCurConChan[slot] ) { previous = old; break; }
+                        if ( vecPrevDelayPanIDs[old] == vecChanIDsCurConChan[slot] )
+                        {
+                            previous = old;
+                            break;
+                        }
                     for ( int sample = 0; sample < samples; ++sample )
                         vecDelayPanRemapScratch[slot][sample] = previous >= 0 ? vecvecsData2[previous][sample] : 0;
                 }
@@ -837,8 +843,7 @@ void CServer::OnTimer()
         if ( bHasPolyInAudio )
             for ( int recipient = 0; recipient < iNumClients; ++recipient )
                 for ( int source = iNumClients; source < iNumMixSources; ++source )
-                    if ( vecChannels[vecChanIDsCurConChan[source]].IsPolyInVirtualOf (
-                             &vecChannels[vecChanIDsCurConChan[recipient]] ) )
+                    if ( vecChannels[vecChanIDsCurConChan[source]].IsPolyInVirtualOf ( &vecChannels[vecChanIDsCurConChan[recipient]] ) )
                         vecvecfGains[recipient][source] = 0.0f;
 
         // a channel is now disconnected, take action on it
@@ -849,7 +854,8 @@ void CServer::OnTimer()
         }
     }
 
-    if ( !bPolyInAtStart ) locker.unlock(); // ordinary stock lock release point
+    if ( !bPolyInAtStart )
+        locker.unlock(); // ordinary stock lock release point
 
     // Process data ------------------------------------------------------------
     // Check if at least one client is connected. If not, stop server until
@@ -915,8 +921,7 @@ void CServer::OnTimer()
             for ( int i = iNumClients; i < iNumMixSources; ++i )
             {
                 const int id = vecChanIDsCurConChan[i];
-                emit AudioFrame ( id, vecChannels[id].GetName(), vecChannels[id].PolyInOwnerAddress(),
-                                  vecNumAudioChannels[i], vecvecsData[i] );
+                emit      AudioFrame ( id, vecChannels[id].GetName(), vecChannels[id].PolyInOwnerAddress(), vecNumAudioChannels[i], vecvecsData[i] );
             }
 
         // processing with multithreading
@@ -932,7 +937,8 @@ void CServer::OnTimer()
                 const int iStartChanCnt = iBlockCnt * iMTBlockSize;
                 const int iStopChanCnt  = std::min ( ( iBlockCnt + 1 ) * iMTBlockSize - 1, iNumClients - 1 );
 
-                Futures.push_back ( pThreadPool->enqueue ( CServer::MixEncodeTransmitDataBlocks, this, iStartChanCnt, iStopChanCnt, iNumMixSources ) );
+                Futures.push_back (
+                    pThreadPool->enqueue ( CServer::MixEncodeTransmitDataBlocks, this, iStartChanCnt, iStopChanCnt, iNumMixSources ) );
             }
 
             // make sure all concurrent run threads have finished when we leave this function
@@ -953,7 +959,7 @@ void CServer::OnTimer()
             }
             // Record the exact layout of the frame just stored by stock.
             // This is only an ID snapshot; no replacement DSP/history path.
-            iPrevDelayPanSources = iNumMixSources;
+            iPrevDelayPanSources    = iNumMixSources;
             bPrevDelayPanHadVirtual = iNumMixSources > iNumClients;
             for ( int i = 0; i < iNumMixSources; ++i )
                 vecPrevDelayPanIDs[i] = vecChanIDsCurConChan[i];
@@ -1484,7 +1490,7 @@ CVector<CChannelInfo> CServer::CreateChannelList()
     {
         if ( vecChannels[i].IsConnected() )
         {
-            CChannelCoreInfo info = vecChannels[i].GetChanInfo();
+            CChannelCoreInfo              info = vecChannels[i].GetChanInfo();
             PolyIn::SourceSlots::Identity identity;
             if ( vecChannels[i].IsPolyInPhysical() && polyInSlots.ResolveChannel ( i, identity ) )
                 info.strName = QString::fromStdString ( identity.tag );
@@ -1492,13 +1498,13 @@ CVector<CChannelInfo> CServer::CreateChannelList()
                 info.iInstrument = vecChannels[i].GetPolyInInstrument();
             vecChanInfo.Add ( CChannelInfo ( i, info ) );
         }
-        else if ( vecChannels[i].IsPolyInVirtual() &&
-                  vecChannels[i].PolyInPhysicalOwner()->IsConnected() )
+        else if ( vecChannels[i].IsPolyInVirtual() && vecChannels[i].PolyInPhysicalOwner()->IsConnected() )
         {
             // Ordinary stock entry, not an invented receiver control or UI.
             CChannelCoreInfo info = vecChannels[i].PolyInPhysicalOwner()->GetChanInfo();
-            info.strName = vecChannels[i].GetName();
-            if ( vecChannels[i].GetPolyInInstrument() >= 0 ) info.iInstrument = vecChannels[i].GetPolyInInstrument();
+            info.strName          = vecChannels[i].GetName();
+            if ( vecChannels[i].GetPolyInInstrument() >= 0 )
+                info.iInstrument = vecChannels[i].GetPolyInInstrument();
             vecChanInfo.Add ( CChannelInfo ( i, info ) );
         }
     }
@@ -1650,16 +1656,25 @@ int CServer::FindChannel ( const CHostAddress& CheckAddr, const bool bAllowNew )
     }
 
     // allocate a new channel
-    i          = iCurNumChannels++; // save index of free channel and increment count
+    i = iCurNumChannels++; // save index of free channel and increment count
     // Retain stock's sorted physical address prefix and free-ID suffix. A
     // negotiated logical source uses a real stock ID but must never become a
     // physical network session. For a legacy-only server this picks the exact
     // same first free ID as stock, with no other change.
     int available = i;
-    while ( available < iMaxNumChannels && polyInSlots.IsTaken ( vecChannelOrder[available] ) ) ++available;
-    if ( available == iMaxNumChannels ) { --iCurNumChannels; return INVALID_CHANNEL_ID; }
+    while ( available < iMaxNumChannels && polyInSlots.IsTaken ( vecChannelOrder[available] ) )
+        ++available;
+    if ( available == iMaxNumChannels )
+    {
+        --iCurNumChannels;
+        return INVALID_CHANNEL_ID;
+    }
     iNewChanID = vecChannelOrder[available];
-    while ( available > i ) { vecChannelOrder[available] = vecChannelOrder[available-1]; --available; }
+    while ( available > i )
+    {
+        vecChannelOrder[available] = vecChannelOrder[available - 1];
+        --available;
+    }
     vecChannelOrder[i] = iNewChanID;
     InitChannel ( iNewChanID, CheckAddr );
     // Every stock physical connection occupies an ID before any producer
@@ -1719,8 +1734,7 @@ void CServer::FreeChannel ( const int iCurChanID )
         {
             // The stock ID is available for reassignment only after its
             // physical ownership (and all virtual reservations) is retired.
-            polyInSlots.RetirePhysical ( iCurChanID,
-                polyInEpoch[iCurChanID] ? polyInEpoch[iCurChanID] : uint64_t(1) );
+            polyInSlots.RetirePhysical ( iCurChanID, polyInEpoch[iCurChanID] ? polyInEpoch[iCurChanID] : uint64_t ( 1 ) );
             polyInEpoch[iCurChanID] = 0;
             --iCurNumChannels;
 
@@ -1912,71 +1926,77 @@ bool CServer::CreateLevelsForAllConChannels ( const int iNumClients )
 // F05 is an audio adapter, not a roster: use the accepted F03 slot owner to
 // verify every existing stock ID. Caller (Stage 5) serializes configuration
 // with OnTimer under CServer::Mutex. This performs no network/control exchange.
-bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots& identities, int physical,
-                                      uint64_t generation, const std::vector<PolyInAudioSource>& sources )
+bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots&            identities,
+                                     int                                   physical,
+                                     uint64_t                              generation,
+                                     const std::vector<PolyInAudioSource>& sources )
 {
-    if ( physical < 0 || physical >= iMaxNumChannels || !generation ||
-         sources.empty() || sources.size() > PolyIn::MaxSources || !vecChannels[physical].IsConnected() ) return false;
+    if ( physical < 0 || physical >= iMaxNumChannels || !generation || sources.empty() || sources.size() > PolyIn::MaxSources ||
+         !vecChannels[physical].IsConnected() )
+        return false;
 
     std::array<bool, MAX_NUM_CHANNELS> used{};
-    bool sourceZero = false;
+    bool                               sourceZero = false;
     for ( const auto& s : sources )
     {
         PolyIn::SourceSlots::Identity actual;
-        if ( s.channel < 0 || s.channel >= iMaxNumChannels || used[s.channel] ||
-             s.source >= PolyIn::MaxSources || !identities.Resolve ( physical, generation, s.source, actual ) ||
-             actual.channel != s.channel || s.channels < 1 || s.channels > 2 ||
-             ( s.codec != CT_OPUS && s.codec != CT_OPUS64 ) ||
-             s.codec != vecChannels[physical].GetAudioCompressionType() ||
-             s.encodedBytes <= 0 || s.encodedBytes > int ( PolyIn::MaxEncodedBytes ) ||
-             ( s.channel != physical && ( vecChannels[s.channel].IsConnected() ||
-               ( vecChannels[s.channel].IsPolyInVirtual() && !vecChannels[s.channel].IsPolyInVirtualOf ( &vecChannels[physical] ) ) ) ) )
+        if ( s.channel < 0 || s.channel >= iMaxNumChannels || used[s.channel] || s.source >= PolyIn::MaxSources ||
+             !identities.Resolve ( physical, generation, s.source, actual ) || actual.channel != s.channel || s.channels < 1 || s.channels > 2 ||
+             ( s.codec != CT_OPUS && s.codec != CT_OPUS64 ) || s.codec != vecChannels[physical].GetAudioCompressionType() || s.encodedBytes <= 0 ||
+             s.encodedBytes > int ( PolyIn::MaxEncodedBytes ) ||
+             ( s.channel != physical &&
+               ( vecChannels[s.channel].IsConnected() ||
+                 ( vecChannels[s.channel].IsPolyInVirtual() && !vecChannels[s.channel].IsPolyInVirtualOf ( &vecChannels[physical] ) ) ) ) )
             return false;
         used[s.channel] = true;
         if ( s.source == 0 )
         {
             if ( s.channel != physical || s.codec != vecChannels[physical].GetAudioCompressionType() ||
-                 s.channels != vecChannels[physical].GetNumAudioChannels() ||
-                 s.encodedBytes != vecChannels[physical].GetCeltNumCodedBytes() ) return false;
+                 s.channels != vecChannels[physical].GetNumAudioChannels() || s.encodedBytes != vecChannels[physical].GetCeltNumCodedBytes() )
+                return false;
             sourceZero = true;
         }
     }
-    if ( !sourceZero ) return false;
+    if ( !sourceZero )
+        return false;
 
     // A reconfiguration retains the one physical stock window when the epoch
     // is unchanged. Source churn never resets the physical jitter statistics.
-    if ( !vecChannels[physical].EnablePolyInPhysical ( generation ) ) return false;
+    if ( !vecChannels[physical].EnablePolyInPhysical ( generation ) )
+        return false;
     for ( int id = 0; id < iMaxNumChannels; ++id )
         if ( vecChannels[id].IsPolyInVirtualOf ( &vecChannels[physical] ) && !used[id] )
         {
             vecChannels[id].DisablePolyIn();
             for ( int slot = 0; slot < iPrevDelayPanSources; ++slot )
-                if ( vecPrevDelayPanIDs[slot] == id ) vecPrevDelayPanIDs[slot] = INVALID_CHANNEL_ID;
+                if ( vecPrevDelayPanIDs[slot] == id )
+                    vecPrevDelayPanIDs[slot] = INVALID_CHANNEL_ID;
             polyInHistoryIdentity[id] = {};
         }
     for ( const auto& s : sources )
     {
         PolyIn::SourceSlots::Identity actual;
         identities.Resolve ( physical, generation, s.source, actual );
-        auto& prior = polyInHistoryIdentity[s.channel];
+        auto&      prior           = polyInHistoryIdentity[s.channel];
         const bool changedIdentity = prior.owner != physical || prior.generation != generation || prior.source != s.source;
-        const bool changedFormat = vecChannels[s.channel].IsPolyInVirtual() &&
-            ( vecChannels[s.channel].GetAudioCompressionType() != s.codec ||
-              vecChannels[s.channel].GetNumAudioChannels() != s.channels ||
-              vecChannels[s.channel].GetCeltNumCodedBytes() != s.encodedBytes );
+        const bool changedFormat   = vecChannels[s.channel].IsPolyInVirtual() && ( vecChannels[s.channel].GetAudioCompressionType() != s.codec ||
+                                                                                 vecChannels[s.channel].GetNumAudioChannels() != s.channels ||
+                                                                                 vecChannels[s.channel].GetCeltNumCodedBytes() != s.encodedBytes );
         if ( changedIdentity || changedFormat )
         {
             // Stock history is indexed by transient mix position, not identity.
             // A new logical identity or PCM format cannot read old delayed data.
             for ( int slot = 0; slot < iPrevDelayPanSources; ++slot )
-                if ( vecPrevDelayPanIDs[slot] == s.channel ) vecPrevDelayPanIDs[slot] = INVALID_CHANNEL_ID;
+                if ( vecPrevDelayPanIDs[slot] == s.channel )
+                    vecPrevDelayPanIDs[slot] = INVALID_CHANNEL_ID;
 
             // Reuse stock's new-client receive reset for each new producer
             // stream, including source zero and reused virtual slots.
             // Reset alone rewinds the read cursor but retains old PCM bytes;
             // Init gives a new logical source fresh zeroed conversion storage.
             DoubleFrameSizeConvBufIn[s.channel].Init ( 2 * DOUBLE_SYSTEM_FRAME_SIZE_SAMPLES );
-            if ( s.channel != physical ) DoubleFrameSizeConvBufOut[s.channel].Reset();
+            if ( s.channel != physical )
+                DoubleFrameSizeConvBufOut[s.channel].Reset();
             opus_custom_decoder_ctl ( OpusDecoderMono[s.channel], OPUS_RESET_STATE );
             opus_custom_decoder_ctl ( OpusDecoderStereo[s.channel], OPUS_RESET_STATE );
             opus_custom_decoder_ctl ( Opus64DecoderMono[s.channel], OPUS_RESET_STATE );
@@ -1987,7 +2007,7 @@ bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots& identities, int 
         // while preserving the physical recipient's return encoder and gains.
         if ( s.channel == physical )
         {
-            prior = {physical, generation, s.source};
+            prior = { physical, generation, s.source };
             continue;
         }
         if ( changedIdentity )
@@ -2002,10 +2022,14 @@ bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots& identities, int 
                 vecChannels[id].SetPan ( s.channel, 0.5f );
             }
         }
-        prior = {physical, generation, s.source};
-        vecChannels[s.channel].EnablePolyInVirtual ( &vecChannels[physical], s.source,
-                                                      QString::fromStdString ( actual.tag ),
-                                                      s.codec, s.channels, s.encodedBytes, changedIdentity );
+        prior = { physical, generation, s.source };
+        vecChannels[s.channel].EnablePolyInVirtual ( &vecChannels[physical],
+                                                     s.source,
+                                                     QString::fromStdString ( actual.tag ),
+                                                     s.codec,
+                                                     s.channels,
+                                                     s.encodedBytes,
+                                                     changedIdentity );
     }
     bHasPolyInAudio = true;
     return true;
@@ -2013,19 +2037,25 @@ bool CServer::ConfigurePolyInAudio ( const PolyIn::SourceSlots& identities, int 
 
 void CServer::DisablePolyInAudio ( int physical )
 {
-    if ( physical < 0 || physical >= iMaxNumChannels ) return;
+    if ( physical < 0 || physical >= iMaxNumChannels )
+        return;
     for ( int id = 0; id < iMaxNumChannels; ++id )
         if ( vecChannels[id].IsPolyInVirtualOf ( &vecChannels[physical] ) )
         {
             vecChannels[id].DisablePolyIn();
             for ( int slot = 0; slot < iPrevDelayPanSources; ++slot )
-                if ( vecPrevDelayPanIDs[slot] == id ) vecPrevDelayPanIDs[slot] = INVALID_CHANNEL_ID;
+                if ( vecPrevDelayPanIDs[slot] == id )
+                    vecPrevDelayPanIDs[slot] = INVALID_CHANNEL_ID;
             polyInHistoryIdentity[id] = {};
         }
     vecChannels[physical].DisablePolyIn();
     bHasPolyInAudio = false;
     for ( int id = 0; id < iMaxNumChannels; ++id )
-        if ( vecChannels[id].IsPolyInPhysical() ) { bHasPolyInAudio = true; break; }
+        if ( vecChannels[id].IsPolyInPhysical() )
+        {
+            bHasPolyInAudio = true;
+            break;
+        }
 }
 
 // The stock reliable per-channel CProtocol delivers this on the server's Qt
@@ -2033,18 +2063,18 @@ void CServer::DisablePolyInAudio ( int physical )
 // signal forwarding is synchronous and OnTimer takes the same nonrecursive lock.
 void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
 {
-    uint64_t epoch = 0;
+    uint64_t                           epoch = 0;
     std::vector<PolyIn::ControlSource> parsed;
-    const bool valid = PolyIn::DecodeConfig ( body.data(), size_t ( body.Size() ), epoch, parsed );
-    bool accepted = false;
-    bool publishRetirement = false;
-    CVector<CChannelInfo> retiredChannelList ( 0 );
+    const bool                         valid             = PolyIn::DecodeConfig ( body.data(), size_t ( body.Size() ), epoch, parsed );
+    bool                               accepted          = false;
+    bool                               publishRetirement = false;
+    CVector<CChannelInfo>              retiredChannelList ( 0 );
     {
         QMutexLocker audio ( &Mutex );
         if ( valid && physical >= 0 && physical < iMaxNumChannels && vecChannels[physical].IsConnected() &&
              ( !polyInEpoch[physical] || epoch >= polyInEpoch[physical] ) )
         {
-            const uint64_t previous = polyInEpoch[physical] ? polyInEpoch[physical] : uint64_t(1);
+            const uint64_t previous = polyInEpoch[physical] ? polyInEpoch[physical] : uint64_t ( 1 );
             if ( parsed.empty() )
             {
                 // Zero-source CONFIG is an acknowledged stock withdrawal.
@@ -2055,46 +2085,47 @@ void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
                 else
                 {
                     PolyIn::SourceSlots::Identity original;
-                    if ( polyInSlots.Resolve ( physical, previous, 0, original ) &&
-                         original.channel == physical )
+                    if ( polyInSlots.Resolve ( physical, previous, 0, original ) && original.channel == physical )
                     {
                         // The real source-zero ownership check precedes the
                         // only destructive operation (stock buffer reset).
-                        if ( vecChannels[physical].IsPolyInPhysical() ) DisablePolyInAudio ( physical );
+                        if ( vecChannels[physical].IsPolyInPhysical() )
+                            DisablePolyInAudio ( physical );
                         if ( polyInSlots.RetirePhysical ( physical, previous ) )
                         {
                             const auto name = vecChannels[physical].GetChanInfo().strName.toStdString();
-                            accepted = polyInSlots.AdmitPhysical ( physical, epoch, name );
-                            if ( accepted ) polyInEpoch[physical] = epoch;
+                            accepted        = polyInSlots.AdmitPhysical ( physical, epoch, name );
+                            if ( accepted )
+                                polyInEpoch[physical] = epoch;
                         }
                     }
                 }
             }
             else
             {
-            // A completed zero-source withdrawal retires this epoch. An
-            // equal-generation nonempty CONFIG must not resurrect PLIN,
-            // even if an old client retransmits it after the withdrawal ACK.
-            // An active PLIN epoch may still be retransmitted idempotently.
-            bool admissible = epoch != polyInEpoch[physical] ||
-                              vecChannels[physical].IsPolyInPhysical();
-            std::vector<PolyIn::SourceSlots::Definition> definitions;
-            std::vector<PolyInAudioSource> audioSources;
-            definitions.reserve ( parsed.size() );
-            audioSources.reserve ( parsed.size() );
-            for ( const auto& s : parsed )
-            {
-                if ( EAudComprType(s.codec) != vecChannels[physical].GetAudioCompressionType() ||
-                     s.instrument >= CInstPictures::GetNumAvailableInst() ) admissible = false;
-                if ( s.source == 0 &&
-                     ( int(s.channels) != vecChannels[physical].GetNumAudioChannels() ||
-                       int(s.bytes) != vecChannels[physical].GetCeltNumCodedBytes() ) ) admissible = false;
-                definitions.push_back ( {s.source, s.name} );
-            }
-            if ( admissible )
-            {
-                const uint64_t ticket = polyInSlots.Reserve ( physical, previous, epoch, definitions );
-                if ( ticket )
+                // A completed zero-source withdrawal retires this epoch. An
+                // equal-generation nonempty CONFIG must not resurrect PLIN,
+                // even if an old client retransmits it after the withdrawal ACK.
+                // An active PLIN epoch may still be retransmitted idempotently.
+                bool                                         admissible = epoch != polyInEpoch[physical] || vecChannels[physical].IsPolyInPhysical();
+                std::vector<PolyIn::SourceSlots::Definition> definitions;
+                std::vector<PolyInAudioSource>               audioSources;
+                definitions.reserve ( parsed.size() );
+                audioSources.reserve ( parsed.size() );
+                for ( const auto& s : parsed )
+                {
+                    if ( EAudComprType ( s.codec ) != vecChannels[physical].GetAudioCompressionType() ||
+                         s.instrument >= CInstPictures::GetNumAvailableInst() )
+                        admissible = false;
+                    if ( s.source == 0 && ( int ( s.channels ) != vecChannels[physical].GetNumAudioChannels() ||
+                                            int ( s.bytes ) != vecChannels[physical].GetCeltNumCodedBytes() ) )
+                        admissible = false;
+                    definitions.push_back ( { s.source, s.name } );
+                }
+                if ( admissible )
+                {
+                    const uint64_t ticket = polyInSlots.Reserve ( physical, previous, epoch, definitions );
+                    if ( ticket )
                     {
                         // Reserve is a transaction; only an admitted, validated
                         // source set becomes visible to stock ID/control paths.
@@ -2103,9 +2134,13 @@ void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
                             for ( const auto& s : parsed )
                             {
                                 PolyIn::SourceSlots::Identity found;
-                                if ( !polyInSlots.Resolve ( physical, epoch, s.source, found ) ) { admissible=false; break; }
-                                audioSources.push_back ( {s.source, found.channel, EAudComprType(s.codec),
-                                                         int(s.channels), int(s.bytes)} );
+                                if ( !polyInSlots.Resolve ( physical, epoch, s.source, found ) )
+                                {
+                                    admissible = false;
+                                    break;
+                                }
+                                audioSources.push_back (
+                                    { s.source, found.channel, EAudComprType ( s.codec ), int ( s.channels ), int ( s.bytes ) } );
                             }
                             if ( admissible )
                             {
@@ -2138,7 +2173,7 @@ void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
                             }
                         }
                     }
-            }
+                }
             }
         }
     }
@@ -2146,13 +2181,15 @@ void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
     // own retransmission/ACK. Never send it to any receiver or virtual slot.
     if ( accepted && publishRetirement )
         for ( int id = 0; id < iMaxNumChannels; ++id )
-            if ( vecChannels[id].IsConnected() ) vecChannels[id].CreateConClientListMes ( retiredChannelList );
+            if ( vecChannels[id].IsConnected() )
+                vecChannels[id].CreateConClientListMes ( retiredChannelList );
     if ( valid && physical >= 0 && physical < iMaxNumChannels && vecChannels[physical].IsConnected() )
     {
-        const auto answer = PolyIn::Response ( epoch, accepted );
+        const auto       answer = PolyIn::Response ( epoch, accepted );
         CVector<uint8_t> payload ( int ( answer.size() ) );
         std::copy ( answer.begin(), answer.end(), payload.begin() );
         vecChannels[physical].CreatePolyInResponse ( payload );
-        if ( accepted ) CreateAndSendChanListForAllConChannels();
+        if ( accepted )
+            CreateAndSendChanListForAllConChannels();
     }
 }

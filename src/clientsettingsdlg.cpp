@@ -125,9 +125,9 @@ public:
             if ( icon == nullptr || ch1 == nullptr || ch2 == nullptr )
                 continue;
             rows.push_back ( CPolyInAudioChannelConfig ( tag == nullptr ? std::string() : tag->text().trimmed().toStdString(),
-                                                      icon->currentData().toInt(),
-                                                      ch1->currentData().toInt(),
-                                                      ch2->currentData().toInt() ) );
+                                                         icon->currentData().toInt(),
+                                                         ch1->currentData().toInt(),
+                                                         ch2->currentData().toInt() ) );
         }
         return rows;
     }
@@ -178,7 +178,8 @@ private:
         auto rows = GetChannels();
         std::swap ( rows[from], rows[to] );
         pTable->setRowCount ( 0 );
-        for ( const auto& row : rows ) AddRow ( row );
+        for ( const auto& row : rows )
+            AddRow ( row );
         pTable->setCurrentCell ( to, 1 );
     }
 
@@ -203,7 +204,8 @@ private:
                 return false;
             }
             const int a = ch1->currentData().toInt(), b = ch2->currentData().toInt();
-            if ( a < 0 || a >= pClient->GetPolyInPhysicalInputs() || b >= pClient->GetPolyInPhysicalInputs() || a == b || used[a] || ( b != INVALID_INDEX && used[b] ) )
+            if ( a < 0 || a >= pClient->GetPolyInPhysicalInputs() || b >= pClient->GetPolyInPhysicalInputs() || a == b || used[a] ||
+                 ( b != INVALID_INDEX && used[b] ) )
             {
                 *error = tr ( "Each physical input may be used by only one row." );
                 return false;

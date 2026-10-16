@@ -81,16 +81,13 @@ public:
 
     virtual ~CSound();
 
-    virtual int  Init ( const int iNewPrefMonoBufferSize );
-    virtual void Start();
-    virtual void Stop();
-    bool ConfigurePolyInCapture ( int channels ) override;
-    bool ConfigurePolyInPhysicalCapture ( int channels ) override;
-    int GetNumPolyInPhysicalInputs() const override { return lNumInChan; }
-    const CVector<int16_t>* PolyInCaptureFrame() const override
-    {
-        return !polyInCaptureFrame.empty() ? &polyInCaptureFrame : nullptr;
-    }
+    virtual int             Init ( const int iNewPrefMonoBufferSize );
+    virtual void            Start();
+    virtual void            Stop();
+    bool                    ConfigurePolyInCapture ( int channels ) override;
+    bool                    ConfigurePolyInPhysicalCapture ( int channels ) override;
+    int                     GetNumPolyInPhysicalInputs() const override { return lNumInChan; }
+    const CVector<int16_t>* PolyInCaptureFrame() const override { return !polyInCaptureFrame.empty() ? &polyInCaptureFrame : nullptr; }
 
     virtual void OpenDriverSetup() { ASIOControlPanel(); }
 
@@ -138,7 +135,7 @@ protected:
     CVector<int16_t> vecsMultChanAudioSndCrd;
     // Optional physical-channel tap, same ASIO callback/driver/bufferSwitch.
     CVector<int16_t> polyInCaptureFrame;
-    int polyInCaptureChannels = 2;
+    int              polyInCaptureChannels = 2;
 
     QMutex ASIOMutex;
 

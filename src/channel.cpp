@@ -271,10 +271,13 @@ bool CChannel::SetSockBufNumFrames ( const int iNewNumFrames, const bool bPreser
                 {
                     // The borrowed stock window must honour the same reset vs.
                     // preserve flag as the ordinary SockBuf.Init call below.
-                    if ( bPreserve ) PolyFrameBuffer->Resize ( iNewNumFrames );
-                    else PolyFrameBuffer->Init ( PolyFrameBuffer->Generation(), iNewNumFrames );
+                    if ( bPreserve )
+                        PolyFrameBuffer->Resize ( iNewNumFrames );
+                    else
+                        PolyFrameBuffer->Init ( PolyFrameBuffer->Generation(), iNewNumFrames );
                 }
-                else SockBuf.Init ( iCeltNumCodedBytes, iNewNumFrames, bUseSequenceNumber, bPreserve );
+                else
+                    SockBuf.Init ( iCeltNumCodedBytes, iNewNumFrames, bUseSequenceNumber, bPreserve );
 
                 // store current auto socket buffer size setting in the mutex
                 // region since if we use the current parameter below in the
@@ -515,8 +518,10 @@ void CChannel::OnNetTranspPropsReceived ( CNetworkTransportProps NetworkTranspor
                 // frame-identity tokens, not the ordinary encoded audio bytes.
                 // Follow stock's transport-property reset, but reinitialize
                 // the same buffer via its token owner (including sidecars).
-                if ( PolyFrameBuffer ) PolyFrameBuffer->Init ( PolyFrameBuffer->Generation(), iCurSockBufNumFrames );
-                else SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
+                if ( PolyFrameBuffer )
+                    PolyFrameBuffer->Init ( PolyFrameBuffer->Generation(), iCurSockBufNumFrames );
+                else
+                    SockBuf.Init ( iCeltNumCodedBytes, iCurSockBufNumFrames, bUseSequenceNumber );
             }
             MutexSocketBuf.unlock();
 
@@ -620,8 +625,7 @@ EPutDataStat CChannel::PutAudioData ( const CVector<uint8_t>& vecbyData, const i
                 }
 
                 // manage audio fade-in counter, after channel is identified
-                if ( iFadeInCnt < iFadeInCntMax && bIsIdentified &&
-                     ( !PolyFrameBuffer || PolyFrameBuffer->Stats().stockPuts != priorPuts ) )
+                if ( iFadeInCnt < iFadeInCntMax && bIsIdentified && ( !PolyFrameBuffer || PolyFrameBuffer->Stats().stockPuts != priorPuts ) )
                 {
                     iFadeInCnt++;
                 }
@@ -678,8 +682,7 @@ EGetDataStat CChannel::GetData ( CVector<uint8_t>& vecbyData, const int iNumByte
         {
             const auto& frame = pPolyInOwner->PolyInFrames[index];
             for ( size_t i = 0; i < frame.count; ++i )
-                if ( frame.records[i].source == iPolyInSource &&
-                     frame.records[i].codec == static_cast<uint8_t> ( ePolyInCodec ) &&
+                if ( frame.records[i].source == iPolyInSource && frame.records[i].codec == static_cast<uint8_t> ( ePolyInCodec ) &&
                      frame.records[i].channels == iPolyInChannels && frame.records[i].size == iNumBytes )
                 {
                     memcpy ( vecbyData.data(), frame.records[i].data, iNumBytes );
@@ -697,13 +700,13 @@ EGetDataStat CChannel::GetData ( CVector<uint8_t>& vecbyData, const int iNumByte
         if ( PolyFrameBuffer )
         {
             PolyIn::FrameView view;
-            const bool admitted = PolyFrameBuffer->Get ( view );
-            if ( iPolyInFrameCount < 2 ) PolyInFrames[iPolyInFrameCount++] = view;
+            const bool        admitted = PolyFrameBuffer->Get ( view );
+            if ( iPolyInFrameCount < 2 )
+                PolyInFrames[iPolyInFrameCount++] = view;
             bSockBufState = false;
             if ( admitted )
                 for ( size_t i = 0; i < view.count; ++i )
-                    if ( view.records[i].source == 0 &&
-                         view.records[i].codec == static_cast<uint8_t> ( eAudioCompressionType ) &&
+                    if ( view.records[i].source == 0 && view.records[i].codec == static_cast<uint8_t> ( eAudioCompressionType ) &&
                          view.records[i].channels == iNumAudioChannels && view.records[i].size == iNumBytes )
                     {
                         memcpy ( vecbyData.data(), view.records[i].data, iNumBytes );
@@ -711,7 +714,8 @@ EGetDataStat CChannel::GetData ( CVector<uint8_t>& vecbyData, const int iNumByte
                         break;
                     }
         }
-        else bSockBufState = SockBuf.Get ( vecbyData, iNumBytes );
+        else
+            bSockBufState = SockBuf.Get ( vecbyData, iNumBytes );
 
         // decrease time-out counter
         if ( iConTimeOut > 0 )
@@ -823,28 +827,37 @@ void CChannel::UpdateSocketBufferSize()
 // No second stock jitter window is created: the adapter borrows SockBuf.
 bool CChannel::EnablePolyInPhysical ( uint64_t generation )
 {
-    if ( !bIsServer || !generation || pPolyInOwner ) return false;
+    if ( !bIsServer || !generation || pPolyInOwner )
+        return false;
     QMutexLocker locker ( &MutexSocketBuf );
-    if ( PolyFrameBuffer && PolyFrameBuffer->Generation() == generation ) return true;
-    if ( !PolyFrameBuffer ) PolyFrameBuffer.reset ( new PolyIn::StockFrameBuffer ( SockBuf ) );
+    if ( PolyFrameBuffer && PolyFrameBuffer->Generation() == generation )
+        return true;
+    if ( !PolyFrameBuffer )
+        PolyFrameBuffer.reset ( new PolyIn::StockFrameBuffer ( SockBuf ) );
     SockBuf.SetUseDoubleSystemFrameSize ( eAudioCompressionType == CT_OPUS );
     PolyFrameBuffer->Init ( generation, iCurSockBufNumFrames );
     return true;
 }
 
-void CChannel::EnablePolyInVirtual ( CChannel* owner, uint16_t source, const QString& tag,
-                                     EAudComprType codec, int channels, int encodedBytes, bool newIdentity )
+void CChannel::EnablePolyInVirtual ( CChannel*      owner,
+                                     uint16_t       source,
+                                     const QString& tag,
+                                     EAudComprType  codec,
+                                     int            channels,
+                                     int            encodedBytes,
+                                     bool           newIdentity )
 {
     // Stock PutAudioData resets the level meter for a newly connected source.
     // Do not merge the outgoing new identity with the preceding source's meter.
-    if ( newIdentity ) SignalLevelMeter.Reset();
-    pPolyInOwner = owner;
-    iPolyInSource = source;
-    PolyInTag = tag;
-    ePolyInCodec = codec;
-    iPolyInChannels = channels;
+    if ( newIdentity )
+        SignalLevelMeter.Reset();
+    pPolyInOwner        = owner;
+    iPolyInSource       = source;
+    PolyInTag           = tag;
+    ePolyInCodec        = codec;
+    iPolyInChannels     = channels;
     iPolyInEncodedBytes = encodedBytes;
-    iPolyInFrameCursor = 0;
+    iPolyInFrameCursor  = 0;
 }
 
 void CChannel::DisablePolyIn()
@@ -852,7 +865,7 @@ void CChannel::DisablePolyIn()
     QMutexLocker locker ( &MutexSocketBuf );
     pPolyInOwner = nullptr;
     PolyInTag.clear();
-    polyInInstrument = -1;
+    polyInInstrument   = -1;
     iPolyInFrameCursor = iPolyInFrameCount = 0;
     if ( PolyFrameBuffer )
     {
@@ -865,5 +878,5 @@ void CChannel::DisablePolyIn()
 void CChannel::BeginPolyInTick()
 {
     iPolyInFrameCursor = iPolyInFrameCount = 0;
-    PolyInFrames = {};
+    PolyInFrames                           = {};
 }

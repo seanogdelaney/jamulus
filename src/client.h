@@ -355,13 +355,17 @@ public:
     void SetSettings ( CClientSettings* settings );
     // 2 inputs: stock stereo capture. 3..20: extra independent JACK input
     // ports on the same clock (unsupported backends retain stock fallback).
-    void SetPolyInRequested ( bool enabled ) { bPolyInRequested = enabled; }
-    bool GetPolyInRequested() const { return bPolyInRequested; }
+    void                                     SetPolyInRequested ( bool enabled ) { bPolyInRequested = enabled; }
+    bool                                     GetPolyInRequested() const { return bPolyInRequested; }
     const std::vector<PolyIn::CaptureRoute>& GetPolyInAudioChannels() const { return polyInAudioChannels; }
-    bool SetPolyInAudioChannels ( const std::vector<PolyIn::CaptureRoute>& channels, bool enabled = true );
-    int GetPolyInSourceCount() const { return polyInDesiredSources; }
-    int GetPolyInPhysicalInputs() const { return std::min ( int ( PolyIn::MaxSources ), Sound.GetNumPolyInPhysicalInputs() ); }
-    void SetPolyInSourceCount ( int count ) { polyInDesiredSources = count; polyInAudioChannels.clear(); }
+    bool                                     SetPolyInAudioChannels ( const std::vector<PolyIn::CaptureRoute>& channels, bool enabled = true );
+    int                                      GetPolyInSourceCount() const { return polyInDesiredSources; }
+    int  GetPolyInPhysicalInputs() const { return std::min ( int ( PolyIn::MaxSources ), Sound.GetNumPolyInPhysicalInputs() ); }
+    void SetPolyInSourceCount ( int count )
+    {
+        polyInDesiredSources = count;
+        polyInAudioChannels.clear();
+    }
     Q_INVOKABLE bool ReconfigurePolyInSources ( int count );
 
 protected:
@@ -377,8 +381,7 @@ protected:
 
     void Init();
     void ProcessSndCrdAudioData ( CVector<short>& vecsStereoSndCrd );
-    void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd,
-                                  const int16_t* captured, size_t capturedElements );
+    void ProcessAudioDataIntern ( CVector<short>& vecsStereoSndCrd, const int16_t* captured, size_t capturedElements );
 
     int  PreparePingMessage();
     int  EvaluatePingMessage ( const int iMs );
@@ -408,48 +411,48 @@ protected:
     // unused channels will contain INVALID_INDEX
     int clientChannelIDs[MAX_NUM_CHANNELS];
 
-    int    iActiveChannels; // number of active channels
-    int    iJoinSequence;   // order of joining of session participants
-    QMutex MutexChannels;
-    int polyInDesiredSources = 2;
+    int                               iActiveChannels; // number of active channels
+    int                               iJoinSequence;   // order of joining of session participants
+    QMutex                            MutexChannels;
+    int                               polyInDesiredSources = 2;
     std::vector<PolyIn::CaptureRoute> polyInAudioChannels;
-    int polyInCaptureChannels = 2;
-    bool bPolyInRequested = false;
-    std::atomic<bool> bPolyInActive{false};
+    int                               polyInCaptureChannels = 2;
+    bool                              bPolyInRequested      = false;
+    std::atomic<bool>                 bPolyInActive{ false };
     // A refused in-session amendment leaves the server on its old PLIN epoch.
     // Suppress stock media during the negotiation and restore that epoch on
     // refusal; the audio callback only reads the atomic hold flag.
-    std::atomic<bool> bPolyInMediaHold{false};
-    bool bPolyInInitialPending = false; // no response may change media without a live request
-    bool bPolyInAmendmentPending = false; // control/Qt thread only
-    bool bPolyInFormatTransitionPending = false; // cannot restore prior codec after Init
-    bool bPolyInWithdrawalPending = false; // wait for server ACK before stock packets
-    bool bPolyInServerAdmitted = false; // persists across local Init/codec attempts
+    std::atomic<bool> bPolyInMediaHold{ false };
+    bool              bPolyInInitialPending          = false; // no response may change media without a live request
+    bool              bPolyInAmendmentPending        = false; // control/Qt thread only
+    bool              bPolyInFormatTransitionPending = false; // cannot restore prior codec after Init
+    bool              bPolyInWithdrawalPending       = false; // wait for server ACK before stock packets
+    bool              bPolyInServerAdmitted          = false; // persists across local Init/codec attempts
     // A completed stock withdrawal is sticky across unchanged device restarts.
     // Only an actual local profile change or new physical Start can opt in again.
-    uint64_t polyInRetiredProfileTag = 0;
-    uint64_t PolyInProfileTag() const;
-    int polyInAdmittedCodec = -1, polyInAdmittedSamples = 0;
-    int polyInAdmittedBytes = 0, polyInAdmittedSources = 0, polyInAdmittedFrameFactor = 0;
-    bool polyInAdmittedRaw = false;
-    void RememberPolyInProfile();
-    int polyInPriorSources = 0;
-    uint64_t polyInPriorEpoch = 0;
-    uint64_t polyInEpoch = 0;
-    uint32_t polyInFrame = 0;
-    PolyIn::SourceProducer polyInProducer;
-    PolyIn::SourceProducer polyInPreviousProducer; // accepted encoder state during a count amendment
-    std::vector<PolyIn::ControlSource> polyInDescriptors;
-    CVector<int16_t> polyInRawInterleaved;
-    CVector<int16_t> polyInConvertedCapture;
-    CBuffer<int16_t> polyInConversionIn;
+    uint64_t                                              polyInRetiredProfileTag = 0;
+    uint64_t                                              PolyInProfileTag() const;
+    int                                                   polyInAdmittedCodec = -1, polyInAdmittedSamples = 0;
+    int                                                   polyInAdmittedBytes = 0, polyInAdmittedSources = 0, polyInAdmittedFrameFactor = 0;
+    bool                                                  polyInAdmittedRaw = false;
+    void                                                  RememberPolyInProfile();
+    int                                                   polyInPriorSources = 0;
+    uint64_t                                              polyInPriorEpoch   = 0;
+    uint64_t                                              polyInEpoch        = 0;
+    uint32_t                                              polyInFrame        = 0;
+    PolyIn::SourceProducer                                polyInProducer;
+    PolyIn::SourceProducer                                polyInPreviousProducer; // accepted encoder state during a count amendment
+    std::vector<PolyIn::ControlSource>                    polyInDescriptors;
+    CVector<int16_t>                                      polyInRawInterleaved;
+    CVector<int16_t>                                      polyInConvertedCapture;
+    CBuffer<int16_t>                                      polyInConversionIn;
     std::array<PolyIn::BoundedPacket, PolyIn::MaxSources> polyInBoundedPackets;
-    std::array<CVector<uint8_t>, PolyIn::MaxSources> polyInSendBuffers;
-    void OnPolyInResponse ( CVector<uint8_t> body );
-    bool PreparePolyInProducer();
-    void SendPolyInConfig();
-    void BeginPolyInWithdrawal();
-    void RefreshPolyInAfterSoundInit();
+    std::array<CVector<uint8_t>, PolyIn::MaxSources>      polyInSendBuffers;
+    void                                                  OnPolyInResponse ( CVector<uint8_t> body );
+    bool                                                  PreparePolyInProducer();
+    void                                                  SendPolyInConfig();
+    void                                                  BeginPolyInWithdrawal();
+    void                                                  RefreshPolyInAfterSoundInit();
 
     // audio encoder/decoder
     OpusCustomMode*        Opus64Mode;

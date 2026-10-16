@@ -448,18 +448,22 @@ bool CSound::ConfigurePolyInCapture ( int channels )
 {
     // All input channels are already opened in stock ASIOCreateBuffers().
     // The caller stops ASIO before changing capture buffers or source count.
-    if ( IsRunning() || channels < 2 || channels > int(PolyIn::MaxSources) ||
-         channels > lNumInChan || iASIOBufferSizeMono <= 0 ) return false;
-    if ( channels > 2 ) polyInCaptureFrame.Init ( channels * iASIOBufferSizeMono );
-    else polyInCaptureFrame.clear();
+    if ( IsRunning() || channels < 2 || channels > int ( PolyIn::MaxSources ) || channels > lNumInChan || iASIOBufferSizeMono <= 0 )
+        return false;
+    if ( channels > 2 )
+        polyInCaptureFrame.Init ( channels * iASIOBufferSizeMono );
+    else
+        polyInCaptureFrame.clear();
     polyInCaptureChannels = channels;
     return true;
 }
 
 bool CSound::ConfigurePolyInPhysicalCapture ( int channels )
 {
-    if ( !ConfigurePolyInCapture ( channels ) ) return false;
-    if ( channels == 2 ) polyInCaptureFrame.Init ( channels * iASIOBufferSizeMono );
+    if ( !ConfigurePolyInCapture ( channels ) )
+        return false;
+    if ( channels == 2 )
+        polyInCaptureFrame.Init ( channels * iASIOBufferSizeMono );
     return true;
 }
 
@@ -739,12 +743,12 @@ void CSound::bufferSwitch ( long index, ASIOBool )
             // Additional passes use that SAME sample-format switch for each
             // physical ASIO input, without altering the stereo return buffer.
             const bool isStockStereo = i < NUM_IN_OUT_CHANNELS;
-            int iSelCH = i - NUM_IN_OUT_CHANNELS, iSelAddCH = INVALID_INDEX;
+            int        iSelCH = i - NUM_IN_OUT_CHANNELS, iSelAddCH = INVALID_INDEX;
             if ( isStockStereo )
                 GetSelCHAndAddCH ( pSound->vSelectedInputChannels[i], pSound->lNumInChan, iSelCH, iSelAddCH );
             CVector<int16_t>& capture = isStockStereo ? vecsMultChanAudioSndCrd : pSound->polyInCaptureFrame;
-            const int stride = isStockStereo ? NUM_IN_OUT_CHANNELS : physicalCount;
-            const int lane = isStockStereo ? i : i - NUM_IN_OUT_CHANNELS;
+            const int         stride  = isStockStereo ? NUM_IN_OUT_CHANNELS : physicalCount;
+            const int         lane    = isStockStereo ? i : i - NUM_IN_OUT_CHANNELS;
 
             // copy new captured block in thread transfer buffer (copy
             // mono data interleaved in stereo buffer)
@@ -816,7 +820,7 @@ void CSound::bufferSwitch ( long index, ASIOBool )
                     for ( iCurSample = 0; iCurSample < iASIOBufferSizeMono; iCurSample++ )
                     {
                         capture[stride * iCurSample + lane] = Float2Short ( (float) capture[stride * iCurSample + lane] +
-                                                                                    (float) static_cast<int16_t> ( pASIOBufAdd[iCurSample] >> 16 ) );
+                                                                            (float) static_cast<int16_t> ( pASIOBufAdd[iCurSample] >> 16 ) );
                     }
                 }
                 break;

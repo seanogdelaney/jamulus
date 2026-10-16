@@ -307,39 +307,39 @@ void CClient::OnJittBufSizeChanged ( int iNewJitBufSize )
 static uint64_t NextPolyInEpoch()
 {
     static uint64_t lastEpoch = 0; // all invocations are on the client Qt thread
-    const uint64_t proposal = uint64_t ( QDateTime::currentMSecsSinceEpoch() ) << 16;
-    lastEpoch = std::max ( lastEpoch + 1, proposal );
+    const uint64_t  proposal  = uint64_t ( QDateTime::currentMSecsSinceEpoch() ) << 16;
+    lastEpoch                 = std::max ( lastEpoch + 1, proposal );
     return lastEpoch;
 }
 
 bool CClient::SetPolyInAudioChannels ( const std::vector<PolyIn::CaptureRoute>& channels, bool enabled )
 {
     int captured = 0;
-    if ( IsConnected() || Sound.IsRunning() ||
-         !PolyIn::ValidateCaptureRoutes ( channels, int ( PolyIn::MaxSources ), captured ) ) return false;
-    polyInAudioChannels = channels;
-    polyInDesiredSources = int ( channels.size() );
+    if ( IsConnected() || Sound.IsRunning() || !PolyIn::ValidateCaptureRoutes ( channels, int ( PolyIn::MaxSources ), captured ) )
+        return false;
+    polyInAudioChannels     = channels;
+    polyInDesiredSources    = int ( channels.size() );
     polyInRetiredProfileTag = 0;
-    bPolyInRequested = enabled;
-    if ( enabled ) SetAudioChannels ( channels.front().iInputChannel2 >= 0 ? CC_STEREO : CC_MONO_IN_STEREO_OUT );
+    bPolyInRequested        = enabled;
+    if ( enabled )
+        SetAudioChannels ( channels.front().iInputChannel2 >= 0 ? CC_STEREO : CC_MONO_IN_STEREO_OUT );
     return true;
 }
 
 bool CClient::PreparePolyInProducer()
 {
     polyInDescriptors.clear();
-    polyInEpoch = 0;
-    polyInCaptureChannels = 2;
-    const bool configured = !polyInAudioChannels.empty();
-    int captureChannels = polyInDesiredSources;
-    const bool stereoZero = configured;
+    polyInEpoch                = 0;
+    polyInCaptureChannels      = 2;
+    const bool configured      = !polyInAudioChannels.empty();
+    int        captureChannels = polyInDesiredSources;
+    const bool stereoZero      = configured;
     if ( ( configured && ( polyInAudioChannels.size() != size_t ( polyInDesiredSources ) ||
-             !PolyIn::ValidateCaptureRoutes ( polyInAudioChannels, Sound.GetNumPolyInPhysicalInputs(), captureChannels ) ) ) ||
+                           !PolyIn::ValidateCaptureRoutes ( polyInAudioChannels, Sound.GetNumPolyInPhysicalInputs(), captureChannels ) ) ) ||
          eAudioChannelConf != ( configured ? ( polyInAudioChannels.front().iInputChannel2 >= 0 ? CC_STEREO : CC_MONO_IN_STEREO_OUT ) : CC_MONO ) ||
-         ( eAudioCompressionType != CT_OPUS && eAudioCompressionType != CT_OPUS64 ) ||
-         iCeltNumCodedBytes <= 0 || iCeltNumCodedBytes > int(PolyIn::MaxEncodedBytes) ||
-         polyInDesiredSources < 2 || polyInDesiredSources > int(PolyIn::MaxSources) ||
-         ! ( configured ? Sound.ConfigurePolyInPhysicalCapture ( captureChannels ) : Sound.ConfigurePolyInCapture ( captureChannels ) ) )
+         ( eAudioCompressionType != CT_OPUS && eAudioCompressionType != CT_OPUS64 ) || iCeltNumCodedBytes <= 0 ||
+         iCeltNumCodedBytes > int ( PolyIn::MaxEncodedBytes ) || polyInDesiredSources < 2 || polyInDesiredSources > int ( PolyIn::MaxSources ) ||
+         !( configured ? Sound.ConfigurePolyInPhysicalCapture ( captureChannels ) : Sound.ConfigurePolyInCapture ( captureChannels ) ) )
     {
         qWarning() << "poly-in capture/codec unavailable; using stock audio";
         polyInProducer.Reset();
@@ -348,31 +348,35 @@ bool CClient::PreparePolyInProducer()
     polyInCaptureChannels = captureChannels;
     std::vector<PolyIn::InputSpec> specs;
     specs.reserve ( polyInDesiredSources );
-    for ( int source=0; source<polyInDesiredSources; ++source )
+    for ( int source = 0; source < polyInDesiredSources; ++source )
     {
         PolyIn::InputSpec spec;
-        spec.source = uint16_t(source);
-        spec.route = PolyIn::InputRoute::Left;
-        spec.channelA = uint16_t(source);
+        spec.source   = uint16_t ( source );
+        spec.route    = PolyIn::InputRoute::Left;
+        spec.channelA = uint16_t ( source );
         if ( configured )
         {
             const auto& route = polyInAudioChannels[source];
-            spec.channelA = uint16_t ( route.iInputChannel1 );
-            spec.channelB = route.iInputChannel2 >= 0 ? uint16_t ( route.iInputChannel2 ) : spec.channelA;
+            spec.channelA     = uint16_t ( route.iInputChannel1 );
+            spec.channelB     = route.iInputChannel2 >= 0 ? uint16_t ( route.iInputChannel2 ) : spec.channelA;
             // Source zero reuses stock mono-in/stereo-out transport for a
             // mono row by copying its selected input to both wire channels.
             spec.route = route.iInputChannel2 >= 0 || source == 0 ? PolyIn::InputRoute::Stereo : PolyIn::InputRoute::Left;
         }
-        spec.codec = static_cast<uint8_t>(eAudioCompressionType);
-        spec.encodedBytes = PolyIn::MatchingProfileBytes ( iOPUSFrameSizeSamples, stereoZero, iCeltNumCodedBytes,
-                                                         spec.route == PolyIn::InputRoute::Stereo,
-                                                         CurOpusEncoder == nullptr && bRawAudioIsSupported );
-        spec.raw = CurOpusEncoder == nullptr && bRawAudioIsSupported;
+        spec.codec        = static_cast<uint8_t> ( eAudioCompressionType );
+        spec.encodedBytes = PolyIn::MatchingProfileBytes ( iOPUSFrameSizeSamples,
+                                                           stereoZero,
+                                                           iCeltNumCodedBytes,
+                                                           spec.route == PolyIn::InputRoute::Stereo,
+                                                           CurOpusEncoder == nullptr && bRawAudioIsSupported );
+        spec.raw          = CurOpusEncoder == nullptr && bRawAudioIsSupported;
         specs.push_back ( spec );
     }
-    if ( !polyInProducer.Configure ( iOPUSFrameSizeSamples, polyInCaptureChannels, specs ) ) return false;
+    if ( !polyInProducer.Configure ( iOPUSFrameSizeSamples, polyInCaptureChannels, specs ) )
+        return false;
     polyInRawInterleaved.Init ( polyInCaptureChannels * iSndCrdFrameSizeFactor * iOPUSFrameSizeSamples );
-    for ( auto& packet : polyInSendBuffers ) packet.reserve ( PolyIn::MaxDatagram );
+    for ( auto& packet : polyInSendBuffers )
+        packet.reserve ( PolyIn::MaxDatagram );
     // Same audio scheduling as the existing stock input conversion buffer.
     if ( bSndCrdConversionBufferRequired )
     {
@@ -381,15 +385,19 @@ bool CClient::PreparePolyInProducer()
     }
     // A genuine new session or codec transition changes epoch. Source-count
     // churn can reuse the same epoch only with an explicit separate method.
-    polyInEpoch = NextPolyInEpoch();
-    const QByteArray base = ChannelInfo.strName.isEmpty() ? QByteArray("Input") : ChannelInfo.strName.toUtf8().left(48);
-    for ( int source=0; source<polyInDesiredSources; ++source )
+    polyInEpoch           = NextPolyInEpoch();
+    const QByteArray base = ChannelInfo.strName.isEmpty() ? QByteArray ( "Input" ) : ChannelInfo.strName.toUtf8().left ( 48 );
+    for ( int source = 0; source < polyInDesiredSources; ++source )
     {
-        const QByteArray suffix = configured ? QByteArray ( polyInAudioChannels[source].strFaderTag.c_str() ) : QByteArray::number(source+1);
-        const QByteArray name = ( base + QByteArray(" ") + suffix ).left ( 64 );
-        polyInDescriptors.push_back ( {uint16_t(source), uint8_t(eAudioCompressionType), uint8_t(specs[source].route == PolyIn::InputRoute::Stereo ? 2 : 1),
-                                      uint16_t(specs[source].encodedBytes), name.toStdString()} );
-        if ( configured ) polyInDescriptors.back().instrument = polyInAudioChannels[source].iInstrument;
+        const QByteArray suffix = configured ? QByteArray ( polyInAudioChannels[source].strFaderTag.c_str() ) : QByteArray::number ( source + 1 );
+        const QByteArray name   = ( base + QByteArray ( " " ) + suffix ).left ( 64 );
+        polyInDescriptors.push_back ( { uint16_t ( source ),
+                                        uint8_t ( eAudioCompressionType ),
+                                        uint8_t ( specs[source].route == PolyIn::InputRoute::Stereo ? 2 : 1 ),
+                                        uint16_t ( specs[source].encodedBytes ),
+                                        name.toStdString() } );
+        if ( configured )
+            polyInDescriptors.back().instrument = polyInAudioChannels[source].iInstrument;
     }
     return true;
 }
@@ -399,16 +407,19 @@ bool CClient::ReconfigurePolyInSources ( int count )
     // The accepted physical server channel is still a PLIN receiver while an
     // amendment is pending. Never send stock packets to that channel, even if
     // the requested new source count cannot be admitted.
-    if ( !bPolyInRequested || count < 2 || count > int(PolyIn::MaxSources) ||
-         bPolyInAmendmentPending || !bPolyInActive.load() ) return false;
-    if ( count == polyInDesiredSources ) return true;
-    if ( !polyInAudioChannels.empty() ) return false;
+    if ( !bPolyInRequested || count < 2 || count > int ( PolyIn::MaxSources ) || bPolyInAmendmentPending || !bPolyInActive.load() )
+        return false;
+    if ( count == polyInDesiredSources )
+        return true;
+    if ( !polyInAudioChannels.empty() )
+        return false;
 
-    const int prior = polyInDesiredSources;
+    const int      prior      = polyInDesiredSources;
     const uint64_t priorEpoch = polyInEpoch;
     bPolyInMediaHold.store ( true );
     const bool wasRunning = Sound.IsRunning();
-    if ( wasRunning ) Sound.Stop(); // quiesce callback before replacing buffers/encoder
+    if ( wasRunning )
+        Sound.Stop(); // quiesce callback before replacing buffers/encoder
     bPolyInActive.store ( false );
     // Preserve the accepted encoder histories while preparing a new layout.
     // A refusal resumes that same stream, rather than recreating its encoders.
@@ -420,7 +431,7 @@ bool CClient::ReconfigurePolyInSources ( int count )
         // No server request has been sent; its previously accepted epoch is
         // still live. Restore the previously accepted local capture/encoder.
         polyInDesiredSources = prior;
-        const bool restored = PreparePolyInProducer();
+        const bool restored  = PreparePolyInProducer();
         if ( restored )
         {
             polyInProducer.Swap ( polyInPreviousProducer );
@@ -430,14 +441,17 @@ bool CClient::ReconfigurePolyInSources ( int count )
         }
         else
             qWarning() << "Cannot restore accepted poly-in capture; keeping outgoing audio muted";
-        if ( wasRunning ) Sound.Start();
-        if ( restored ) bPolyInMediaHold.store ( false );
+        if ( wasRunning )
+            Sound.Start();
+        if ( restored )
+            bPolyInMediaHold.store ( false );
         return false;
     }
-    polyInPriorSources = prior;
-    polyInPriorEpoch = priorEpoch;
+    polyInPriorSources      = prior;
+    polyInPriorEpoch        = priorEpoch;
     bPolyInAmendmentPending = true;
-    if ( wasRunning ) Sound.Start();
+    if ( wasRunning )
+        Sound.Start();
     // While awaiting a response, the callback sends neither stock packets
     // nor new-generation PLIN packets. An old server retains its prior state.
     SendPolyInConfig();
@@ -451,13 +465,13 @@ void CClient::BeginPolyInWithdrawal()
     // This is ordinary CONFIG with zero sources, not a new receiver protocol.
     bPolyInActive.store ( false );
     bPolyInMediaHold.store ( true );
-    bPolyInAmendmentPending = false;
-    bPolyInInitialPending = false;
+    bPolyInAmendmentPending        = false;
+    bPolyInInitialPending          = false;
     bPolyInFormatTransitionPending = false;
-    bPolyInWithdrawalPending = true;
-    polyInPriorEpoch = 0;
-    polyInPriorSources = 0;
-    polyInEpoch = NextPolyInEpoch();
+    bPolyInWithdrawalPending       = true;
+    polyInPriorEpoch               = 0;
+    polyInPriorSources             = 0;
+    polyInEpoch                    = NextPolyInEpoch();
     SendPolyInConfig();
 }
 
@@ -466,62 +480,62 @@ uint64_t CClient::PolyInProfileTag() const
     // Control thread only; a compact, collision-free packing of the bounded
     // effective profile fields involved in a producer CONFIG. This is not a
     // wire identifier and does not alter the stock capture/codec policy.
-    return ( uint64_t( CurOpusEncoder == nullptr && bRawAudioIsSupported ) << 63 ) |
-           ( uint64_t( uint8_t(eAudioChannelConf) ) << 56 ) |
-           ( uint64_t( uint8_t(eAudioCompressionType) ) << 48 ) |
-           ( uint64_t( uint8_t(iSndCrdFrameSizeFactor) ) << 40 ) |
-           ( uint64_t( uint8_t(polyInDesiredSources) ) << 32 ) |
-           ( uint64_t( uint16_t(iCeltNumCodedBytes) ) << 16 ) |
-           uint64_t( uint16_t(iOPUSFrameSizeSamples) );
+    return ( uint64_t ( CurOpusEncoder == nullptr && bRawAudioIsSupported ) << 63 ) | ( uint64_t ( uint8_t ( eAudioChannelConf ) ) << 56 ) |
+           ( uint64_t ( uint8_t ( eAudioCompressionType ) ) << 48 ) | ( uint64_t ( uint8_t ( iSndCrdFrameSizeFactor ) ) << 40 ) |
+           ( uint64_t ( uint8_t ( polyInDesiredSources ) ) << 32 ) | ( uint64_t ( uint16_t ( iCeltNumCodedBytes ) ) << 16 ) |
+           uint64_t ( uint16_t ( iOPUSFrameSizeSamples ) );
 }
 
 void CClient::RememberPolyInProfile()
 {
     // Qt/control-thread snapshot of the last server-acknowledged PCM profile.
-    polyInAdmittedCodec = int ( eAudioCompressionType );
-    polyInAdmittedSamples = iOPUSFrameSizeSamples;
-    polyInAdmittedBytes = iCeltNumCodedBytes;
-    polyInAdmittedSources = polyInDesiredSources;
+    polyInAdmittedCodec       = int ( eAudioCompressionType );
+    polyInAdmittedSamples     = iOPUSFrameSizeSamples;
+    polyInAdmittedBytes       = iCeltNumCodedBytes;
+    polyInAdmittedSources     = polyInDesiredSources;
     polyInAdmittedFrameFactor = iSndCrdFrameSizeFactor;
-    polyInAdmittedRaw = CurOpusEncoder == nullptr && bRawAudioIsSupported;
+    polyInAdmittedRaw         = CurOpusEncoder == nullptr && bRawAudioIsSupported;
 }
 
 void CClient::RefreshPolyInAfterSoundInit()
 {
     // Called with Sound stopped after EVERY ordinary stock Init(). The server
     // retains its accepted PLIN epoch until an explicitly acknowledged change.
-    if ( !bPolyInRequested ) return;
+    if ( !bPolyInRequested )
+        return;
     const bool admitted = bPolyInServerAdmitted;
-    if ( admitted ) bPolyInMediaHold.store ( true );
+    if ( admitted )
+        bPolyInMediaHold.store ( true );
     bPolyInActive.store ( false );
-    if ( bPolyInWithdrawalPending ) { SendPolyInConfig(); return; }
+    if ( bPolyInWithdrawalPending )
+    {
+        SendPolyInConfig();
+        return;
+    }
     // An acknowledged withdrawal is a stable stock state. Reinitialising an
     // unchanged sound device is not a fresh user opt-in and must not silently
     // re-offer PLIN. A genuinely changed local profile can request a new epoch.
-    if ( !admitted && polyInRetiredProfileTag &&
-         polyInRetiredProfileTag == PolyInProfileTag() ) return;
+    if ( !admitted && polyInRetiredProfileTag && polyInRetiredProfileTag == PolyInProfileTag() )
+        return;
 
     // OF-05: ordinary device restart with the SAME admitted wire profile is
     // not a new producer epoch. Preserve both the stock receive jitter window
     // and the existing Opus encoder state. Only recapture the JACK taps and
     // resize source buffers while Sound is stopped, using its existing clock.
     if ( admitted && !bPolyInAmendmentPending &&
-         eAudioChannelConf == ( polyInAudioChannels.empty() ? CC_MONO : ( polyInAudioChannels.front().iInputChannel2 >= 0 ? CC_STEREO : CC_MONO_IN_STEREO_OUT ) ) &&
-         polyInDesiredSources == polyInAdmittedSources &&
-         int(eAudioCompressionType) == polyInAdmittedCodec &&
-         iOPUSFrameSizeSamples == polyInAdmittedSamples &&
-         iSndCrdFrameSizeFactor == polyInAdmittedFrameFactor &&
-         iCeltNumCodedBytes == polyInAdmittedBytes &&
-         ( CurOpusEncoder == nullptr && bRawAudioIsSupported ) == polyInAdmittedRaw &&
-         ( polyInAudioChannels.empty() ? Sound.ConfigurePolyInCapture ( polyInDesiredSources ) :
-             Sound.ConfigurePolyInPhysicalCapture ( polyInCaptureChannels ) ) )
+         eAudioChannelConf ==
+             ( polyInAudioChannels.empty() ? CC_MONO : ( polyInAudioChannels.front().iInputChannel2 >= 0 ? CC_STEREO : CC_MONO_IN_STEREO_OUT ) ) &&
+         polyInDesiredSources == polyInAdmittedSources && int ( eAudioCompressionType ) == polyInAdmittedCodec &&
+         iOPUSFrameSizeSamples == polyInAdmittedSamples && iSndCrdFrameSizeFactor == polyInAdmittedFrameFactor &&
+         iCeltNumCodedBytes == polyInAdmittedBytes && ( CurOpusEncoder == nullptr && bRawAudioIsSupported ) == polyInAdmittedRaw &&
+         ( polyInAudioChannels.empty() ? Sound.ConfigurePolyInCapture ( polyInDesiredSources )
+                                       : Sound.ConfigurePolyInPhysicalCapture ( polyInCaptureChannels ) ) )
     {
         polyInRawInterleaved.Init ( polyInCaptureChannels * iSndCrdFrameSizeFactor * iOPUSFrameSizeSamples );
         if ( bSndCrdConversionBufferRequired )
         {
             polyInConvertedCapture.Init ( polyInCaptureChannels * iMonoBlockSizeSam );
-            polyInConversionIn.Init ( polyInCaptureChannels *
-                                     ( iMonoBlockSizeSam + iSndCardMonoBlockSizeSamConvBuff ) );
+            polyInConversionIn.Init ( polyInCaptureChannels * ( iMonoBlockSizeSam + iSndCardMonoBlockSizeSamConvBuff ) );
         }
         bPolyInActive.store ( true );
         bPolyInMediaHold.store ( false );
@@ -532,13 +546,17 @@ void CClient::RefreshPolyInAfterSoundInit()
     const bool prepared = PreparePolyInProducer();
     if ( admitted )
     {
-        bPolyInAmendmentPending = prepared;
+        bPolyInAmendmentPending        = prepared;
         bPolyInFormatTransitionPending = prepared;
-        if ( !prepared ) { BeginPolyInWithdrawal(); return; }
+        if ( !prepared )
+        {
+            BeginPolyInWithdrawal();
+            return;
+        }
     }
     else
     {
-        bPolyInAmendmentPending = false;
+        bPolyInAmendmentPending        = false;
         bPolyInFormatTransitionPending = false;
     }
     // A new device/format preparation is an explicit fresh opt-in, never a
@@ -547,28 +565,30 @@ void CClient::RefreshPolyInAfterSoundInit()
     if ( !admitted )
     {
         bPolyInInitialPending = prepared;
-        if ( prepared ) polyInRetiredProfileTag = 0; // explicit fresh profile
+        if ( prepared )
+            polyInRetiredProfileTag = 0; // explicit fresh profile
     }
-    if ( prepared ) SendPolyInConfig();
+    if ( prepared )
+        SendPolyInConfig();
 }
 
 void CClient::OnPolyInResponse ( CVector<uint8_t> body )
 {
-    uint64_t epoch = 0;
-    bool accepted = false;
+    uint64_t epoch    = 0;
+    bool     accepted = false;
     // Only the current request can change the sender; old/out-of-order
     // reliable replies must never deactivate an already admitted producer.
-    if ( !PolyIn::DecodeResponse ( body.data(), size_t(body.Size()), epoch, accepted ) ||
-         epoch != polyInEpoch || !bPolyInRequested ) return;
+    if ( !PolyIn::DecodeResponse ( body.data(), size_t ( body.Size() ), epoch, accepted ) || epoch != polyInEpoch || !bPolyInRequested )
+        return;
 
     if ( bPolyInWithdrawalPending )
     {
         if ( accepted )
         {
             bPolyInWithdrawalPending = false;
-            bPolyInServerAdmitted = false;
-            polyInRetiredProfileTag = PolyInProfileTag();
-            polyInAdmittedCodec = -1;
+            bPolyInServerAdmitted    = false;
+            polyInRetiredProfileTag  = PolyInProfileTag();
+            polyInAdmittedCodec      = -1;
             bPolyInActive.store ( false );
             bPolyInMediaHold.store ( false );
         }
@@ -582,12 +602,12 @@ void CClient::OnPolyInResponse ( CVector<uint8_t> body )
         if ( accepted )
         {
             polyInPreviousProducer.Reset();
-            bPolyInAmendmentPending = false;
+            bPolyInAmendmentPending        = false;
             bPolyInFormatTransitionPending = false;
-            bPolyInServerAdmitted = true;
-            polyInRetiredProfileTag = 0;
+            bPolyInServerAdmitted          = true;
+            polyInRetiredProfileTag        = 0;
             RememberPolyInProfile();
-            polyInPriorEpoch = 0;
+            polyInPriorEpoch   = 0;
             polyInPriorSources = 0;
             bPolyInActive.store ( true );
             bPolyInMediaHold.store ( false );
@@ -604,31 +624,36 @@ void CClient::OnPolyInResponse ( CVector<uint8_t> body )
         }
         // Source-count-only refusal can restore the exact accepted epoch.
         const bool wasRunning = Sound.IsRunning();
-        if ( wasRunning ) Sound.Stop();
-        polyInDesiredSources = polyInPriorSources;
+        if ( wasRunning )
+            Sound.Stop();
+        polyInDesiredSources         = polyInPriorSources;
         const uint64_t admittedEpoch = polyInPriorEpoch;
-        const bool restored = PreparePolyInProducer();
-        bPolyInAmendmentPending = false;
-        polyInPriorSources = 0;
-        polyInPriorEpoch = 0;
+        const bool     restored      = PreparePolyInProducer();
+        bPolyInAmendmentPending      = false;
+        polyInPriorSources           = 0;
+        polyInPriorEpoch             = 0;
         if ( restored )
         {
-            if ( polyInPreviousProducer.Count() ) polyInProducer.Swap ( polyInPreviousProducer );
+            if ( polyInPreviousProducer.Count() )
+                polyInProducer.Swap ( polyInPreviousProducer );
             polyInPreviousProducer.Reset();
             polyInEpoch = admittedEpoch;
             bPolyInActive.store ( true );
         }
         else
             qWarning() << "Rejected poly-in amendment; cannot restore old capture; outgoing audio remains muted";
-        if ( wasRunning ) Sound.Start();
-        if ( restored ) bPolyInMediaHold.store ( false );
+        if ( wasRunning )
+            Sound.Start();
+        if ( restored )
+            bPolyInMediaHold.store ( false );
         return;
     }
 
     // A RESPONSE for an already completed current epoch is a duplicate,
     // *not* a new initial acceptance. This also fences repeated withdrawal
     // ACKs, whose epoch remains stored until a later explicit offer.
-    if ( !bPolyInInitialPending ) return;
+    if ( !bPolyInInitialPending )
+        return;
     bPolyInInitialPending = false;
     // Legacy servers that never reply continue using stock audio.
     if ( !accepted )
@@ -640,7 +665,7 @@ void CClient::OnPolyInResponse ( CVector<uint8_t> body )
         return;
     }
     bPolyInActive.store ( true );
-    bPolyInServerAdmitted = true;
+    bPolyInServerAdmitted   = true;
     polyInRetiredProfileTag = 0;
     RememberPolyInProfile();
 }
@@ -679,10 +704,9 @@ void CClient::SendPolyInConfig()
          ( bPolyInWithdrawalPending || bPolyInAmendmentPending || bPolyInInitialPending ) &&
          ( bPolyInWithdrawalPending || polyInProducer.Count() >= 2 ) )
     {
-        std::vector<uint8_t> config;
+        std::vector<uint8_t>                     config;
         const std::vector<PolyIn::ControlSource> empty;
-        if ( PolyIn::EncodeConfig ( polyInEpoch,
-                bPolyInWithdrawalPending ? empty : polyInDescriptors, config ) )
+        if ( PolyIn::EncodeConfig ( polyInEpoch, bPolyInWithdrawalPending ? empty : polyInDescriptors, config ) )
         {
             CVector<uint8_t> body ( int ( config.size() ) );
             std::copy ( config.begin(), config.end(), body.begin() );
@@ -692,7 +716,6 @@ void CClient::SendPolyInConfig()
             Channel.CreatePolyInConfig ( body );
         }
     }
-
 }
 
 void CClient::OnMuteStateHasChangedReceived ( int iServerChanID, bool bIsMuted )
@@ -1113,7 +1136,7 @@ void CClient::SetAudioChannels ( const EAudChanConf eNAudChanConf )
 
 QString CClient::SetSndCrdDev ( const QString strNewDev )
 {
-    QString strError = "";
+    QString       strError       = "";
     const QString previousDevice = Sound.GetDev();
 
     // if client was running then first
@@ -1131,12 +1154,13 @@ QString CClient::SetSndCrdDev ( const QString strNewDev )
         strError = Sound.SetDev ( strNewDev );
         // Selecting a different device is explicit user intent. Keep the
         // withdrawal fence for automatic reinitialisation of the same device.
-        if ( strError.isEmpty() && Sound.GetDev() != previousDevice ) polyInRetiredProfileTag = 0;
+        if ( strError.isEmpty() && Sound.GetDev() != previousDevice )
+            polyInRetiredProfileTag = 0;
 
         // init again because the sound card actual buffer size might
         // be changed on new device
         Init();
-    RefreshPolyInAfterSoundInit();
+        RefreshPolyInAfterSoundInit();
 
         if ( bWasRunning )
         {
@@ -1423,7 +1447,8 @@ void CClient::OnRawAudioSupported()
 
         // RAW is an ordinary Init-mediated negotiated format transition.
         // Preserve the media hold until server ACK or explicit withdrawal.
-        if ( bPolyInServerAdmitted ) bPolyInMediaHold.store ( true );
+        if ( bPolyInServerAdmitted )
+            bPolyInMediaHold.store ( true );
         bPolyInActive.store ( false );
         bRawAudioIsSupported = true;
         Init();
@@ -1439,15 +1464,15 @@ void CClient::OnRawAudioSupported()
 void CClient::Start()
 {
     polyInPreviousProducer.Reset();
-    bPolyInServerAdmitted = false;
-    polyInRetiredProfileTag = 0;
-    polyInAdmittedCodec = -1;
-    bPolyInInitialPending = false;
+    bPolyInServerAdmitted          = false;
+    polyInRetiredProfileTag        = 0;
+    polyInAdmittedCodec            = -1;
+    bPolyInInitialPending          = false;
     bPolyInFormatTransitionPending = false;
-    bPolyInWithdrawalPending = false;
-    bPolyInAmendmentPending = false;
-    polyInPriorEpoch = 0;
-    polyInPriorSources = 0;
+    bPolyInWithdrawalPending       = false;
+    bPolyInAmendmentPending        = false;
+    polyInPriorEpoch               = 0;
+    polyInPriorSources             = 0;
     bPolyInMediaHold.store ( false );
     // init object
     Init();
@@ -1492,17 +1517,17 @@ void CClient::Stop()
     // packet is incompatible with an established server-side PLIN buffer.
     bPolyInMediaHold.store ( true );
     bPolyInActive.store ( false );
-    bPolyInServerAdmitted = false;
-    polyInRetiredProfileTag = 0;
-    polyInAdmittedCodec = -1;
-    bPolyInInitialPending = false;
+    bPolyInServerAdmitted          = false;
+    polyInRetiredProfileTag        = 0;
+    polyInAdmittedCodec            = -1;
+    bPolyInInitialPending          = false;
     bPolyInFormatTransitionPending = false;
-    bPolyInWithdrawalPending = false;
+    bPolyInWithdrawalPending       = false;
     // stop audio interface
     Sound.Stop();
     bPolyInAmendmentPending = false;
-    polyInPriorEpoch = 0;
-    polyInPriorSources = 0;
+    polyInPriorEpoch        = 0;
+    polyInPriorSources      = 0;
     bPolyInMediaHold.store ( false );
 
     // disable channel
@@ -1921,39 +1946,38 @@ void CClient::ProcessSndCrdAudioData ( CVector<int16_t>& vecsStereoSndCrd )
     // stock requires frame conversion, convert all tapped inputs on the same
     // logical block boundaries, rather than creating extra clocks.
     const CVector<int16_t>* extra = Sound.PolyInCaptureFrame();
-    const CVector<int16_t>* raw = extra ? extra : &vecsStereoSndCrd;
-    const bool useCapture = bPolyInRequested && polyInProducer.Count() >= 2 &&
+    const CVector<int16_t>* raw   = extra ? extra : &vecsStereoSndCrd;
+    const bool              useCapture =
+        bPolyInRequested && polyInProducer.Count() >= 2 &&
         raw->Size() == ( bSndCrdConversionBufferRequired ? iSndCardMonoBlockSizeSamConvBuff : iMonoBlockSizeSam ) * polyInCaptureChannels;
     if ( bSndCrdConversionBufferRequired )
     {
         SndCrdConversionBufferIn.Put ( vecsStereoSndCrd, vecsStereoSndCrd.Size() );
-        if ( useCapture ) polyInConversionIn.Put ( *raw, raw->Size() );
+        if ( useCapture )
+            polyInConversionIn.Put ( *raw, raw->Size() );
         while ( SndCrdConversionBufferIn.GetAvailData() >= iStereoBlockSizeSam )
         {
             SndCrdConversionBufferIn.Get ( vecDataConvBuf, iStereoBlockSizeSam );
-            const int captured = polyInCaptureChannels * iMonoBlockSizeSam;
+            const int  captured  = polyInCaptureChannels * iMonoBlockSizeSam;
             const bool available = useCapture && polyInConversionIn.GetAvailData() >= captured;
-            if ( available ) polyInConversionIn.Get ( polyInConvertedCapture, captured );
+            if ( available )
+                polyInConversionIn.Get ( polyInConvertedCapture, captured );
             ProcessAudioDataIntern ( vecDataConvBuf,
-                available ? polyInConvertedCapture.data() : nullptr,
-                available ? size_t(captured) : size_t(0) );
+                                     available ? polyInConvertedCapture.data() : nullptr,
+                                     available ? size_t ( captured ) : size_t ( 0 ) );
             SndCrdConversionBufferOut.Put ( vecDataConvBuf, iStereoBlockSizeSam );
         }
         SndCrdConversionBufferOut.Get ( vecsStereoSndCrd, vecsStereoSndCrd.Size() );
     }
     else
     {
-        ProcessAudioDataIntern ( vecsStereoSndCrd,
-            useCapture ? raw->data() : nullptr,
-            useCapture ? size_t(raw->Size()) : size_t(0) );
+        ProcessAudioDataIntern ( vecsStereoSndCrd, useCapture ? raw->data() : nullptr, useCapture ? size_t ( raw->Size() ) : size_t ( 0 ) );
     }
 }
 
-void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd,
-    const int16_t* captured, size_t capturedElements )
+void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd, const int16_t* captured, size_t capturedElements )
 {
-    const bool polyInForTick = bPolyInActive.load() && captured &&
-         polyInRawInterleaved.Size() == int(capturedElements);
+    const bool polyInForTick = bPolyInActive.load() && captured && polyInRawInterleaved.Size() == int ( capturedElements );
     if ( polyInForTick )
         std::copy_n ( captured, capturedElements, polyInRawInterleaved.begin() );
     int            i, j, iUnused;
@@ -2040,14 +2064,18 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd,
         {
             size_t packetCount = 0;
             if ( polyInProducer.EncodeBounded ( &polyInRawInterleaved[polyInCaptureChannels * i * iOPUSFrameSizeSamples],
-                    size_t ( polyInCaptureChannels * iOPUSFrameSizeSamples ), bMuteOutStream.load(),
-                    polyInFrame++, polyInEpoch, PolyIn::MaxDatagram, polyInBoundedPackets,
-                    packetCount ) )
+                                                size_t ( polyInCaptureChannels * iOPUSFrameSizeSamples ),
+                                                bMuteOutStream.load(),
+                                                polyInFrame++,
+                                                polyInEpoch,
+                                                PolyIn::MaxDatagram,
+                                                polyInBoundedPackets,
+                                                packetCount ) )
             {
-                for ( size_t k=0; k<packetCount; ++k )
+                for ( size_t k = 0; k < packetCount; ++k )
                 {
                     const auto& packet = polyInBoundedPackets[k];
-                    auto& body = polyInSendBuffers[k];
+                    auto&       body   = polyInSendBuffers[k];
                     // Reserve(MaxDatagram) happened before starting the sound
                     // callback. resize within capacity cannot allocate.
                     body.resize ( packet.length );
@@ -2060,9 +2088,14 @@ void CClient::ProcessAudioDataIntern ( CVector<int16_t>& vecsStereoSndCrd,
         {
             // An admitted PLIN source with missing/short device capture must
             // not emit stock framing into its still-PLIN server channel.
-            StockClientEncodeFrame ( CurOpusEncoder, bRawAudioIsSupported, bMuteOutStream,
-                                     &vecsStereoSndCrd[j], &vecZeros[j], iOPUSFrameSizeSamples,
-                                     &vecCeltData[0], iCeltNumCodedBytes );
+            StockClientEncodeFrame ( CurOpusEncoder,
+                                     bRawAudioIsSupported,
+                                     bMuteOutStream,
+                                     &vecsStereoSndCrd[j],
+                                     &vecZeros[j],
+                                     iOPUSFrameSizeSamples,
+                                     &vecCeltData[0],
+                                     iCeltNumCodedBytes );
             Channel.PrepAndSendPacket ( &Socket, vecCeltData, iCeltNumCodedBytes );
         }
     }

@@ -16,9 +16,11 @@
 inline void StockClientEncoderDefaults ( OpusCustomEncoder* encoder, bool size64 )
 {
     opus_custom_encoder_ctl ( encoder, OPUS_SET_VBR ( 0 ) );
-    if ( size64 ) opus_custom_encoder_ctl ( encoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
+    if ( size64 )
+        opus_custom_encoder_ctl ( encoder, OPUS_SET_PACKET_LOSS_PERC ( 35 ) );
     opus_custom_encoder_ctl ( encoder, OPUS_SET_APPLICATION ( OPUS_APPLICATION_RESTRICTED_LOWDELAY ) );
-    if ( !size64 ) opus_custom_encoder_ctl ( encoder, OPUS_SET_COMPLEXITY ( 1 ) );
+    if ( !size64 )
+        opus_custom_encoder_ctl ( encoder, OPUS_SET_COMPLEXITY ( 1 ) );
 }
 
 inline void StockClientEncoderBitrate ( OpusCustomEncoder* encoder, int bytes, int samples, int sampleRate )
@@ -26,9 +28,14 @@ inline void StockClientEncoderBitrate ( OpusCustomEncoder* encoder, int bytes, i
     opus_custom_encoder_ctl ( encoder, OPUS_SET_BITRATE ( sampleRate / samples * bytes * 8 ) );
 }
 
-inline void StockClientEncodeFrame ( OpusCustomEncoder* encoder, bool rawSupported, bool muted,
-                                     const int16_t* samples, const int16_t* zeros, int frameSamples,
-                                     uint8_t* encoded, int encodedBytes )
+inline void StockClientEncodeFrame ( OpusCustomEncoder* encoder,
+                                     bool               rawSupported,
+                                     bool               muted,
+                                     const int16_t*     samples,
+                                     const int16_t*     zeros,
+                                     int                frameSamples,
+                                     uint8_t*           encoded,
+                                     int                encodedBytes )
 {
     if ( encoder )
     {
@@ -37,7 +44,9 @@ inline void StockClientEncodeFrame ( OpusCustomEncoder* encoder, bool rawSupport
     }
     else if ( rawSupported )
     {
-        if ( muted ) memset ( encoded, 0, encodedBytes );
-        else memcpy ( encoded, samples, encodedBytes );
+        if ( muted )
+            memset ( encoded, 0, encodedBytes );
+        else
+            memcpy ( encoded, samples, encodedBytes );
     }
 }
