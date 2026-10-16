@@ -108,6 +108,8 @@ public:
     virtual void Start();
     virtual void Stop();
     bool ConfigurePolyInCapture ( int channels ) override;
+    bool ConfigurePolyInPhysicalCapture ( int channels ) override { return ConfigurePolyInCapture ( channels ); }
+    int GetNumPolyInPhysicalInputs() const override { return PolyInMaxInputs; }
     const CVector<int16_t>* PolyInCaptureFrame() const override
     {
         return polyInCaptureChannels > 2 ? &polyInCaptureFrame : nullptr;

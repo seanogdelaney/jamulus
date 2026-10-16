@@ -31,7 +31,7 @@ struct QString : std::string { using std::string::string;
   QString(const std::string& s):std::string(s){}
   static QString fromStdString(const std::string& s){return QString(s);}
 };
-struct CChannelCoreInfo{QString strName;};
+struct CChannelCoreInfo{QString strName;int iInstrument=0;};
 struct CChannelInfo {
  int iChanID;CChannelCoreInfo info;
  CChannelInfo(int id,CChannelCoreInfo i):iChanID(id),info(i){}
@@ -58,6 +58,7 @@ struct Channel{
  bool IsPolyInVirtual()const{return owner!=nullptr;}
  Channel* PolyInPhysicalOwner()const{return owner;}
  CChannelCoreInfo GetChanInfo()const{return info;}
+ int GetPolyInInstrument()const{return -1;}
  QString GetName()const{return owner ? tag:info.strName;}
 };
 struct CServer {

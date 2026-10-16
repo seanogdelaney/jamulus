@@ -113,6 +113,8 @@ public:
     // Optional poly-in raw physical input tap on the existing backend callback.
     // Backends without a native multichannel tap retain stock stereo only.
     virtual bool ConfigurePolyInCapture ( int channels ) { return channels == 2; }
+    virtual bool ConfigurePolyInPhysicalCapture ( int channels ) { return channels > 2 && ConfigurePolyInCapture ( channels ); }
+    virtual int GetNumPolyInPhysicalInputs() const { return 2; }
     virtual const CVector<int16_t>* PolyInCaptureFrame() const { return nullptr; }
     virtual int     GetNumInputChannels() { return 2; }
     virtual QString GetInputChannelName ( const int ) { return "Default"; }

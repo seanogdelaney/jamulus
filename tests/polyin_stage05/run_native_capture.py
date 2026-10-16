@@ -65,10 +65,12 @@ int main(){
  for(int i=0;i<12;++i)if(s.polyInCaptureFrame[i]!=e[i]){
  std::cerr<<"ASIO order/fmt mismatch "<<i<<" got "<<s.polyInCaptureFrame[i]<<" expected "<<e[i]<<"\n";return 1;}
  for(int i=0;i<3;++i)if(s.vecsMultChanAudioSndCrd[2*i]!=ch3[i]||s.vecsMultChanAudioSndCrd[2*i+1]!=ch0[i])return 2;
- s.polyInCaptureChannels=2;s.polyInCaptureFrame.Reset(777);s.vecsMultChanAudioSndCrd.Reset(0);
+ s.polyInCaptureChannels=2;s.polyInCaptureFrame.clear();s.vecsMultChanAudioSndCrd.Reset(0);
  exercise(&s,0);
  for(int i=0;i<3;++i)if(s.vecsMultChanAudioSndCrd[2*i]!=ch3[i]||s.vecsMultChanAudioSndCrd[2*i+1]!=ch0[i])return 3;
- for(auto x:s.polyInCaptureFrame)if(x!=777)return 4;
+ if(!s.polyInCaptureFrame.empty())return 4;
+ s.polyInCaptureFrame.Init(6);exercise(&s,0);
+ for(int i=0;i<3;++i)if(s.polyInCaptureFrame[2*i]!=ch0[i]||s.polyInCaptureFrame[2*i+1]!=(201+i))return 5;
  std::cout<<"ASIO multi-format, physical ordering, stock parity PASS\n";}
 '''
 ca_test=common+r'''
@@ -92,7 +94,10 @@ int main(){(void)INVALID_INDEX;(void)NUM_IN_OUT_CHANNELS;CoreFake s;s.polyInCapt
  for(int i=0;i<3;++i){if(s.polyInCaptureFrame[i*3]!=Float2Short(p[i]*_MAXSHORT))return 3;
  if(s.polyInCaptureFrame[i*3+1]!=Float2Short(q[i]*_MAXSHORT))return 4;
  if(s.polyInCaptureFrame[i*3+2]!=Float2Short(r[i]*_MAXSHORT))return 5;}
- std::cout<<"CoreAudio interleaved, noninterleaved, fail-closed PASS\n";}
+ s.polyInCaptureChannels=2;s.polyInCaptureFrame.Init(6);
+ exercise(&s,&v,lanes,3);
+ for(int i=0;i<3;++i)if(s.polyInCaptureFrame[2*i]!=Float2Short(p[i]*_MAXSHORT)||s.polyInCaptureFrame[2*i+1]!=Float2Short(q[i]*_MAXSHORT))return 6;
+ std::cout<<"CoreAudio explicit two-lane, interleaved, noninterleaved, fail-closed PASS\n";}
 '''
 with tempfile.TemporaryDirectory(prefix='polyin-native-') as dir:
     for name,s in [('asio',as_test),('coreaudio',ca_test)]:

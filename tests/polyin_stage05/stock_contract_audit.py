@@ -20,7 +20,7 @@ checks={
         '&CChannel::NetwTranspPropsSent, this, &CClient::SendPolyInConfig' in client,
     'single stock return send path': 'CServer::MixEncodeTransmitData' in server,
     'legacy audio send remains explicit fallback': 'Channel.PrepAndSendPacket ( &Socket, vecCeltData, iCeltNumCodedBytes );' in client,
-    'producer optional CLI only': 'Client.SetPolyInRequested ( bPolyInRequested );' in main,
+    'producer explicit opt-in through stock settings or CLI': 'Client.SetPolyInRequested ( true );' in main and re.search(r'bool\s+bPolyInRequested\s*=\s*false;', (root/'src/client.h').read_text()) is not None,
     'stock connected clients list reused': 'vecChannels[i].CreateConClientListMes ( vecChanInfo );' in server,
     'stock fader source IDs': 'CChannelInfo ( i, info )' in server,
     'stock protocol reliable send': 'CreateAndSendMessage ( PROTMESSID_POLYIN_CONFIG, body );' in protocol,

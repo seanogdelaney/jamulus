@@ -948,7 +948,7 @@ int CSound::Init ( const int iNewPrefMonoBufferSize )
 
     // create memory for intermediate audio buffer
     vecsTmpAudioSndCrdStereo.Init ( iCoreAudioBufferSizeStereo );
-    if ( polyInCaptureChannels > 2 )
+    if ( !polyInCaptureFrame.empty() )
         polyInCaptureFrame.Init ( polyInCaptureChannels * iCoreAudioBufferSizeMono );
 
     return iCoreAudioBufferSizeMono;
@@ -963,6 +963,13 @@ bool CSound::ConfigurePolyInCapture ( int channels )
     if ( channels > 2 ) polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
     else polyInCaptureFrame.clear();
     polyInCaptureChannels = channels;
+    return true;
+}
+
+bool CSound::ConfigurePolyInPhysicalCapture ( int channels )
+{
+    if ( !ConfigurePolyInCapture ( channels ) ) return false;
+    if ( channels == 2 ) polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
     return true;
 }
 
@@ -1108,7 +1115,7 @@ OSStatus CSound::callbackIO ( AudioDeviceID inDevice,
         // AudioBufferList/vecNumInBufChan layout as stock channel selection:
         // buffers may each contain one or several interleaved Float32 channels.
         // No allocation, extra IOProc, resampling or clock in the callback.
-        if ( pSound->polyInCaptureChannels > 2 )
+        if ( !pSound->polyInCaptureFrame.empty() )
         {
             const int count = pSound->polyInCaptureChannels;
             int physical = 0;

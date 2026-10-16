@@ -322,7 +322,7 @@ protected:
     int iOldRecCnt;
     // Only extension controls need payload identity across a lost-disconnect
     // counter restart. Legacy reliable messages keep stock duplicate rules.
-    std::array<uint8_t, 1410> oldPolyInControlBody{};
+    std::array<uint8_t, 1450> oldPolyInControlBody{};
     int                       oldPolyInControlSize = -1;
 
     // these two objects must be sequred by a mutex

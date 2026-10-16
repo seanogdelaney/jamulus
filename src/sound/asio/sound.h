@@ -85,9 +85,11 @@ public:
     virtual void Start();
     virtual void Stop();
     bool ConfigurePolyInCapture ( int channels ) override;
+    bool ConfigurePolyInPhysicalCapture ( int channels ) override;
+    int GetNumPolyInPhysicalInputs() const override { return lNumInChan; }
     const CVector<int16_t>* PolyInCaptureFrame() const override
     {
-        return polyInCaptureChannels > 2 ? &polyInCaptureFrame : nullptr;
+        return !polyInCaptureFrame.empty() ? &polyInCaptureFrame : nullptr;
     }
 
     virtual void OpenDriverSetup() { ASIOControlPanel(); }

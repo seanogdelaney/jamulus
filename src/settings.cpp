@@ -632,6 +632,26 @@ void CClientSettings::ReadSettingsFromXML ( const QDomDocument& IniXMLDocument, 
         pClient->SetAudioQuality ( static_cast<EAudioQuality> ( iValue ) );
     }
 
+    bool polyEnabled = false;
+    GetFlagIniSet ( IniXMLDocument, "client", "polyinenabled", polyEnabled );
+    int routeCount = 0;
+    if ( GetNumericIniSet ( IniXMLDocument, "client", "polyinroutecount", 0, int ( PolyIn::MaxSources ), routeCount ) && routeCount >= 2 )
+    {
+        std::vector<PolyIn::CaptureRoute> routes;
+        bool valid = true;
+        for ( int row = 0; row < routeCount; ++row )
+        {
+            const QString key = QString ( "polyin%1" ).arg ( row );
+            int icon = 0, first = 0, second = -1;
+            valid = GetNumericIniSet ( IniXMLDocument, "client", key + "instrument", 0, CInstPictures::GetNumAvailableInst() - 1, icon ) && valid;
+            valid = GetNumericIniSet ( IniXMLDocument, "client", key + "ch1", 0, int ( PolyIn::MaxCaptureChannels ) - 1, first ) && valid;
+            valid = GetNumericIniSet ( IniXMLDocument, "client", key + "ch2", -1, int ( PolyIn::MaxCaptureChannels ) - 1, second ) && valid;
+            const QString tag = FromBase64ToString ( GetIniSetting ( IniXMLDocument, "client", key + "tag_base64" ) );
+            routes.push_back ( PolyIn::CaptureRoute ( tag.toStdString(), icon, first, second ) );
+        }
+        if ( valid ) pClient->SetPolyInAudioChannels ( routes, polyEnabled );
+    }
+
     // MIDI settings: Always read from XML first to preserve values
     if ( GetNumericIniSet ( IniXMLDocument, "client", "midichannel", 0, 16, iValue ) )
         iMidiChannel = iValue;
@@ -992,6 +1012,19 @@ void CClientSettings::WriteSettingsToXML ( QDomDocument& IniXMLDocument, bool is
 
     // audio quality
     SetNumericIniSet ( IniXMLDocument, "client", "audioquality", static_cast<int> ( pClient->GetAudioQuality() ) );
+
+    SetFlagIniSet ( IniXMLDocument, "client", "polyinenabled", pClient->GetPolyInRequested() );
+    const auto& routes = pClient->GetPolyInAudioChannels();
+    SetNumericIniSet ( IniXMLDocument, "client", "polyinroutecount", int ( routes.size() ) );
+    for ( size_t row = 0; row < routes.size(); ++row )
+    {
+        const QString key = QString ( "polyin%1" ).arg ( int ( row ) );
+        const auto& route = routes[row];
+        SetNumericIniSet ( IniXMLDocument, "client", key + "instrument", route.iInstrument );
+        SetNumericIniSet ( IniXMLDocument, "client", key + "ch1", route.iInputChannel1 );
+        SetNumericIniSet ( IniXMLDocument, "client", key + "ch2", route.iInputChannel2 );
+        PutIniSetting ( IniXMLDocument, "client", key + "tag_base64", ToBase64 ( QString::fromStdString ( route.strFaderTag ) ) );
+    }
 
     // custom directories
     for ( iIdx = 0; iIdx < MAX_NUM_SERVER_ADDR_ITEMS; iIdx++ )

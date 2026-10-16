@@ -21,6 +21,8 @@ steps=(
  'tests/polyin_stage05/run_protocol_duplicate.py',
  'tests/polyin_stage05/run_stock_channel_list.py',
  'tests/polyin_stage05/run_rt_capture.py',
+ 'tests/polyin_stage05/run_native_capture.py',
+ 'tests/polyin_stage05/run_capture_routes.py',
  'tests/polyin_stage05/run_client_capture.py',
  'tests/polyin_stage05/run_refused_amendment.py',
  'tests/polyin_stage05/stock_contract_audit.py',

@@ -27,7 +27,7 @@ prefix=r'''
 #include <algorithm>
 #include <vector>
 using namespace PolyIn;
-enum { CC_MONO=1, CT_OPUS=2, CT_OPUS64=3 };
+enum { CC_MONO=1, CC_STEREO=2, CC_MONO_IN_STEREO_OUT=3, CT_OPUS=2, CT_OPUS64=3 };
 struct QByteArray {
  std::string s;
  QByteArray(const char*p):s(p){} QByteArray(std::string x):s(std::move(x)){}
@@ -45,12 +45,15 @@ template<typename T>struct CVector:std::vector<T>{using std::vector<T>::vector;v
 struct MockSound {
  bool running=false,enabled=true;
  int channels=2,stops=0,starts=0,rejectCount=-1;
+ int GetNumPolyInPhysicalInputs()const{return 20;}
+ bool ConfigurePolyInPhysicalCapture(int n){return ConfigurePolyInCapture(n);}
  bool ConfigurePolyInCapture(int n){if(!enabled || n>20 || n==rejectCount || running)return false;channels=n;return true;}
  bool IsRunning()const{return running;}
  void Stop(){++stops;running=false;}
  void Start(){++starts;running=true;}
 };
 struct CClient {
+    std::vector<PolyIn::CaptureRoute> polyInAudioChannels;
  bool bPolyInRequested=true,bRawAudioIsSupported=false,bSndCrdConversionBufferRequired=false;
  std::atomic<bool> bPolyInActive{false},bPolyInMediaHold{false};
  bool bPolyInInitialPending=false,bPolyInAmendmentPending=false,bPolyInFormatTransitionPending=false,bPolyInWithdrawalPending=false,bPolyInServerAdmitted=false;

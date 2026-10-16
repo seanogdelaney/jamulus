@@ -1016,8 +1016,11 @@ int main ( int argc, char** argv )
             CClientSettings Settings ( &Client, strIniFileName );
             Settings.Load ( CommandLineOptions );
             Client.SetSettings ( &Settings );
-            Client.SetPolyInRequested ( bPolyInRequested );
-            Client.SetPolyInSourceCount ( polyInInputCount );
+            if ( bPolyInRequested )
+            {
+                Client.SetPolyInSourceCount ( polyInInputCount );
+                Client.SetPolyInRequested ( true );
+            }
 
 #    ifndef NO_JSON_RPC
             if ( pRpcServer )

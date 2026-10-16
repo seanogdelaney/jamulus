@@ -1488,6 +1488,8 @@ CVector<CChannelInfo> CServer::CreateChannelList()
             PolyIn::SourceSlots::Identity identity;
             if ( vecChannels[i].IsPolyInPhysical() && polyInSlots.ResolveChannel ( i, identity ) )
                 info.strName = QString::fromStdString ( identity.tag );
+            if ( vecChannels[i].IsPolyInPhysical() && vecChannels[i].GetPolyInInstrument() >= 0 )
+                info.iInstrument = vecChannels[i].GetPolyInInstrument();
             vecChanInfo.Add ( CChannelInfo ( i, info ) );
         }
         else if ( vecChannels[i].IsPolyInVirtual() &&
@@ -1496,6 +1498,7 @@ CVector<CChannelInfo> CServer::CreateChannelList()
             // Ordinary stock entry, not an invented receiver control or UI.
             CChannelCoreInfo info = vecChannels[i].PolyInPhysicalOwner()->GetChanInfo();
             info.strName = vecChannels[i].GetName();
+            if ( vecChannels[i].GetPolyInInstrument() >= 0 ) info.iInstrument = vecChannels[i].GetPolyInInstrument();
             vecChanInfo.Add ( CChannelInfo ( i, info ) );
         }
     }
@@ -2081,7 +2084,8 @@ void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
             audioSources.reserve ( parsed.size() );
             for ( const auto& s : parsed )
             {
-                if ( EAudComprType(s.codec) != vecChannels[physical].GetAudioCompressionType() ) admissible = false;
+                if ( EAudComprType(s.codec) != vecChannels[physical].GetAudioCompressionType() ||
+                     s.instrument >= CInstPictures::GetNumAvailableInst() ) admissible = false;
                 if ( s.source == 0 &&
                      ( int(s.channels) != vecChannels[physical].GetNumAudioChannels() ||
                        int(s.bytes) != vecChannels[physical].GetCeltNumCodedBytes() ) ) admissible = false;
@@ -2121,7 +2125,16 @@ void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
                                     DisablePolyInAudio ( physical );
                                 }
                                 accepted = ConfigurePolyInAudio ( polyInSlots, physical, epoch, audioSources );
-                                if ( accepted ) polyInEpoch[physical] = epoch;
+                                if ( accepted )
+                                {
+                                    polyInEpoch[physical] = epoch;
+                                    for ( const auto& source : parsed )
+                                    {
+                                        PolyIn::SourceSlots::Identity identity;
+                                        if ( polyInSlots.Resolve ( physical, epoch, source.source, identity ) )
+                                            vecChannels[identity.channel].SetPolyInInstrument ( source.instrument );
+                                    }
+                                }
                             }
                         }
                     }

@@ -111,6 +111,8 @@ public:
     bool IsPolyInVirtual() const { return pPolyInOwner != nullptr; }
     bool IsPolyInVirtualOf ( const CChannel* owner ) const { return pPolyInOwner == owner; }
     CChannel* PolyInPhysicalOwner() const { return pPolyInOwner; }
+    int GetPolyInInstrument() const { return polyInInstrument; }
+    void SetPolyInInstrument ( int instrument ) { polyInInstrument = instrument; }
     const CHostAddress& PolyInOwnerAddress() const { return pPolyInOwner ? pPolyInOwner->GetAddress() : GetAddress(); }
 
 
@@ -244,6 +246,7 @@ protected:
     EAudComprType ePolyInCodec = CT_NONE;
     int iPolyInChannels = 1, iPolyInEncodedBytes = 0, iPolyInFrameCursor = 0, iPolyInFrameCount = 0;
     QString PolyInTag;
+    int polyInInstrument = -1;
     std::array<PolyIn::FrameView, 2> PolyInFrames{};
 
     int              iCurSockBufNumFrames;

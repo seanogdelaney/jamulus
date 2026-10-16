@@ -38,7 +38,7 @@ prefix = r'''
 #include <vector>
 using namespace PolyIn;
 enum EAudComprType { CT_OPUS=2, CT_OPUS64=3 };
-enum { CC_MONO=1, CC_STEREO=2, CS_DISCONNECTED=0, CS_CONNECTED=1, FRAME_SIZE_FACTOR_PREFERRED=1, FRAME_SIZE_FACTOR_DEFAULT=2, FRAME_SIZE_FACTOR_SAFE=4 };
+enum { CC_MONO=1, CC_STEREO=2, CC_MONO_IN_STEREO_OUT=3, CS_DISCONNECTED=0, CS_CONNECTED=1, FRAME_SIZE_FACTOR_PREFERRED=1, FRAME_SIZE_FACTOR_DEFAULT=2, FRAME_SIZE_FACTOR_SAFE=4 };
 template<typename T> struct CVector:std::vector<T> {
     using std::vector<T>::vector;
     int Size() const {return int(this->size());}
@@ -61,7 +61,9 @@ std::ostream& qWarning(){return std::cerr;}
 struct MockSound {
     bool running=false,enabled=true;
     int maxChannels=20, channels=2, stops=0, starts=0;
-    bool ConfigurePolyInCapture(int n) {
+    int GetNumPolyInPhysicalInputs()const{return 20;}
+ bool ConfigurePolyInPhysicalCapture(int n){return ConfigurePolyInCapture(n);}
+ bool ConfigurePolyInCapture(int n) {
         if(!enabled || n>maxChannels || running)return false;
         channels=n; return true;
     }
@@ -75,6 +77,7 @@ struct ChannelMock {
     void CreatePolyInConfig(const CVector<uint8_t>& body){++sends;lastConfig.assign(body.begin(),body.end());}
 };
 struct CClient {
+    std::vector<PolyIn::CaptureRoute> polyInAudioChannels;
     int polyInDesiredSources=2,polyInCaptureChannels=2,eAudioChannelConf=CC_MONO;
     int eAudioCompressionType=CT_OPUS,iCeltNumCodedBytes=45;
     int iSndCrdPrefFrameSizeFactor=2; bool bEnableOPUS64=false,requestRaw=false;
@@ -126,7 +129,10 @@ struct QMutexLocker {
     explicit QMutexLocker(MutexMock*) {assert(!audioLocked);audioLocked=true;}
     ~QMutexLocker() {audioLocked=false;}
 };
+struct CInstPictures {static int GetNumAvailableInst(){return 256;}};
 struct ServerChannel {
+    int instrument=-1;
+    void SetPolyInInstrument(int i){instrument=i;}
     bool connected=false;
     ServerChannel* owner=nullptr;
     std::vector<std::vector<int>> publishedLists;

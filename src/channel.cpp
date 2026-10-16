@@ -852,6 +852,7 @@ void CChannel::DisablePolyIn()
     QMutexLocker locker ( &MutexSocketBuf );
     pPolyInOwner = nullptr;
     PolyInTag.clear();
+    polyInInstrument = -1;
     iPolyInFrameCursor = iPolyInFrameCount = 0;
     if ( PolyFrameBuffer )
     {

@@ -456,6 +456,13 @@ bool CSound::ConfigurePolyInCapture ( int channels )
     return true;
 }
 
+bool CSound::ConfigurePolyInPhysicalCapture ( int channels )
+{
+    if ( !ConfigurePolyInCapture ( channels ) ) return false;
+    if ( channels == 2 ) polyInCaptureFrame.Init ( channels * iASIOBufferSizeMono );
+    return true;
+}
+
 int CSound::Init ( const int iNewPrefMonoBufferSize )
 {
     ASIOMutex.lock(); // get mutex lock
@@ -484,7 +491,7 @@ int CSound::Init ( const int iNewPrefMonoBufferSize )
 
         // create memory for intermediate audio buffer
         vecsMultChanAudioSndCrd.Init ( iASIOBufferSizeStereo );
-        if ( polyInCaptureChannels > 2 )
+        if ( !polyInCaptureFrame.empty() )
             polyInCaptureFrame.Init ( polyInCaptureChannels * iASIOBufferSizeMono );
 
         // create and activate ASIO buffers (buffer size in samples),
@@ -725,7 +732,7 @@ void CSound::bufferSwitch ( long index, ASIOBool )
     pSound->ASIOMutex.lock(); // get mutex lock
     {
         // CAPTURE -------------------------------------------------------------
-        const int physicalCount = pSound->polyInCaptureChannels > 2 ? pSound->polyInCaptureChannels : 0;
+        const int physicalCount = !pSound->polyInCaptureFrame.empty() ? pSound->polyInCaptureChannels : 0;
         for ( int i = 0; i < NUM_IN_OUT_CHANNELS + physicalCount; i++ )
         {
             // Stock selected/mixed stereo uses exactly the original converter.

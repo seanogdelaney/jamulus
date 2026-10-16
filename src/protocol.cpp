@@ -842,7 +842,7 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                     break;
 
                 case PROTMESSID_POLYIN_CONFIG:
-                    if ( vecbyMesBodyDataRef.Size() <= 1410 ) emit PolyInConfigReceived ( vecbyMesBodyDataRef );
+                    if ( vecbyMesBodyDataRef.Size() <= 1450 ) emit PolyInConfigReceived ( vecbyMesBodyDataRef );
                     break;
 
                 case PROTMESSID_POLYIN_RESPONSE:

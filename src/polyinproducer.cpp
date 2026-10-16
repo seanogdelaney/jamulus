@@ -45,6 +45,37 @@ bool Profile ( const InputSpec& s, int samples, size_t capturedChannels )
 }
 
 SourceProducer::~SourceProducer() { Reset(); }
+bool ValidateCaptureRoutes ( const std::vector<CaptureRoute>& routes, int physicalInputs, int& captureChannels )
+{
+    if ( routes.size() < 2 || routes.size() > MaxSources ) return false;
+    std::array<bool, MaxCaptureChannels> used{};
+    captureChannels = 2;
+    for ( size_t i = 0; i < routes.size(); ++i )
+    {
+        const auto& route = routes[i];
+        const int a = route.iInputChannel1, b = route.iInputChannel2;
+        if ( route.strFaderTag.empty() || route.strFaderTag.size() > 48 || route.iInstrument < 0 || route.iInstrument > 255 ||
+             a < 0 || a >= physicalInputs || a >= int ( MaxCaptureChannels ) || b < -1 || b >= physicalInputs ||
+             b >= int ( MaxCaptureChannels ) || a == b || used[a] || ( b >= 0 && used[b] ) ) return false;
+        for ( size_t previous = 0; previous < i; ++previous )
+            if ( routes[previous].strFaderTag == route.strFaderTag ) return false;
+        used[a] = true;
+        if ( b >= 0 ) used[b] = true;
+        captureChannels = std::max ( captureChannels, std::max ( a, b ) + 1 );
+    }
+    return true;
+}
+
+int MatchingProfileBytes ( int samples, bool fromStereo, int bytes, bool toStereo, bool raw )
+{
+    if ( samples != 64 && samples != 128 ) return 0;
+    if ( raw ) return bytes == samples * ( fromStereo ? 2 : 1 ) * int ( sizeof ( int16_t ) ) ?
+                     samples * ( toStereo ? 2 : 1 ) * int ( sizeof ( int16_t ) ) : 0;
+    for ( int quality = 0; quality < 3; ++quality )
+        if ( Quality[samples == 128][fromStereo][quality] == bytes ) return Quality[samples == 128][toStereo][quality];
+    return 0;
+}
+
 void SourceProducer::Reset()
 {
     for ( auto& s : sources_ ) if ( s.encoder ) opus_custom_encoder_destroy ( s.encoder );

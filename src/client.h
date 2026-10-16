@@ -356,7 +356,12 @@ public:
     // 2 inputs: stock stereo capture. 3..20: extra independent JACK input
     // ports on the same clock (unsupported backends retain stock fallback).
     void SetPolyInRequested ( bool enabled ) { bPolyInRequested = enabled; }
-    void SetPolyInSourceCount ( int count ) { polyInDesiredSources = count; }
+    bool GetPolyInRequested() const { return bPolyInRequested; }
+    const std::vector<PolyIn::CaptureRoute>& GetPolyInAudioChannels() const { return polyInAudioChannels; }
+    bool SetPolyInAudioChannels ( const std::vector<PolyIn::CaptureRoute>& channels, bool enabled = true );
+    int GetPolyInSourceCount() const { return polyInDesiredSources; }
+    int GetPolyInPhysicalInputs() const { return std::min ( int ( PolyIn::MaxSources ), Sound.GetNumPolyInPhysicalInputs() ); }
+    void SetPolyInSourceCount ( int count ) { polyInDesiredSources = count; polyInAudioChannels.clear(); }
     Q_INVOKABLE bool ReconfigurePolyInSources ( int count );
 
 protected:
@@ -407,6 +412,7 @@ protected:
     int    iJoinSequence;   // order of joining of session participants
     QMutex MutexChannels;
     int polyInDesiredSources = 2;
+    std::vector<PolyIn::CaptureRoute> polyInAudioChannels;
     int polyInCaptureChannels = 2;
     bool bPolyInRequested = false;
     std::atomic<bool> bPolyInActive{false};

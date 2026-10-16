@@ -6,6 +6,7 @@
 #include "polyinwire.h"
 #include <cstdint>
 #include <vector>
+#include <string>
 #ifdef USE_OPUS_SHARED_LIB
 #    include "opus/opus_custom.h"
 #else
@@ -22,6 +23,15 @@ namespace PolyIn
 // The names retain the original stereo routing meaning for pair (0,1).
 enum class InputRoute { Left, Right, Stereo, MonoMix };
 constexpr size_t MaxCaptureChannels = MaxSources * 2; // up to 20 independent stereo pairs
+struct CaptureRoute
+{
+    CaptureRoute ( const std::string& tag = std::string(), int instrument = 0, int first = 0, int second = -1 ) :
+        strFaderTag ( tag ), iInstrument ( instrument ), iInputChannel1 ( first ), iInputChannel2 ( second ) {}
+    std::string strFaderTag;
+    int iInstrument, iInputChannel1, iInputChannel2;
+};
+bool ValidateCaptureRoutes ( const std::vector<CaptureRoute>& routes, int physicalInputs, int& captureChannels );
+int MatchingProfileBytes ( int samples, bool fromStereo, int bytes, bool toStereo, bool raw );
 struct InputSpec
 {
     uint16_t source = 0;
