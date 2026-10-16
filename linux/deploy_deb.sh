@@ -16,7 +16,11 @@ export DEBFULLNAME="Jamulus Development Team" DEBEMAIL=team@jamulus.io
 echo -n generating changelog
 rm -f debian/changelog
 dch --create --package jamulus --empty --newversion "${VERSION}" ''
-perl .github/autobuild/extractVersionChangelog.pl ChangeLog "${VERSION}" --line-per-entry | while read -r entry; do
+if [[ -f ".github/release_notes/${VERSION}.md" ]]; then
+    sed -n 's/^CHANGELOG: //p' ".github/release_notes/${VERSION}.md"
+else
+    perl .github/autobuild/extractVersionChangelog.pl ChangeLog "${VERSION}" --line-per-entry
+fi | while read -r entry; do
     echo -n .
     dch "$entry"
 done
