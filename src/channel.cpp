@@ -98,6 +98,8 @@ CChannel::CChannel ( const bool bNIsServer ) :
     QObject::connect ( &Protocol, &CProtocol::ReqConnClientsList, this, &CChannel::ReqConnClientsList );
 
     QObject::connect ( &Protocol, &CProtocol::ConClientListMesReceived, this, &CChannel::ConClientListMesReceived );
+    QObject::connect ( &Protocol, &CProtocol::PolyInConfigReceived, this, &CChannel::PolyInConfigReceived );
+    QObject::connect ( &Protocol, &CProtocol::PolyInResponseReceived, this, &CChannel::PolyInResponseReceived );
 
     QObject::connect ( &Protocol, &CProtocol::ChangeChanGain, this, &CChannel::OnChangeChanGain );
 
@@ -533,6 +535,7 @@ void CChannel::OnReqNetTranspProps()
 {
     // fill network transport properties struct from current settings and send it
     Protocol.CreateNetwTranspPropsMes ( GetNetworkTransportPropsFromCurrentSettings() );
+    emit NetwTranspPropsSent();
 }
 
 void CChannel::OnReqSplitMessSupport()

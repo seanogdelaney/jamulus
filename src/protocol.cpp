@@ -508,6 +508,7 @@ void CProtocol::Reset()
     iCounter               = 0;
     iOldRecID              = PROTMESSID_ILLEGAL;
     iOldRecCnt             = 0;
+    oldPolyInControlSize   = -1;
     iSplitMessageCnt       = 0;
     iSplitMessageDataIndex = 0;
     bSplitMessageSupported = false; // compatilibity to old versions
@@ -680,7 +681,18 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
     // did not make it to the receiver, he will resend his message. We check
     // here if the message is the same as the old one, and if this is the
     // case, just resend our old answer again
-    if ( ( iOldRecID == iRecID ) && ( iOldRecCnt == iRecCounter ) )
+    // Producer controls carry generation identity in their payload. A lost
+    // DISCONNECT can leave a live stock counter equal to a fresh session's
+    // counter; do not acknowledge a different producer control as a resend.
+    // Split containers still use the original stock assembly and ACK path.
+    int controlID = iRecID;
+    if ( iRecID == PROTMESSID_SPECIAL_SPLIT_MESSAGE && vecbyMesBodyData.Size() >= 2 )
+        controlID = int ( vecbyMesBodyData[0] ) | ( int ( vecbyMesBodyData[1] ) << 8 );
+    const bool producerControl = controlID == PROTMESSID_POLYIN_CONFIG || controlID == PROTMESSID_POLYIN_RESPONSE;
+    const bool sameProducerBody =
+        !producerControl || ( oldPolyInControlSize == vecbyMesBodyData.Size() && oldPolyInControlSize >= 0 &&
+                              std::equal ( vecbyMesBodyData.begin(), vecbyMesBodyData.end(), oldPolyInControlBody.begin() ) );
+    if ( ( iOldRecID == iRecID ) && ( iOldRecCnt == iRecCounter ) && sameProducerBody )
     {
         // acknowledgments are not acknowledged
         if ( iRecID != PROTMESSID_ACKN )
@@ -829,6 +841,14 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
                     EvaluateMuteStateHasChangedMes ( vecbyMesBodyDataRef );
                     break;
 
+                case PROTMESSID_POLYIN_CONFIG:
+                    if ( vecbyMesBodyDataRef.Size() <= 1410 ) emit PolyInConfigReceived ( vecbyMesBodyDataRef );
+                    break;
+
+                case PROTMESSID_POLYIN_RESPONSE:
+                    if ( vecbyMesBodyDataRef.Size() == 10 ) emit PolyInResponseReceived ( vecbyMesBodyDataRef );
+                    break;
+
                 case PROTMESSID_CONN_CLIENTS_LIST:
                     EvaluateConClientListMes ( vecbyMesBodyDataRef );
                     break;
@@ -888,8 +908,14 @@ void CProtocol::ParseMessageBody ( const CVector<uint8_t>& vecbyMesBodyData, con
 
             // save current message ID and counter to find out if message
             // was resent
-            iOldRecID  = iRecID;
-            iOldRecCnt = iRecCounter;
+            iOldRecID            = iRecID;
+            iOldRecCnt           = iRecCounter;
+            oldPolyInControlSize = -1;
+            if ( producerControl && vecbyMesBodyData.Size() <= int ( oldPolyInControlBody.size() ) )
+            {
+                std::copy ( vecbyMesBodyData.begin(), vecbyMesBodyData.end(), oldPolyInControlBody.begin() );
+                oldPolyInControlSize = vecbyMesBodyData.Size();
+            }
         }
     }
 }
@@ -1291,6 +1317,16 @@ bool CProtocol::EvaluateConClientListMes ( const CVector<uint8_t>& vecData )
     emit ConClientListMesReceived ( vecChanInfo );
 
     return false; // no error
+}
+
+void CProtocol::CreatePolyInConfig ( const CVector<uint8_t>& body )
+{
+    CreateAndSendMessage ( PROTMESSID_POLYIN_CONFIG, body );
+}
+
+void CProtocol::CreatePolyInResponse ( const CVector<uint8_t>& body )
+{
+    CreateAndSendMessage ( PROTMESSID_POLYIN_RESPONSE, body );
 }
 
 void CProtocol::CreateReqConnClientsList() { CreateAndSendMessage ( PROTMESSID_REQ_CONN_CLIENTS_LIST, CVector<uint8_t> ( 0 ) ); }

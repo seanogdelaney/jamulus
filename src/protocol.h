@@ -46,6 +46,7 @@
 
 #pragma once
 
+#include <array>
 #include <QMutex>
 #include <QTimer>
 #include <QDateTime>
@@ -85,6 +86,8 @@
 #define PROTMESSID_REQ_SPLIT_MESS_SUPPORT   34 // request support for split messages
 #define PROTMESSID_SPLIT_MESS_SUPPORTED     35 // split messages are supported
 #define PROTMESSID_RAWAUDIO_SUPPORTED       36 // raw (uncompressed) audio is supported
+#define PROTMESSID_POLYIN_CONFIG            37 // opt-in producer configuration (stock reliable transport)
+#define PROTMESSID_POLYIN_RESPONSE          38 // producer accept/reject; never sent to receivers
 
 // message IDs of connection less messages (CLM)
 // DEFINITION -> start at 1000, end at 1999, see IsConnectionLessMessageID
@@ -144,6 +147,8 @@ public:
     void CreateMuteStateHasChangedMes ( const int iChanID, const bool bIsMuted );
     void CreateConClientListMes ( const CVector<CChannelInfo>& vecChanInfo );
     void CreateReqConnClientsList();
+    void CreatePolyInConfig ( const CVector<uint8_t>& body );
+    void CreatePolyInResponse ( const CVector<uint8_t>& body );
     void CreateChanInfoMes ( const CChannelCoreInfo ChanInfo );
     void CreateReqChanInfoMes();
     void CreateChatTextMes ( const QString strChatText );
@@ -315,6 +320,10 @@ protected:
 
     int iOldRecID;
     int iOldRecCnt;
+    // Only extension controls need payload identity across a lost-disconnect
+    // counter restart. Legacy reliable messages keep stock duplicate rules.
+    std::array<uint8_t, 1410> oldPolyInControlBody{};
+    int                       oldPolyInControlSize = -1;
 
     // these two objects must be sequred by a mutex
     uint8_t                 iCounter;
@@ -345,6 +354,8 @@ signals:
     void ChangeChanPan ( int iChanID, float fNewPan );
     void MuteStateHasChangedReceived ( int iCurID, bool bIsMuted );
     void ConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo );
+    void PolyInConfigReceived ( CVector<uint8_t> body );
+    void PolyInResponseReceived ( CVector<uint8_t> body );
     void ServerFullMesReceived();
     void ReqConnClientsList();
     void ChangeChanInfo ( CChannelCoreInfo ChanInfo );

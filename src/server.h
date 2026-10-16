@@ -88,6 +88,7 @@ public:
     void OnMuteStateHasChangedCh ( int iChanID, bool bIsMuted ) { CreateOtherMuteStateChanged ( slotId - 1, iChanID, bIsMuted ); }
 
     void OnServerAutoSockBufSizeChangeCh ( int iNNumFra ) { CreateAndSendJitBufMessage ( slotId - 1, iNNumFra ); }
+    void OnPolyInConfigReceivedCh ( CVector<uint8_t> body ) { HandlePolyInConfig ( slotId - 1, body ); }
 
 protected:
     virtual void SendProtMessage ( int iChID, CVector<uint8_t> vecMessage ) = 0;
@@ -99,6 +100,7 @@ protected:
     virtual void CreateOtherMuteStateChanged ( const int iCurChanID, const int iOtherChanID, const bool bIsMuted ) = 0;
 
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra ) = 0;
+    virtual void HandlePolyInConfig ( int physical, CVector<uint8_t> body ) = 0;
 };
 
 template<>
@@ -232,6 +234,7 @@ protected:
     virtual void CreateAndSendJitBufMessage ( const int iCurChanID, const int iNNumFra );
 
     virtual void SendProtMessage ( int iChID, CVector<uint8_t> vecMessage );
+    void HandlePolyInConfig ( int physical, CVector<uint8_t> body ) override;
 
     template<unsigned int slotId>
     inline void connectChannelSignalsToServerSlots();
@@ -273,6 +276,8 @@ protected:
     QMutex            MutexWelcomeMessage;
     std::atomic<bool> bChannelIsNowDisconnected;
     bool bHasPolyInAudio = false; // false on every unmodified legacy-only server
+    PolyIn::SourceSlots polyInSlots; // actual stock-ID reservation, guarded by server Mutex
+    std::array<uint64_t, MAX_NUM_CHANNELS> polyInEpoch{};
 
     // audio encoder/decoder
     OpusCustomMode*    Opus64Mode[MAX_NUM_CHANNELS];

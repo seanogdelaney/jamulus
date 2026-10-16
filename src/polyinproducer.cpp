@@ -55,6 +55,14 @@ void SourceProducer::Reset()
     capturedChannels_ = 0;
 }
 
+void SourceProducer::Swap ( SourceProducer& other ) noexcept
+{
+    std::swap ( samples_, other.samples_ );
+    std::swap ( capturedChannels_, other.capturedChannels_ );
+    std::swap ( mode_, other.mode_ );
+    sources_.swap ( other.sources_ );
+}
+
 bool SourceProducer::Configure ( int samples, size_t capturedChannels, const std::vector<InputSpec>& inputs )
 {
     if ( ( samples != 64 && samples != 128 ) || capturedChannels == 0 ||
@@ -167,4 +175,87 @@ bool SourceProducer::Encode ( const int16_t* interleaved, size_t availableSample
     }
     return PackFrame ( physicalFrame, generation, records, mtu, datagrams );
 }
+// Stage05 callback adapter: the same packet format as PackFrame, assembled into
+// fixed-capacity caller storage. Encode() above remains unchanged for non-RT use.
+// Each encoded source is <= MaxEncodedBytes; no heap allocation on this path.
+bool SourceProducer::EncodeBounded ( const int16_t* interleaved, size_t availableSamples, bool muted,
+    uint32_t physicalFrame, uint64_t generation, size_t mtu,
+    std::array<BoundedPacket, MaxSources>& packets, size_t& packetCount )
+{
+    packetCount = 0;
+    if ( !interleaved || !generation || !samples_ || sources_.empty() ||
+         availableSamples < capturedChannels_ * size_t ( samples_ ) ||
+         mtu > MaxDatagram || mtu < HeaderBytes + FragmentHeaderBytes + 1 ) return false;
+    auto beginPacket = [&]() -> bool {
+        if ( packetCount >= packets.size() ) return false;
+        auto& p = packets[packetCount++];
+        std::fill_n ( p.data.begin(), HeaderBytes, uint8_t(0) );
+        p.length = HeaderBytes;
+        p.data[0]='P'; p.data[1]='L'; p.data[2]='I'; p.data[3]='N';
+        p.data[4]=WireVersion;
+        Detail::Write32 ( p.data.data() + 8, physicalFrame );
+        Detail::Write64 ( p.data.data() + 12, generation );
+        return true;
+    };
+    auto finishPacket = [&]() {
+        auto& p = packets[packetCount-1];
+        const uint16_t payload = uint16_t ( p.length - HeaderBytes );
+        p.data[20] = uint8_t(payload);
+        p.data[21] = uint8_t(payload >> 8);
+    };
+    if ( !beginPacket() ) return false;
+    std::array<int16_t,256> routed{};
+    std::array<int16_t,256> zeros{};
+    std::array<uint8_t,MaxEncodedBytes> encoded{};
+    for ( auto& source : sources_ )
+    {
+        const auto& cfg = source.config;
+        const bool stereo = cfg.route == InputRoute::Stereo;
+        for ( int i=0; i<samples_; ++i )
+        {
+            const size_t base = size_t(i) * capturedChannels_;
+            switch ( cfg.route )
+            {
+            case InputRoute::Left: routed[i] = interleaved[base + cfg.channelA]; break;
+            case InputRoute::Right: routed[i] = interleaved[base + cfg.channelB]; break;
+            case InputRoute::MonoMix:
+                routed[i] = int16_t ( ( int32_t(interleaved[base+cfg.channelA]) +
+                                       int32_t(interleaved[base+cfg.channelB]) ) / 2 ); break;
+            case InputRoute::Stereo:
+                routed[2*i] = interleaved[base+cfg.channelA];
+                routed[2*i+1] = interleaved[base+cfg.channelB]; break;
+            }
+        }
+        StockClientEncodeFrame ( source.encoder, cfg.raw, muted, routed.data(), zeros.data(),
+                                 samples_, encoded.data(), cfg.encodedBytes );
+        size_t offset = 0;
+        while ( offset < size_t(cfg.encodedBytes) )
+        {
+            auto* p = &packets[packetCount-1];
+            if ( size_t(p->length) + FragmentHeaderBytes + 1 > mtu || p->data[6] == MaxSources )
+            {
+                finishPacket();
+                if ( !beginPacket() ) { packetCount=0; return false; }
+                p = &packets[packetCount-1];
+            }
+            const size_t n = std::min ( size_t(cfg.encodedBytes) - offset,
+                                        mtu - size_t(p->length) - FragmentHeaderBytes );
+            uint8_t* frag = p->data.data() + p->length;
+            const auto write16 = [](uint8_t* q, uint16_t v) { q[0]=uint8_t(v); q[1]=uint8_t(v>>8); };
+            write16 ( frag, cfg.source );
+            frag[2] = cfg.codec;
+            frag[3] = stereo ? 2 : 1;
+            write16 ( frag+4, uint16_t(cfg.encodedBytes) );
+            write16 ( frag+6, uint16_t(offset) );
+            write16 ( frag+8, uint16_t(n) );
+            std::memcpy ( frag + FragmentHeaderBytes, encoded.data()+offset, n );
+            p->length = uint16_t ( size_t(p->length) + FragmentHeaderBytes + n );
+            ++p->data[6];
+            offset += n;
+        }
+    }
+    finishPacket();
+    return true;
+}
+
 }

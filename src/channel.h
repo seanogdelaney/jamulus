@@ -190,6 +190,8 @@ public:
     void CreateReqSplitMessSupportMes() { Protocol.CreateReqSplitMessSupportMes(); }
     void CreateReqJitBufMes() { Protocol.CreateReqJitBufMes(); }
     void CreateReqConnClientsList() { Protocol.CreateReqConnClientsList(); }
+    void CreatePolyInConfig ( const CVector<uint8_t>& body ) { Protocol.CreatePolyInConfig ( body ); }
+    void CreatePolyInResponse ( const CVector<uint8_t>& body ) { Protocol.CreatePolyInResponse ( body ); }
     void CreateChatTextMes ( const QString& strChatText ) { Protocol.CreateChatTextMes ( strChatText ); }
     void CreateLicReqMes ( const ELicenceType eLicenceType ) { Protocol.CreateLicenceRequiredMes ( eLicenceType ); }
 
@@ -317,6 +319,9 @@ signals:
     void ServerAutoSockBufSizeChange ( int iNNumFra );
     void ReqConnClientsList();
     void ConClientListMesReceived ( CVector<CChannelInfo> vecChanInfo );
+    void NetwTranspPropsSent(); // stock request answered; producer may now configure
+    void PolyInConfigReceived ( CVector<uint8_t> body );
+    void PolyInResponseReceived ( CVector<uint8_t> body );
     void ChanInfoHasChanged();
     void ClientIDReceived ( int iChanID );
     void RawAudioSupported();

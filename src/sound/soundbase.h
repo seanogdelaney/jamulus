@@ -110,6 +110,11 @@ public:
         return strCurDevName;
     }
 
+    // Optional Stage05 source capture tap: one JACK clock and multiple physical
+    // inputs, without disturbing stock stereo capture/playback. Non-JACK sound
+    // backends explicitly support only the unchanged stereo pair.
+    virtual bool ConfigurePolyInCapture ( int channels ) { return channels == 2; }
+    virtual const CVector<int16_t>* PolyInCaptureFrame() const { return nullptr; }
     virtual int     GetNumInputChannels() { return 2; }
     virtual QString GetInputChannelName ( const int ) { return "Default"; }
     virtual void    SetLeftInputChannel ( const int ) {}

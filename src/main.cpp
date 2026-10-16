@@ -105,6 +105,8 @@ int main ( int argc, char** argv )
 #else
     bool bIsClient = true;
 #endif
+    bool bPolyInRequested = false;
+    int polyInInputCount = 2;
     bool         bUseGUI                     = true;
     bool         bStartMinimized             = false;
     bool         bShowComplRegConnList       = false;
@@ -586,6 +588,32 @@ int main ( int argc, char** argv )
             continue;
         }
 
+        // Explicit opt-in: one existing capture clock, two mono logical sources.
+        if ( GetFlagArgument ( argv, i, "--polyin", "--polyin" ) )
+        {
+            bPolyInRequested = true;
+            CommandLineOptions << "--polyin";
+            ClientOnlyOptions << "--polyin";
+            continue;
+        }
+
+        // Optional independent JACK inputs: each remains a stock receiver
+        // channel, with one physical capture callback/clock.
+        if ( GetStringArgument ( argc, argv, i, "--polyin-sources", "--polyin-sources", strArgument ) )
+        {
+            bool valid = false;
+            polyInInputCount = strArgument.toInt ( &valid );
+            if ( !valid || polyInInputCount < 2 || polyInInputCount > 20 )
+            {
+                qCritical() << "--polyin-sources must be between 2 and 20";
+                return 1;
+            }
+            bPolyInRequested = true;
+            CommandLineOptions << "--polyin-sources";
+            ClientOnlyOptions << "--polyin-sources";
+            continue;
+        }
+
         // MIDI
         if ( GetStringArgument ( argc,
                                  argv,
@@ -988,6 +1016,8 @@ int main ( int argc, char** argv )
             CClientSettings Settings ( &Client, strIniFileName );
             Settings.Load ( CommandLineOptions );
             Client.SetSettings ( &Settings );
+            Client.SetPolyInRequested ( bPolyInRequested );
+            Client.SetPolyInSourceCount ( polyInInputCount );
 
 #    ifndef NO_JSON_RPC
             if ( pRpcServer )
@@ -1199,6 +1229,8 @@ QString UsageArguments ( char** argv )
            "  -M, --mutestream        prevent others on a server from hearing what I play\n"
            "      --mutemyown         prevent me from hearing what I play in the server mix (headless only)\n"
            "      --clientname        client name (window title and JACK client name)\n"
+           "      --polyin            opt in to two mono capture sources (left/right)\n"
+           "      --polyin-sources N   opt in to 2..20 independent JACK inputs\n"
            "      --ctrlmidich        configure MIDI controller\n"
            "\n"
            "Example: %1 -s --inifile myinifile.ini\n"

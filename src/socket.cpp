@@ -449,10 +449,10 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
 
     if ( iVecSizeOut > 0 )
     {
-        // send packet through network (we have to convert the constant unsigned
-        // char vector in "const char*", for this we first convert the const
-        // uint8_t vector in a read/write uint8_t vector and then do the cast to
-        // const char *)
+        // send directly from the existing contiguous vector: the historical
+        // C-style cast created an entire temporary CVector copy per send.
+        // This is necessary to maintain RT zero-allocation for poly-in and
+        // does not alter socket framing or the legacy packet contents.
 
         for ( int tries = 0; tries < 2; tries++ ) // retry loop in case send fails on iOS
         {
@@ -472,7 +472,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                     sa4.sin_addr.s_addr = htonl ( HostAddr.InetAddr.toIPv4Address() );
 
                     status = sendto ( UdpSocket4,
-                                      (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                      reinterpret_cast<const char*> ( vecbySendBuf.data() ),
                                       iVecSizeOut,
                                       0,
                                       (struct sockaddr*) &sa4,
@@ -496,7 +496,7 @@ void CSocket::SendPacket ( const CVector<uint8_t>& vecbySendBuf, const CHostAddr
                     sa6.sin6_scope_id = HostAddr.InetAddr.scopeId().toUInt();
 
                     status = sendto ( UdpSocket6,
-                                      (const char*) &( (CVector<uint8_t>) vecbySendBuf )[0],
+                                      reinterpret_cast<const char*> ( vecbySendBuf.data() ),
                                       iVecSizeOut,
                                       0,
                                       (struct sockaddr*) &sa6,

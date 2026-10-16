@@ -32,6 +32,13 @@ struct InputSpec
     uint16_t channelA = 0;  // index in the SAME shared physical capture frame
     uint16_t channelB = 1;  // only read for Right, Stereo, MonoMix
 };
+// Stage05 producer-only real-time output. Storage and packet count have fixed
+// bounds; no vector/string allocation occurs on the capture callback.
+struct BoundedPacket
+{
+    std::array<uint8_t, MaxDatagram> data{};
+    uint16_t length = 0;
+};
 class SourceProducer
 {
 public:
@@ -46,12 +53,18 @@ public:
     // SourceSlots::Reserve. Reject invalid IDs, routes and channel indices.
     bool Configure ( int samples, size_t capturedChannels, const std::vector<InputSpec>& sources );
     void Reset();
+    void Swap ( SourceProducer& other ) noexcept;
     // One caller-owned physical frame identity and epoch; one packing pass.
     // The existing physical sender, added in Stage 5, sends resulting datagrams.
     // availableSamples counts interleaved int16_t values, not samples/channel.
     bool Encode ( const int16_t* interleaved, size_t availableSamples, bool muted,
                   uint32_t physicalFrame, uint64_t generation, size_t mtu,
                   std::vector<std::vector<uint8_t>>& datagrams );
+    // The earlier flexible Encode/PackFrame interface remains for offline users.
+    // Actual sound callbacks MUST use this preallocated packet API instead.
+    bool EncodeBounded ( const int16_t* interleaved, size_t availableSamples, bool muted,
+                         uint32_t physicalFrame, uint64_t generation, size_t mtu,
+                         std::array<BoundedPacket, MaxSources>& packets, size_t& packetCount );
     size_t Count() const { return sources_.size(); }
 private:
     struct Source

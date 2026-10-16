@@ -45,6 +45,7 @@
 \******************************************************************************/
 
 #include "server.h"
+#include "polyincontrol.h"
 #include "util.h"
 
 // CServer implementation ******************************************************
@@ -73,6 +74,7 @@ CServer::CServer ( const int          iNewMaxNumChan,
     bUseMultithreading ( bNUseMultithreading ),
     iMaxNumChannels ( iNewMaxNumChan ),
     iCurNumChannels ( 0 ),
+    polyInSlots ( iNewMaxNumChan ),
     bDisableRaw ( bNDisableRaw ),
     bIPv6Available ( false ),
     Socket ( this, iPortNumber, iQosNumber, strServerBindIP4, strServerBindIP6, bNDisableIPv6, bIPv6Available ),
@@ -344,12 +346,18 @@ inline void CServer::connectChannelSignalsToServerSlots()
     void ( CServer::*pOnMuteStateHasChangedCh ) ( int, bool ) = &CServerSlots<slotId>::OnMuteStateHasChangedCh;
 
     void ( CServer::*pOnServerAutoSockBufSizeChangeCh ) ( int ) = &CServerSlots<slotId>::OnServerAutoSockBufSizeChangeCh;
+    void ( CServer::*pOnPolyInConfigReceivedCh ) ( CVector<uint8_t> ) = &CServerSlots<slotId>::OnPolyInConfigReceivedCh;
 
     // send message
     QObject::connect ( &vecChannels[iCurChanID], &CChannel::MessReadyForSending, this, pOnSendProtMessCh );
 
     // request connected clients list
     QObject::connect ( &vecChannels[iCurChanID], &CChannel::ReqConnClientsList, this, pOnReqConnClientsListCh );
+    // OnProtocolMessageReceived holds Mutex while CProtocol emits this signal.
+    // Queue configuration onto this object's Qt event loop; a direct call
+    // would recursively lock the nonrecursive server Mutex and deadlock.
+    QObject::connect ( &vecChannels[iCurChanID], &CChannel::PolyInConfigReceived, this,
+                       pOnPolyInConfigReceivedCh, Qt::QueuedConnection );
 
     // channel info has changed
     QObject::connect ( &vecChannels[iCurChanID], &CChannel::ChanInfoHasChanged, this, &CServer::CreateAndSendChanListForAllConChannels );
@@ -758,7 +766,11 @@ void CServer::OnTimer()
         if ( bHasPolyInAudio )
             for ( int id = 0; id < iMaxNumChannels; ++id )
                 if ( vecChannels[id].IsPolyInPhysical() && !vecChannels[id].IsConnected() )
+                {
                     DisablePolyInAudio ( id );
+                    polyInSlots.RetirePhysical ( id, polyInEpoch[id] );
+                    polyInEpoch[id] = 0;
+                }
 
         // A physical GetData may have timed out and FreeChannel may have
         // retired its virtual slots during the preceding stock decode pass.
@@ -1625,8 +1637,22 @@ int CServer::FindChannel ( const CHostAddress& CheckAddr, const bool bAllowNew )
 
     // allocate a new channel
     i          = iCurNumChannels++; // save index of free channel and increment count
-    iNewChanID = vecChannelOrder[i];
+    // Retain stock's sorted physical address prefix and free-ID suffix. A
+    // negotiated logical source uses a real stock ID but must never become a
+    // physical network session. For a legacy-only server this picks the exact
+    // same first free ID as stock, with no other change.
+    int available = i;
+    while ( available < iMaxNumChannels && polyInSlots.IsTaken ( vecChannelOrder[available] ) ) ++available;
+    if ( available == iMaxNumChannels ) { --iCurNumChannels; return INVALID_CHANNEL_ID; }
+    iNewChanID = vecChannelOrder[available];
+    while ( available > i ) { vecChannelOrder[available] = vecChannelOrder[available-1]; --available; }
+    vecChannelOrder[i] = iNewChanID;
     InitChannel ( iNewChanID, CheckAddr );
+    // Every stock physical connection occupies an ID before any producer
+    // negotiates. This prevents the F03 source allocator claiming an unrelated
+    // legacy client's live channel. Generation 1 is a local, non-wire marker.
+    if ( !polyInSlots.AdmitPhysical ( iNewChanID, 1, "" ) )
+        qWarning() << "poly-in physical reservation failed for stock channel" << iNewChanID;
 
     // now l == r == position in vecChannelOrder to insert iNewChanID
     // move channel IDs up by one starting at the top and working down
@@ -1677,6 +1703,11 @@ void CServer::FreeChannel ( const int iCurChanID )
     {
         if ( vecChannelOrder[i] == iCurChanID )
         {
+            // The stock ID is available for reassignment only after its
+            // physical ownership (and all virtual reservations) is retired.
+            polyInSlots.RetirePhysical ( iCurChanID,
+                polyInEpoch[iCurChanID] ? polyInEpoch[iCurChanID] : uint64_t(1) );
+            polyInEpoch[iCurChanID] = 0;
             --iCurNumChannels;
 
             // move channel IDs down by one starting at the freed channel and working up the active channels
@@ -1981,4 +2012,123 @@ void CServer::DisablePolyInAudio ( int physical )
     bHasPolyInAudio = false;
     for ( int id = 0; id < iMaxNumChannels; ++id )
         if ( vecChannels[id].IsPolyInPhysical() ) { bHasPolyInAudio = true; break; }
+}
+
+// The stock reliable per-channel CProtocol delivers this on the server's Qt
+// dispatcher thread. Never call this handler while already holding Mutex:
+// signal forwarding is synchronous and OnTimer takes the same nonrecursive lock.
+void CServer::HandlePolyInConfig ( int physical, CVector<uint8_t> body )
+{
+    uint64_t epoch = 0;
+    std::vector<PolyIn::ControlSource> parsed;
+    const bool valid = PolyIn::DecodeConfig ( body.data(), size_t ( body.Size() ), epoch, parsed );
+    bool accepted = false;
+    bool publishRetirement = false;
+    CVector<CChannelInfo> retiredChannelList ( 0 );
+    {
+        QMutexLocker audio ( &Mutex );
+        if ( valid && physical >= 0 && physical < iMaxNumChannels && vecChannels[physical].IsConnected() &&
+             ( !polyInEpoch[physical] || epoch >= polyInEpoch[physical] ) )
+        {
+            const uint64_t previous = polyInEpoch[physical] ? polyInEpoch[physical] : uint64_t(1);
+            if ( parsed.empty() )
+            {
+                // Zero-source CONFIG is an acknowledged stock withdrawal.
+                // Fence every late prior CONFIG by preserving a new high-water
+                // generation on the *same* ordinary physical channel ID.
+                if ( epoch == polyInEpoch[physical] && !vecChannels[physical].IsPolyInPhysical() )
+                    accepted = true; // idempotent reliable retransmission
+                else
+                {
+                    PolyIn::SourceSlots::Identity original;
+                    if ( polyInSlots.Resolve ( physical, previous, 0, original ) &&
+                         original.channel == physical )
+                    {
+                        // The real source-zero ownership check precedes the
+                        // only destructive operation (stock buffer reset).
+                        if ( vecChannels[physical].IsPolyInPhysical() ) DisablePolyInAudio ( physical );
+                        if ( polyInSlots.RetirePhysical ( physical, previous ) )
+                        {
+                            const auto name = vecChannels[physical].GetChanInfo().strName.toStdString();
+                            accepted = polyInSlots.AdmitPhysical ( physical, epoch, name );
+                            if ( accepted ) polyInEpoch[physical] = epoch;
+                        }
+                    }
+                }
+            }
+            else
+            {
+            // A completed zero-source withdrawal retires this epoch. An
+            // equal-generation nonempty CONFIG must not resurrect PLIN,
+            // even if an old client retransmits it after the withdrawal ACK.
+            // An active PLIN epoch may still be retransmitted idempotently.
+            bool admissible = epoch != polyInEpoch[physical] ||
+                              vecChannels[physical].IsPolyInPhysical();
+            std::vector<PolyIn::SourceSlots::Definition> definitions;
+            std::vector<PolyInAudioSource> audioSources;
+            definitions.reserve ( parsed.size() );
+            audioSources.reserve ( parsed.size() );
+            for ( const auto& s : parsed )
+            {
+                if ( EAudComprType(s.codec) != vecChannels[physical].GetAudioCompressionType() ) admissible = false;
+                if ( s.source == 0 &&
+                     ( int(s.channels) != vecChannels[physical].GetNumAudioChannels() ||
+                       int(s.bytes) != vecChannels[physical].GetCeltNumCodedBytes() ) ) admissible = false;
+                definitions.push_back ( {s.source, s.name} );
+            }
+            if ( admissible )
+            {
+                const uint64_t ticket = polyInSlots.Reserve ( physical, previous, epoch, definitions );
+                if ( ticket )
+                    {
+                        // Reserve is a transaction; only an admitted, validated
+                        // source set becomes visible to stock ID/control paths.
+                        if ( polyInSlots.Promote ( ticket, physical, previous ) )
+                        {
+                            for ( const auto& s : parsed )
+                            {
+                                PolyIn::SourceSlots::Identity found;
+                                if ( !polyInSlots.Resolve ( physical, epoch, s.source, found ) ) { admissible=false; break; }
+                                audioSources.push_back ( {s.source, found.channel, EAudComprType(s.codec),
+                                                         int(s.channels), int(s.bytes)} );
+                            }
+                            if ( admissible )
+                            {
+                                // A true new epoch replaces sidecars/PLC, not
+                                // stock media-recovery policy; same epoch churn
+                                // preserves the physical moving jitter window.
+                                if ( polyInEpoch[physical] && previous != epoch )
+                                {
+                                    // Let stock receivers observe virtual IDs leaving before
+                                    // reusing them, so their ordinary fader restoration sends
+                                    // gain/pan again after the new identity's server reset.
+                                    const CVector<CChannelInfo> currentList ( CreateChannelList() );
+                                    for ( const auto& info : currentList )
+                                        if ( !vecChannels[info.iChanID].IsPolyInVirtualOf ( &vecChannels[physical] ) )
+                                            retiredChannelList.Add ( info );
+                                    publishRetirement = true;
+                                    DisablePolyInAudio ( physical );
+                                }
+                                accepted = ConfigurePolyInAudio ( polyInSlots, physical, epoch, audioSources );
+                                if ( accepted ) polyInEpoch[physical] = epoch;
+                            }
+                        }
+                    }
+            }
+            }
+        }
+    }
+    // Send response OUTSIDE Mutex, and let ordinary reliable CProtocol do its
+    // own retransmission/ACK. Never send it to any receiver or virtual slot.
+    if ( accepted && publishRetirement )
+        for ( int id = 0; id < iMaxNumChannels; ++id )
+            if ( vecChannels[id].IsConnected() ) vecChannels[id].CreateConClientListMes ( retiredChannelList );
+    if ( valid && physical >= 0 && physical < iMaxNumChannels && vecChannels[physical].IsConnected() )
+    {
+        const auto answer = PolyIn::Response ( epoch, accepted );
+        CVector<uint8_t> payload ( int ( answer.size() ) );
+        std::copy ( answer.begin(), answer.end(), payload.begin() );
+        vecChannels[physical].CreatePolyInResponse ( payload );
+        if ( accepted ) CreateAndSendChanListForAllConChannels();
+    }
 }
