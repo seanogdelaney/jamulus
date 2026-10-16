@@ -1484,8 +1484,19 @@ CVector<CChannelInfo> CServer::CreateChannelList()
     {
         if ( vecChannels[i].IsConnected() )
         {
-            vecChanInfo.Add ( CChannelInfo ( i, // ID
-                                             vecChannels[i].GetChanInfo() ) );
+            CChannelCoreInfo info = vecChannels[i].GetChanInfo();
+            PolyIn::SourceSlots::Identity identity;
+            if ( vecChannels[i].IsPolyInPhysical() && polyInSlots.ResolveChannel ( i, identity ) )
+                info.strName = QString::fromStdString ( identity.tag );
+            vecChanInfo.Add ( CChannelInfo ( i, info ) );
+        }
+        else if ( vecChannels[i].IsPolyInVirtual() &&
+                  vecChannels[i].PolyInPhysicalOwner()->IsConnected() )
+        {
+            // Ordinary stock entry, not an invented receiver control or UI.
+            CChannelCoreInfo info = vecChannels[i].PolyInPhysicalOwner()->GetChanInfo();
+            info.strName = vecChannels[i].GetName();
+            vecChanInfo.Add ( CChannelInfo ( i, info ) );
         }
     }
 
