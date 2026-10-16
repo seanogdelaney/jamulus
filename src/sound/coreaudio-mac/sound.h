@@ -66,6 +66,11 @@ public:
     virtual int  Init ( const int iNewPrefMonoBufferSize ) override;
     virtual void Start() override;
     virtual void Stop() override;
+    bool ConfigurePolyInCapture ( int channels ) override;
+    const CVector<int16_t>* PolyInCaptureFrame() const override
+    {
+        return polyInCaptureChannels > 2 ? &polyInCaptureFrame : nullptr;
+    }
 
     // channel selection
     virtual int     GetNumInputChannels() override { return iNumInChanPlusAddChan; }
@@ -90,6 +95,9 @@ public:
     // these variables/functions should be protected but cannot since we want
     // to access them from the callback function
     CVector<short> vecsTmpAudioSndCrdStereo;
+    // Same input IOProc and buffer boundary as stock stereo, opt-in only.
+    CVector<int16_t> polyInCaptureFrame;
+    int polyInCaptureChannels = 2;
     int            iCoreAudioBufferSizeMono;
     int            iCoreAudioBufferSizeStereo;
     AudioDeviceID  CurrentAudioInputDeviceID;

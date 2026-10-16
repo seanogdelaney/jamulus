@@ -45,6 +45,8 @@
 \******************************************************************************/
 
 #include "sound.h"
+#include "../../polyinwire.h"
+#include <algorithm>
 
 /* Implementation *************************************************************/
 CSound::CSound ( void ( *fpNewProcessCallback ) ( CVector<short>& psData, void* arg ), void* arg, const bool, const QString& ) :
@@ -935,10 +937,33 @@ int CSound::Init ( const int iNewPrefMonoBufferSize )
     // set internal buffer size value and calculate stereo buffer size
     iCoreAudioBufferSizeStereo = 2 * iCoreAudioBufferSizeMono;
 
+    // A device replacement can reduce the physical channel count. Do not
+    // access the previous device's lanes on the next callback; the client
+    // will negotiate withdrawal if the requested source count is unavailable.
+    if ( polyInCaptureChannels > iNumInChan )
+    {
+        polyInCaptureChannels = 2;
+        polyInCaptureFrame.clear();
+    }
+
     // create memory for intermediate audio buffer
     vecsTmpAudioSndCrdStereo.Init ( iCoreAudioBufferSizeStereo );
+    if ( polyInCaptureChannels > 2 )
+        polyInCaptureFrame.Init ( polyInCaptureChannels * iCoreAudioBufferSizeMono );
 
     return iCoreAudioBufferSizeMono;
+}
+
+bool CSound::ConfigurePolyInCapture ( int channels )
+{
+    // Called with the stock sound callback stopped. Device enumeration and
+    // multi-buffer channel layout already belong to CoreAudio's stock path.
+    if ( IsRunning() || channels < 2 || channels > int(PolyIn::MaxSources) ||
+         channels > iNumInChan || iCoreAudioBufferSizeMono <= 0 ) return false;
+    if ( channels > 2 ) polyInCaptureFrame.Init ( channels * iCoreAudioBufferSizeMono );
+    else polyInCaptureFrame.clear();
+    polyInCaptureChannels = channels;
+    return true;
 }
 
 UInt32 CSound::SetBufferSize ( AudioDeviceID& audioDeviceID, const bool bIsInput, UInt32 iPrefBufferSize )
@@ -1077,6 +1102,36 @@ OSStatus CSound::callbackIO ( AudioDeviceID inDevice,
         {
             // incompatible sizes, clear work buffer
             pSound->vecsTmpAudioSndCrdStereo.Reset ( 0 );
+        }
+
+        // Optional raw physical inputs for poly-in. Walk the same CoreAudio
+        // AudioBufferList/vecNumInBufChan layout as stock channel selection:
+        // buffers may each contain one or several interleaved Float32 channels.
+        // No allocation, extra IOProc, resampling or clock in the callback.
+        if ( pSound->polyInCaptureChannels > 2 )
+        {
+            const int count = pSound->polyInCaptureChannels;
+            int physical = 0;
+            bool valid = true;
+            for ( UInt32 b = 0; b < inInputData->mNumberBuffers && physical < count; ++b )
+            {
+                if ( b >= UInt32(vecNumInBufChan.Size()) ) { valid = false; break; }
+                const int lanes = vecNumInBufChan[b];
+                const AudioBuffer& buffer = inInputData->mBuffers[b];
+                if ( lanes <= 0 || !buffer.mData ||
+                     buffer.mDataByteSize != UInt32(lanes * iCoreAudioBufferSizeMono * sizeof(Float32)) )
+                { valid = false; break; }
+                const Float32* samples = static_cast<const Float32*> ( buffer.mData );
+                const int used = std::min ( lanes, count - physical );
+                for ( int frame = 0; frame < iCoreAudioBufferSizeMono; ++frame )
+                    for ( int lane = 0; lane < used; ++lane )
+                        pSound->polyInCaptureFrame[frame * count + physical + lane] =
+                            Float2Short ( samples[frame * lanes + lane] * _MAXSHORT );
+                physical += lanes;
+            }
+            // Fail closed rather than submit stale samples if a device changes
+            // its layout while running. Stock stereo processing is untouched.
+            if ( !valid || physical < count ) pSound->polyInCaptureFrame.Reset ( 0 );
         }
 
         // call processing callback function
