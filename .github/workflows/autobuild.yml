@@ -85,7 +85,13 @@ jobs:
 
       - name:                       Extract Changelog for the Github release body
         if:                         steps.get-build-vars.outputs.PUBLISH_TO_RELEASE == 'true'
-        run:                        ./.github/autobuild/extractVersionChangelog.pl ChangeLog ${{ steps.get-build-vars.outputs.JAMULUS_PRO_VERSION }} > ${{ env.release_changelog_path }}
+        run:                        |
+          notes_path=".github/release_notes/${{ steps.get-build-vars.outputs.JAMULUS_PRO_VERSION }}.md"
+          if [ -f "$notes_path" ]; then
+            cp "$notes_path" "${{ env.release_changelog_path }}"
+          else
+            ./.github/autobuild/extractVersionChangelog.pl ChangeLog ${{ steps.get-build-vars.outputs.JAMULUS_PRO_VERSION }} > "${{ env.release_changelog_path }}"
+          fi
 
       - name:                       Create/Recreate Release ${{steps.get-build-vars.outputs.RELEASE_TAG}}  ${{steps.get-build-vars.outputs.RELEASE_TITLE}}
         if:                         steps.get-build-vars.outputs.PUBLISH_TO_RELEASE == 'true'
