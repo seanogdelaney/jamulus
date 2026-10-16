@@ -4,9 +4,12 @@ The Qt/socket/recorder dispatcher is substituted; coverage is *not* a full Qt ru
 """
 from pathlib import Path
 import re,subprocess,tempfile,sys,os,argparse
-p=argparse.ArgumentParser();p.add_argument('--pre-fix',action='store_true',help='reintroduce old post-physical stale-source bug in memory');p.add_argument('--sanitize',action='store_true');p.add_argument('--pre-history-fix',action='store_true',help='remove cross-tick source-history remap (negative control)');p.add_argument('--pre-fader-fix',action='store_true');p.add_argument('--pre-opus-fix',action='store_true');p.add_argument('--pre-timer-lock',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--pre-fix',action='store_true',help='reintroduce old post-physical stale-source bug in memory');p.add_argument('--sanitize',action='store_true');p.add_argument('--pre-history-fix',action='store_true',help='remove cross-tick source-history remap (negative control)');p.add_argument('--pre-fader-fix',action='store_true');p.add_argument('--pre-opus-fix',action='store_true');p.add_argument('--pre-timer-lock',action='store_true');p.add_argument('--pre-fade-cache',action='store_true',help='remove virtual source gain cache for current upstream (negative control)');a=p.parse_args()
 root=Path(__file__).resolve().parents[2];src=root/'src';here=Path(__file__).resolve().parent
 server=(src/'server.cpp').read_text()
+if a.pre_fade_cache:
+ server,n=re.subn(r'^\s*vecfFadeInGains\[iNumMixSources\]\s*= vecChannels\[id\]\.GetFadeInGain\(\);\n','',server,flags=re.M)
+ assert n==1,n
 if a.pre_fader_fix:
  assert server.count('if ( changedIdentity )')==1
  server=server.replace('if ( changedIdentity )','if ( !vecChannels[s.channel].IsPolyInVirtual() )')

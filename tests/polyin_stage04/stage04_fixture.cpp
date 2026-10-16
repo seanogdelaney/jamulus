@@ -72,6 +72,7 @@ struct CServer {
     FakeChannel vecChannels[8];
     FakeSocket Socket;
     CVector<int> vecChanIDsCurConChan;
+    CVector<float> vecfFadeInGains;
     CVector<int> vecNumAudioChannels, vecAudioComprType,vecNumFrameSizeConvBlocks;
     CVector<bool> vecUseDoubleSysFraSizeConvBuf;
     CVector<CVector<int16_t>> vecvecsData,vecvecsData2,vecvecsSendData;
@@ -81,7 +82,7 @@ struct CServer {
     OpusCustomDecoder* OpusDecoderMono[8]{},*OpusDecoderStereo[8]{},*Opus64DecoderMono[8]{},*Opus64DecoderStereo[8]{};
     OpusCustomEncoder* OpusEncoderMono[8]{},*OpusEncoderStereo[8]{},*Opus64EncoderMono[8]{},*Opus64EncoderStereo[8]{};
     CServer() {
-        vecChanIDsCurConChan.Init(8);
+        vecfFadeInGains.Init(8);vecChanIDsCurConChan.Init(8);
         vecNumAudioChannels.Init(8); vecAudioComprType.Init(8);vecNumFrameSizeConvBlocks.Init(8);
         vecUseDoubleSysFraSizeConvBuf.Init(8);
         vecvecsData.resize(8);vecvecsData2.resize(8);vecvecsSendData.resize(8);
@@ -96,6 +97,10 @@ struct CServer {
     void ClientDisconnected(int){};
     void FreeChannel(int){};
     void DecodeReceiveData(int,int);
+    void DecodeWithFrameGains(int index,int count) {
+        if(index==0) for(int j=0;j<count;++j) vecfFadeInGains[j]=vecChannels[vecChanIDsCurConChan[j]].GetFadeInGain();
+        DecodeReceiveData(index,count);
+    }
     void MixEncodeTransmitData(int,int);
 };
 // STOCK_METHODS_EXTRACT
@@ -137,7 +142,7 @@ static void raw_mix_64() {
     std::vector<uint8_t> two=pcm(128,2000); // stereo repeating
     s.vecChannels[1].incoming.push_back({GS_BUFFER_OK,two});
     s.vecChannels[2].incoming.push_back({GS_BUFFER_OK,pcm(64,-900)});
-    for(int i=0;i<3;++i)s.DecodeReceiveData(i,3);
+    for(int i=0;i<3;++i)s.DecodeWithFrameGains(i,3);
     for(int i=0;i<3;++i)s.MixEncodeTransmitData(i,3);
     must(s.vecvecsSendData[0][0]==1775,"raw mono gain/fade mix"); // 1000 + 1000 - 225 = 1775
     must(s.vecvecsSendData[1][0]==3000,"stereo left pan"); // 1000 + 2000
@@ -151,7 +156,7 @@ static void raw_mix_128_clip() {
     CServer s;setup(s,2,128);
     s.vecChannels[0].incoming.push_back({GS_BUFFER_OK,pcm(128,30000)});
     s.vecChannels[1].incoming.push_back({GS_BUFFER_OK,pcm(128,30000)});
-    for(int i=0;i<2;++i)s.DecodeReceiveData(i,2);
+    for(int i=0;i<2;++i)s.DecodeWithFrameGains(i,2);
     for(int i=0;i<2;++i)s.MixEncodeTransmitData(i,2);
     must(s.vecvecsSendData[0][0]==32767,"clip to max short");
     must(s.vecChannels[0].sent.size()==1 && s.vecChannels[0].sent[0].size()==256,"128 packet");
@@ -160,7 +165,7 @@ static void raw_mix_128_clip() {
 static void raw_loss() {
     CServer s;setup(s,1,64);
     s.vecChannels[0].incoming.push_back({GS_BUFFER_UNDERRUN,{}});
-    s.DecodeReceiveData(0,1);s.MixEncodeTransmitData(0,1);
+    s.DecodeWithFrameGains(0,1);s.MixEncodeTransmitData(0,1);
     must(s.vecvecsSendData[0][0]==0,"raw missing -> silence");
     dump("L02-raw-loss",s,1);
 }
@@ -175,7 +180,7 @@ static void history_test(bool delay,int channels,int frame) {
         s.vecChannels[1].incoming.push_back({GS_BUFFER_OK,pcm(frame*channels,1000+t*100)});
     }
     for(int t=0;t<3;t++) {
-        for(int i=0;i<2;i++)s.DecodeReceiveData(i,2);
+        for(int i=0;i<2;i++)s.DecodeWithFrameGains(i,2);
         s.MixEncodeTransmitData(0,2);
         std::cout<<"L03-delay="<<delay<<",source_ch="<<channels<<",frame="<<frame<<",tick="<<t
                  <<",l0="<<s.vecvecsSendData[0][0]<<",r0="<<s.vecvecsSendData[0][1]
@@ -238,7 +243,7 @@ static void opus_roundtrip(int frame,int nch,bool plc) {
     }
     int nonzero=0;
     for(int t=0;t<ticks;t++) {
-        s.DecodeReceiveData(0,1);s.MixEncodeTransmitData(0,1);
+        s.DecodeWithFrameGains(0,1);s.MixEncodeTransmitData(0,1);
         const int first=s.vecvecsData[0][0];
         nonzero+=(first!=0);
         std::cout << "opus,client_frame=" << frame << ",server_frame=" << serverFrame
@@ -285,7 +290,7 @@ static void logical_sources(bool delay,int frame,int virtChannels) {
             pcm(frame*virtChannels,1000+100*tick)});
     }
     for(int tick=0;tick<4;++tick) {
-        for(int id=0;id<3;++id) s.DecodeReceiveData(id,3);
+        for(int id=0;id<3;++id) s.DecodeWithFrameGains(id,3);
         const int n0=s.vecChannels[0].sent.size(),n1=s.vecChannels[1].sent.size();
         // Original mixer is called exactly once per physical recipient.
         s.MixEncodeTransmitData(0,3);
@@ -340,7 +345,7 @@ static void multi_source_opus_plc() {
         s.vecChannels[2].incoming.push_back({tick==3?GS_BUFFER_UNDERRUN:GS_BUFFER_OK,std::move(compressed)});
     }
     for(int tick=0;tick<6;++tick) {
-        for(int id=0;id<3;++id) s.DecodeReceiveData(id,3);
+        for(int id=0;id<3;++id) s.DecodeWithFrameGains(id,3);
         must(s.vecvecsData[0][0]==400+tick*10,"other physical survives virtual loss");
         if(tick==3)must(s.vecvecsData[2][0]!=0,"virtual Opus PLC, not forced silence");
         s.MixEncodeTransmitData(0,3);

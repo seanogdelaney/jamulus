@@ -138,6 +138,7 @@ struct CServer {
     FakeController JamController;
     FakeProtocol ConnLessProtocol;
     CVector<int> vecChanIDsCurConChan;
+    CVector<float> vecfFadeInGains;
     CVector<int> vecNumAudioChannels, vecAudioComprType,vecNumFrameSizeConvBlocks;
     CVector<bool> vecUseDoubleSysFraSizeConvBuf;
     CVector<CVector<int16_t>> vecvecsData,vecvecsData2,vecvecsSendData;
@@ -147,6 +148,11 @@ struct CServer {
     bool bPrevDelayPanHadVirtual=false;
     struct PolyInHistoryIdentity { int owner=-1; uint64_t generation=0; uint16_t source=0; };
     std::array<PolyInHistoryIdentity,MAX_NUM_CHANNELS> polyInHistoryIdentity{};
+    // Stage 5 adds real-ID admission to physical FreeChannel and OnTimer.
+    // This Stage 4 audio fixture substitutes a distinct F03 owner; those
+    // methods must still compile against the real production source text.
+    PolyIn::SourceSlots polyInSlots{MAX_NUM_CHANNELS};
+    std::array<uint64_t,MAX_NUM_CHANNELS> polyInEpoch{};
     CVector<CVector<uint8_t>> vecvecbyCodedData;
     CVector<CVector<float>> vecvecfGains,vecvecfPannings,vecvecfIntermediateProcBuf;
     CVector<uint16_t> vecChannelLevels,vecSortedPolyInLevels;
@@ -158,7 +164,7 @@ struct CServer {
     std::vector<std::string> recordedName;
     int rosterBroadcasts=0, stopped=0, disconnected=0;
     CServer() {
-        vecChanIDsCurConChan.Init(8);vecPrevDelayPanIDs.Init(8);vecDelayPanRemapScratch.resize(8);
+        vecfFadeInGains.Init(8);vecChanIDsCurConChan.Init(8);vecPrevDelayPanIDs.Init(8);vecDelayPanRemapScratch.resize(8);
         vecChannelLevels.Init(8);vecSortedPolyInLevels.Init(8);
         vecNumAudioChannels.Init(8); vecAudioComprType.Init(8);vecNumFrameSizeConvBlocks.Init(8);
         vecUseDoubleSysFraSizeConvBuf.Init(8);
